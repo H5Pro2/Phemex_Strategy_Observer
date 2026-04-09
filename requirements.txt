@@ -1,0 +1,8 @@
+ccxt
+matplotlib
+numpy
+requests
+scikit-learn
+scipy
+statsmodels
+ta-lib
