@@ -1,0 +1,2412 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phemex Strategy Observer</title>
+  <style>
+    :root { color-scheme: light; --bg:#f5f7fb; --panel:#ffffff; --panel-soft:#f8fafc; --ink:#172033; --muted:#667085; --line:#d9e0ea; --good:#047857; --bad:#b42318; --accent:#2357c6; }
+    body[data-theme="dark"] { color-scheme: dark; --bg:#0f172a; --panel:#111827; --panel-soft:#1f2937; --ink:#e5e7eb; --muted:#9ca3af; --line:#334155; --good:#34d399; --bad:#f87171; --accent:#60a5fa; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--ink); }
+    .menubar { height:34px; display:flex; align-items:center; gap:4px; padding:0 20px; background:#162033; color:#d8deea; border-bottom:1px solid #25324a; position:sticky; top:0; z-index:10; }
+    .menu { position:relative; }
+    .menu button { background:transparent; color:#d8deea; border:0; padding:7px 12px; border-radius:5px; font-weight:600; cursor:pointer; }
+    .menu button:hover, .menu button:focus { background:#25324a; outline:none; }
+    .menuPanel { display:none; position:fixed; top:34px; left:20px; z-index:1000; width:230px; max-width:calc(100vw - 40px); padding:6px; border:1px solid var(--line); border-radius:7px; background:#fff; box-shadow:0 12px 28px rgba(23,32,51,.16); }
+    .menuPanel.open { display:block; }
+    .menuPanel button { width:100%; text-align:left; color:var(--ink); background:#fff; padding:9px 10px; font-weight:500; }
+    .menuPanel button:hover { background:#eef2ff; color:var(--accent); }
+    header { padding:20px 28px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; align-items:center; justify-content:space-between; gap:24px; }
+    h1 { margin:0; font-size:22px; }
+    main { padding:24px 28px 40px; max-width:1400px; margin:0 auto; }
+    .grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:14px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+    .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .value { font-size:24px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
+    .good { color:var(--good); } .bad { color:var(--bad); }
+    section { margin-top:18px; }
+    h2 { font-size:16px; margin:0 0 12px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-weight:600; }
+    code { font-family: Consolas, monospace; font-size:12px; overflow-wrap:anywhere; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#eef2ff; color:var(--accent); font-size:12px; font-weight:700; }
+    .statusPanel { min-width:260px; display:grid; grid-template-columns:54px 1fr; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:#f8fafc; }
+    .statusRing { width:52px; height:52px; border-radius:50%; display:grid; place-items:center; border:6px solid #98a2b3; background:#fff; }
+    .statusDot { width:18px; height:18px; border-radius:50%; background:#98a2b3; }
+    .statusPanel.running .statusRing { border-color:#0f766e; }
+    .statusPanel.running .statusDot { background:#0f766e; }
+    .statusPanel.stopped .statusRing { border-color:#98a2b3; }
+    .statusPanel.stopped .statusDot { background:#667085; }
+    .statusPanel.warning .statusRing { border-color:#d97706; }
+    .statusPanel.warning .statusDot { background:#d97706; }
+    .statusPanel.live .statusRing { border-color:#b42318; }
+    .statusPanel.live .statusDot { background:#b42318; }
+    .statusTitle { font-size:16px; font-weight:800; letter-spacing:.03em; }
+    .statusDetail { margin-top:3px; color:var(--muted); font-size:13px; }
+    .dayCandlePanel { min-width:230px; display:grid; grid-template-columns:48px 1fr; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:#f8fafc; }
+    .dayCandlePanel.long { border-color:#a7f3d0; background:#ecfdf5; }
+    .dayCandlePanel.short { border-color:#fecaca; background:#fff1f2; }
+    .dayCandleIcon { width:44px; height:44px; border-radius:8px; display:grid; place-items:center; background:#fff; border:1px solid var(--line); overflow:hidden; }
+    .dayCandleIcon img { width:34px; height:34px; object-fit:contain; display:block; }
+    .dayCandleFallback { color:var(--muted); font-weight:800; font-size:20px; }
+    .dayCandleTitle { font-size:15px; font-weight:800; letter-spacing:.03em; }
+    .dayCandleDetail { margin-top:3px; color:var(--muted); font-size:13px; }
+    .row { display:grid; grid-template-columns: 2fr 1fr; gap:14px; }
+    .controls { display:grid; grid-template-columns: minmax(180px, 220px) minmax(150px, 180px) minmax(150px, 180px) minmax(190px, 1fr) minmax(160px, 240px); gap:16px; align-items:end; max-width:1180px; }
+    label { display:block; color:var(--muted); font-size:12px; margin-bottom:5px; }
+    input, select { width:100%; border:1px solid var(--line); border-radius:6px; padding:9px 10px; font:inherit; background:#fff; color:var(--ink); }
+    input[type="color"] { width:88px; min-width:88px; max-width:88px; height:42px; min-height:42px; padding:4px; display:block; }
+    .colorFieldRow { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:14px 18px; align-items:end; }
+    .colorField { width:auto; min-width:112px; max-width:132px; }
+    button { border:0; border-radius:6px; padding:10px 14px; font:inherit; font-weight:700; color:#fff; background:var(--accent); cursor:pointer; }
+    button:disabled { cursor:default; opacity:.95; }
+    .ghostButton { background:#eef2ff; color:var(--accent); }
+    .closeButton { background:#f1f5f9; color:#475569; }
+    .primaryActionButton { background:var(--accent); color:#fff; }
+    .controlButton { min-height:42px; transition:background .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }
+    .startButton { background:#dbeafe; color:#1d4ed8; }
+    .startButton.active { background:#0f766e; color:#fff; box-shadow:0 0 0 3px rgba(15,118,110,.16); }
+    .stopButton { background:#f1f5f9; color:#475569; }
+    .stopButton.active { background:#475569; color:#fff; box-shadow:0 0 0 3px rgba(71,85,105,.16); }
+    .actionButton { background:#eef2ff; color:var(--accent); }
+    .dangerButton { background:#fff1f2; color:#be123c; }
+    .actionButton.flash, .dangerButton.flash { box-shadow:0 0 0 3px rgba(35,87,198,.18); }
+    .controlStatus { align-self:center; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#f8fafc; color:var(--muted); min-height:38px; display:flex; align-items:center; }
+    .controlStatus.ok { color:#047857; border-color:#a7f3d0; background:#ecfdf5; }
+    .controlStatus.warn { color:#b45309; border-color:#fed7aa; background:#fff7ed; }
+    .dangerText { color:var(--bad); }
+    .modalBackdrop { display:none; position:fixed; inset:0; z-index:2000; background:rgba(15,23,42,.42); align-items:center; justify-content:center; padding:24px; }
+    .modalBackdrop.open { display:flex; }
+    .modal { width:min(680px, 100%); max-height:90vh; overflow:auto; background:#fff; border-radius:8px; border:1px solid var(--line); box-shadow:0 24px 60px rgba(23,32,51,.28); }
+    .modalHeader { padding:16px 18px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .modalHeader h2 { margin:0; }
+    .modalBody { padding:18px; display:grid; gap:14px; }
+    .modalActions { padding:14px 18px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:10px; }
+    textarea { width:100%; min-height:320px; border:1px solid var(--line); border-radius:6px; padding:10px; font:13px Consolas, monospace; resize:vertical; }
+    .watchlistChecks { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px 14px; padding:10px; border:1px solid var(--line); border-radius:6px; }
+    .watchlistChecks label { display:flex; align-items:center; gap:8px; margin:0; color:var(--ink); font-size:13px; }
+    .watchlistChecks input { width:20px; height:20px; flex:0 0 auto; }
+    .paperToggleLarge { display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--line); border-radius:8px; background:#f8fafc; font-size:18px; font-weight:800; }
+    .paperToggleLarge.active { border-color:#a7f3d0; background:#ecfdf5; }
+    .paperToggleLarge label { margin:0; color:var(--ink); font-size:18px; }
+    .switchInput { appearance:none; width:50px !important; height:28px !important; flex:0 0 50px; padding:0; border:1px solid #cbd5e1; border-radius:999px; background:#cbd5e1; cursor:pointer; position:relative; transition:background .15s ease, border-color .15s ease; }
+    .switchInput::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,.24); transition:left .15s ease; }
+    .switchInput:checked { background:#0f766e; border-color:#0f766e; }
+    .switchInput:checked::after { left:25px; }
+    .switchState { margin-left:auto; min-width:56px; text-align:center; padding:5px 8px; border-radius:6px; background:#f1f5f9; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+    .switchState.active { background:#d1fae5; color:#047857; }
+    .fieldLabel { display:flex; align-items:center; gap:6px; }
+    .helpButton { width:22px; height:22px; border-radius:50%; padding:0; display:inline-grid; place-items:center; background:#eef2ff; color:var(--accent); font-size:13px; font-weight:800; }
+    .helpText { display:none; margin-top:6px; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:#f8fafc; color:var(--muted); font-size:12px; line-height:1.4; }
+    .helpText.open { display:block; }
+    .settingsCard { border-top:4px solid #d8e3f8; }
+    .configModalBody { gap:16px; }
+    .settingsGroup { border:1px solid var(--line); border-radius:8px; padding:14px; background:#f8fafc; display:grid; gap:14px; }
+    .settingsGroup h3 { margin:0; font-size:14px; color:var(--ink); }
+    .settingsGroupGrid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:14px; }
+    .settingsGroupGrid .fullWidth { grid-column:1 / -1; }
+    .switchLine { display:flex; align-items:center; gap:9px; min-height:38px; padding-bottom:2px; }
+    .checkField { display:flex; align-items:center; min-height:42px; padding:6px 0 0; }
+    .checkField .switchLine { min-height:0; padding:0; }
+    .checkField label { margin:0; color:var(--ink); }
+    .navTab { background:transparent; color:#d8deea; border:0; padding:7px 12px; border-radius:5px; font-weight:600; cursor:pointer; }
+    .navTab:hover, .navTab.active { background:#25324a; }
+    .view.hidden { display:none; }
+    .chartToolbar { display:grid; grid-template-columns:minmax(180px, 260px) minmax(130px, 180px) minmax(130px, 170px) minmax(140px, 180px) 1fr; gap:14px; align-items:end; margin-bottom:14px; }
+    .chartCanvasWrap { width:100%; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    #klineChart { width:100%; min-width:900px; height:620px; }
+    .chartStatusText, .chartMeta { color:var(--muted); font-size:12px; line-height:1.45; }
+    .chartMeta { margin-top:10px; }
+    .agentToolbar { display:grid; grid-template-columns:minmax(180px, 260px) minmax(140px, 180px) 1fr; gap:14px; align-items:end; margin-bottom:14px; }
+    .agentFrame { border:1px solid var(--line); border-radius:8px; background:var(--panel-soft); padding:14px; min-height:620px; }
+    .agentCeoCard { border:1px solid #c7d2fe; border-left:6px solid var(--accent); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; box-shadow:0 8px 18px rgba(23,32,51,.08); }
+    .agentDecisionGrid { display:grid; grid-template-columns:minmax(0, 2fr) minmax(260px, 1fr); gap:14px; align-items:start; }
+    .agentSection { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; }
+    .agentSection.riskSection { border-left:4px solid #475569; }
+    .agentSection h3 { margin:0 0 12px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    .agentGrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }
+    .agentCube { min-height:210px; border:1px solid var(--line); border-radius:8px; background:#fff; padding:14px; display:grid; gap:8px; box-shadow:0 6px 16px rgba(23,32,51,.07); }
+    .agentCube.long { border-left:6px solid #047857; }
+    .agentCube.short { border-left:6px solid #b42318; }
+    .agentCube.neutral { border-left:6px solid #667085; }
+    .agentCube.conflict { box-shadow:0 0 0 3px rgba(217,119,6,.18); }
+    .agentHead { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+    .agentName { font-weight:800; color:var(--ink); }
+    .agentSignal { padding:3px 8px; border-radius:999px; background:#eef2ff; color:var(--accent); font-size:11px; font-weight:800; white-space:nowrap; }
+    .agentSignal.long { background:#d1fae5; color:#047857; }
+    .agentSignal.short { background:#fee2e2; color:#b42318; }
+    .agentSignal.neutral { background:#f1f5f9; color:#475569; }
+    .agentFunction { color:var(--muted); font-size:12px; line-height:1.4; }
+    .agentTextBox { border:1px solid var(--line); border-radius:6px; background:#f8fafc; padding:9px; font:12px Consolas, monospace; line-height:1.45; min-height:74px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .agentScore { height:8px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
+    .agentScore span { display:block; height:100%; background:var(--accent); }
+    .llmAuditGrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; width:100%; }
+    .llmAuditItem { border:1px solid var(--line); border-radius:8px; background:var(--panel-soft); padding:10px; min-height:68px; min-width:0; }
+    .llmAuditItem.fullWidth { grid-column:1 / -1; }
+    .llmAuditValue { margin-top:5px; font-weight:800; overflow-wrap:anywhere; }
+    .llmBadge, .llmVerdict { display:inline-block; margin-top:6px; padding:5px 9px; border-radius:999px; background:#f1f5f9; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+    .llmBadge.active, .llmVerdict.ok { background:#d1fae5; color:#047857; }
+    .llmBadge.warn, .llmVerdict.warn, .llmVerdict.block_hint { background:#fff7ed; color:#b45309; }
+    .llmBadge.inactive, .llmVerdict.no_data, .llmVerdict.error { background:#f1f5f9; color:#475569; }
+    .llmVerdict.error { background:#fee2e2; color:#b42318; }
+    .llmNote { margin-top:5px; color:var(--ink); overflow-wrap:anywhere; line-height:1.45; }
+    .llmAuditCard h3 { margin:0 0 12px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    body[data-theme="dark"] .menubar { background:#020617; border-bottom-color:#1e293b; }
+    body[data-theme="dark"] .menuPanel,
+    body[data-theme="dark"] .menuPanel button,
+    body[data-theme="dark"] .modal,
+    body[data-theme="dark"] .card,
+    body[data-theme="dark"] .agentCube,
+    body[data-theme="dark"] .agentCeoCard,
+    body[data-theme="dark"] .agentSection { background:var(--panel); color:var(--ink); }
+    body[data-theme="dark"] .statusPanel,
+    body[data-theme="dark"] .dayCandlePanel,
+    body[data-theme="dark"] .settingsGroup,
+    body[data-theme="dark"] .controlStatus,
+    body[data-theme="dark"] .helpText,
+    body[data-theme="dark"] .agentFrame,
+    body[data-theme="dark"] .agentTextBox,
+    body[data-theme="dark"] .paperToggleLarge,
+    body[data-theme="dark"] .watchlistChecks { background:var(--panel-soft); color:var(--ink); }
+    body[data-theme="dark"] input,
+    body[data-theme="dark"] select,
+    body[data-theme="dark"] textarea { background:#020617; color:var(--ink); border-color:var(--line); }
+    body[data-theme="dark"] .menuPanel button:hover,
+    body[data-theme="dark"] .ghostButton,
+    body[data-theme="dark"] .actionButton,
+    body[data-theme="dark"] .helpButton { background:#1e3a8a; color:#dbeafe; }
+    body[data-theme="dark"] .closeButton,
+    body[data-theme="dark"] .stopButton { background:#334155; color:#e5e7eb; }
+    body[data-theme="dark"] .switchState,
+    body[data-theme="dark"] .agentSignal.neutral { background:#334155; color:#e5e7eb; }
+    body[data-theme="dark"] .agentScore { background:#334155; }
+    body[data-theme="dark"] .agentCube { box-shadow:0 6px 16px rgba(0,0,0,.25); }
+    body[data-theme="dark"] .modalBackdrop { background:rgba(2,6,23,.72); }
+    @media (max-width: 900px) { .grid, .row, .controls, .chartToolbar, .agentToolbar, .agentDecisionGrid, .llmAuditGrid { grid-template-columns:1fr; } header { align-items:stretch; flex-direction:column; } .statusPanel { min-width:0; } }
+  </style>
+</head>
+<body data-theme="dark">
+  <nav class="menubar">
+    <div class="menu">
+      <button id="settingsMenuButton" aria-haspopup="true" aria-expanded="false">Settings</button>
+      <div id="settingsMenuPanel" class="menuPanel">
+        <button id="apiSettingsButton">API Connection</button>
+        <button id="tradingSettingsButton">Trading Settings</button>
+        <button id="configSettingsButton">Config Settings</button>
+        <button id="indicatorSettingsButton">Indicator Settings</button>
+        <button id="agentSettingsButton">Agent Settings</button>
+      </div>
+    </div>
+    <button id="chartViewButton" class="navTab" type="button">Chart View</button>
+    <button id="agentViewButton" class="navTab" type="button">Agent Viewer</button>
+  </nav>
+  <header>
+    <div>
+      <h1>Phemex Strategy Observer</h1>
+      <div id="subtitle" class="label">Lade Daten...</div>
+    </div>
+    <div id="dayCandlePanel" class="dayCandlePanel neutral">
+      <div id="dayCandleIcon" class="dayCandleIcon"><span class="dayCandleFallback">–</span></div>
+      <div>
+        <div id="dayCandleTitle" class="dayCandleTitle">Day-Candle</div>
+        <div id="dayCandleDetail" class="dayCandleDetail">noch kein Status</div>
+      </div>
+    </div>
+    <div id="statusPanel" class="statusPanel stopped">
+      <div class="statusRing"><div class="statusDot"></div></div>
+      <div>
+        <div id="statusTitle" class="statusTitle">TESTMODUS</div>
+        <div id="statusDetail" class="statusDetail">Scanner gestoppt</div>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div id="dashboardView" class="view">
+    <div class="grid">
+      <div class="card"><div class="label">Phemex Futures Balance</div><div id="accountBalance" class="value">-</div></div>
+      <div class="card"><div class="label">Verfuegbar geschaetzt</div><div id="availableBalance" class="value">-</div></div>
+      <div class="card"><div class="label">Paper Profit</div><div id="profit" class="value">-</div></div>
+      <div class="card"><div class="label">Winrate</div><div id="winrate" class="value">-</div></div>
+    </div>
+    <section class="card settingsCard">
+      <h2>Bot-Steuerung</h2>
+      <div class="controls">
+        <button id="startBot" class="controlButton startButton">Start</button>
+        <button id="stopBot" class="controlButton stopButton">Stop</button>
+        <button id="reloadBot" class="controlButton actionButton">Reload</button>
+        <button id="resetBot" class="controlButton dangerButton">Reset Speicher</button>
+        <div><label for="assetFilter">Asset Anzeige (nur Ansicht)</label><select id="assetFilter"></select></div>
+        <div id="controlStatus" class="controlStatus">Bereit</div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Ollama Audit</h2>
+      <div id="llmAuditSummary"></div>
+    </section>
+    <section class="row">
+      <div class="card">
+        <h2 id="tradesTitle">Aktive & letzte -Trades</h2>
+        <table><thead><tr><th>Status</th><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>R</th><th>Confidence</th></tr></thead><tbody id="tradeRows"></tbody></table>
+      </div>
+      <div class="card">
+        <h2>Bot</h2>
+        <table><tbody id="botRows"></tbody></table>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Scan Debug</h2>
+      <table><thead><tr><th>Symbol</th><th>Status</th><th>Grund</th><th>Details</th><th>Gate</th></tr></thead><tbody id="debugRows"></tbody></table>
+    </section>
+    <section class="card">
+      <h2>Lernspeicher: beste Formation-Buckets</h2>
+      <table><thead><tr><th>Bucket</th><th>Anzahl</th><th>Winrate</th><th>Avg R</th></tr></thead><tbody id="bucketRows"></tbody></table>
+    </section>
+    <section class="card">
+      <h2>Letzter Zyklus</h2>
+      <pre id="cycle"></pre>
+    </section>
+    </div>
+    <div id="chartView" class="view hidden">
+      <section class="card">
+        <h2>Chart View</h2>
+        <div class="chartToolbar">
+          <div id="chartAssetWrap"><label for="chartAsset">Asset</label><select id="chartAsset"></select></div>
+          <div><label for="chartTimeframe">Timeframe</label><select id="chartTimeframe"><option value="60">1m</option><option value="300">5m</option><option value="900">15m</option><option value="1800">30m</option><option value="3600">1h</option><option value="14400">4h</option></select></div>
+          <div><label for="chartCandleLimit">Kerzen</label><select id="chartCandleLimit"><option value="250" selected>250</option><option value="500">500</option></select></div>
+          <button id="reloadChart" class="controlButton actionButton" type="button">Chart laden</button>
+          <div id="chartStatus" class="chartStatusText">Noch nicht geladen</div>
+        </div>
+        <div id="indicatorChartSettings" class="chartMeta"></div>
+        <div class="chartCanvasWrap"><div id="klineChart"></div></div>
+        <div id="chartMeta" class="chartMeta"></div>
+      </section>
+    </div>
+    <div id="agentView" class="view hidden">
+      <section class="card">
+        <h2>Agent Viewer</h2>
+        <div class="agentToolbar">
+          <div><label for="agentAsset">Asset</label><select id="agentAsset"></select></div>
+          <button id="reloadAgents" class="controlButton actionButton" type="button">Agenten nachladen</button>
+          <div id="agentStatus" class="chartStatusText">Noch nicht geladen</div>
+        </div>
+        <div class="agentFrame">
+          <div id="agentCeoCard" class="agentCeoCard"></div>
+          <div id="agentLlmAuditCard" class="agentCeoCard llmAuditCard"></div>
+          <div class="agentDecisionGrid">
+            <div class="agentSection">
+              <h3>Indikator- / Signal-Agenten</h3>
+              <div id="agentGrid" class="agentGrid"></div>
+            </div>
+            <div class="agentSection riskSection">
+              <h3>Risk / Pipeline-Agenten</h3>
+              <div id="agentRiskGrid" class="agentGrid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <div id="apiModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>API Connection</h2><button class="closeButton" data-close-modal="apiModal">Schliessen</button></div>
+      <div class="modalBody">
+        <div><label for="apiBaseUrl">Phemex Base URL</label><input id="apiBaseUrl" type="text"></div>
+        <div><label for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="off" placeholder="leer lassen = unveraendert"></div>
+        <div><label for="apiSecret">API Secret</label><input id="apiSecret" type="password" autocomplete="off" placeholder="leer lassen = unveraendert"></div>
+        <div id="apiPreview" class="label"></div>
+        <div id="apiStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveApiSettings" class="primaryActionButton">API speichern</button></div>
+    </div>
+  </div>
+  <div id="tradingModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Trading Settings</h2><button class="closeButton" data-close-modal="tradingModal">Schliessen</button></div>
+      <div class="modalBody">
+        <div id="paperToggleBox" class="paperToggleLarge"><input id="paperToggle" class="switchInput" type="checkbox"><label for="paperToggle">Paper-Trading</label><span id="paperToggleState" class="switchState">Aus</span></div>
+        <div id="tradeSizeAssetSelectorWrap"><label for="tradeSizeAssetSelector">Asset Positionsgroesse</label><select id="tradeSizeAssetSelector"></select></div>
+        <div><label for="sizeMode">Positionsgroesse</label><select id="sizeMode"><option value="usd">USD / USDT</option><option value="asset">Asset-Menge</option></select></div>
+        <div id="sizeUsdWrap"><label for="sizeUsd">Betrag USD/USDT</label><input id="sizeUsd" type="number" min="0" step="0.01"></div>
+        <div id="sizeAssetWrap"><label for="sizeAsset">Asset-Menge</label><input id="sizeAsset" type="number" min="0" step="0.000001"></div>
+        <div id="settingsStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveSettings" class="primaryActionButton">Speichern</button></div>
+    </div>
+  </div>
+  <div id="strategyModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Strategie</h2><button class="closeButton" data-close-modal="strategyModal">Schliessen</button></div>
+      <div class="modalBody">
+        <div id="strategyPath" class="label"></div>
+        <textarea id="strategyContent" readonly></textarea>
+        <div id="strategyStatus" class="label"></div>
+      </div>
+    </div>
+  </div>
+  <div id="configModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Config Settings</h2><button class="closeButton" data-close-modal="configModal">Schliessen</button></div>
+      <div class="modalBody configModalBody">
+        <div class="settingsGroup">
+          <h3>Allgemein / Bot Setting</h3>
+          <div class="settingsGroupGrid">
+            <div><label class="fieldLabel" for="cfgSingleAsset">Single Asset <button class="helpButton" type="button" data-help-target="singleAssetHelp">?</button></label><select id="cfgSingleAsset"></select><div id="singleAssetHelp" class="helpText">Das eine Asset, das im Single-Asset-Modus aktiv beobachtet wird.</div></div>
+            <div><label class="fieldLabel" for="cfgAssetMode">Asset Observer Mode <button class="helpButton" type="button" data-help-target="assetModeHelp">?</button></label><select id="cfgAssetMode"><option value="single">Single Asset</option><option value="multi">Multi Asset</option></select><div id="assetModeHelp" class="helpText">Single beobachtet genau ein Asset. Multi beobachtet alle angehakten Watchlist-Assets mit Risk Locks.</div></div>
+            <div><label class="fieldLabel" for="cfgUiTheme">Oberfläche <button class="helpButton" type="button" data-help-target="uiThemeHelp">?</button></label><select id="cfgUiTheme"><option value="light">White / Hell</option><option value="dark">Dark Mode</option></select><div id="uiThemeHelp" class="helpText">Schaltet die Dashboard-Oberflaeche zwischen heller und dunkler Ansicht um.</div></div>
+            <div id="cfgMultiAssetSection" class="fullWidth">
+              <div id="cfgWatchlistBox"></div>
+              <div><label class="fieldLabel" for="cfgMaxOpenTotal">Max offene Trades gesamt <button class="helpButton" type="button" data-help-target="maxTotalHelp">?</button></label><input id="cfgMaxOpenTotal" type="number" min="1" step="1"><div id="maxTotalHelp" class="helpText">Globale Sperre: So viele offene oder pending Paper-Trades duerfen insgesamt maximal gleichzeitig existieren.</div></div>
+              <div><label class="fieldLabel" for="cfgMaxOpenAsset">Max offene Trades pro Asset <button class="helpButton" type="button" data-help-target="maxAssetHelp">?</button></label><input id="cfgMaxOpenAsset" type="number" min="1" step="1"><div id="maxAssetHelp" class="helpText">Asset-Sperre: Verhindert, dass ein Symbol mehrere gleichzeitige Setups stapelt.</div></div>
+              <div><div class="switchLine"><input id="cfgCorrelationBlock" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgCorrelationBlock">Korrelierte gleiche Richtung sperren <button class="helpButton" type="button" data-help-target="corrHelp">?</button></label><span id="cfgCorrelationState" class="switchState">Aus</span></div><div id="corrHelp" class="helpText">Blockt z. B. einen zweiten Long auf stark korrelierte Crypto-Majors, wenn bereits ein aehnlicher aktiver Trade läuft.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Code Setting</h3>
+          <div class="settingsGroupGrid">
+            <div><label class="fieldLabel" for="cfgSignalTf">Trade Timeframe Suche <button class="helpButton" type="button" data-help-target="signalTfHelp">?</button></label><select id="cfgSignalTf"><option value="60">1m</option><option value="300">5m</option><option value="900">15m</option><option value="1800">30m</option><option value="3600">1h</option><option value="14400">4h</option></select><div id="signalTfHelp" class="helpText">Trade-Timeframe, auf dem Swing Highs / Swing Lows, Sweep und Dip gesucht werden.</div></div>
+            <div><label class="fieldLabel" for="cfgConfirmTf">Trade Entry Suche <button class="helpButton" type="button" data-help-target="entryTfHelp">?</button></label><select id="cfgConfirmTf"><option value="60">1m</option><option value="300">5m</option><option value="900">15m</option><option value="1800">30m</option></select><div id="entryTfHelp" class="helpText">Bei Single-Timeframe gleich wie Trade-Timeframe. Keine 5m/1m-Mischlogik.</div></div>
+            <div><label class="fieldLabel" for="cfgPhemexPoll">Phemex Abfrage in Sec <button class="helpButton" type="button" data-help-target="phemexPollHelp">?</button></label><input id="cfgPhemexPoll" type="number" min="5" step="1"><div id="phemexPollHelp" class="helpText">Wie oft der Bot neue Phemex-Kerzendaten und Accountdaten abfragt. Beispiel: 20 Sekunden.</div></div>
+            <div><label class="fieldLabel" for="cfgSystemLoop">System Verarbeitung in Sec <button class="helpButton" type="button" data-help-target="systemLoopHelp">?</button></label><input id="cfgSystemLoop" type="number" min="1" step="1"><div id="systemLoopHelp" class="helpText">Wie oft der Bot intern den letzten Kerzen-Cache verarbeitet, Paper-Trades prüft und den Status aktualisiert. Beispiel: 1 Sekunde.</div></div>
+            <div><label class="fieldLabel" for="cfgKlineLimit">Kerzenhistorie pro Abfrage <button class="helpButton" type="button" data-help-target="klineHelp">?</button></label><input id="cfgKlineLimit" type="number" min="50" step="10"><div id="klineHelp" class="helpText">Anzahl der letzten Kerzen, die der Bot pro Asset und Timeframe von Phemex laedt. Beispiel: 500 bei 15m bedeutet die letzten 500 15-Minuten-Kerzen. Mehr Kontext ist nuetzlich, aber erzeugt mehr API-Last.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Ökonomische Prüfung</h3>
+          <div class="settingsGroupGrid">
+            <div><label class="fieldLabel" for="cfgRewardRisk">TP <button class="helpButton" type="button" data-help-target="tpHelp">?</button></label><input id="cfgRewardRisk" type="number" min="0" step="0.1"><div id="tpHelp" class="helpText">Take-Profit-Anteil im Verhaeltnis. TP 2 und SL 1 bedeutet ein 2:1 Ziel.</div></div>
+            <div><label class="fieldLabel" for="cfgRiskUnit">SL <button class="helpButton" type="button" data-help-target="slRatioHelp">?</button></label><input id="cfgRiskUnit" type="number" min="0.01" step="0.1"><div id="slRatioHelp" class="helpText">Stop-Loss-Anteil im Verhaeltnis, normalerweise 1. Der echte Stop-Preis wird ueber die Stop-Loss-Methode bestimmt.</div></div>
+            <div id="cfgRewardRiskHint" class="label fullWidth">TP 2 : SL 1</div>
+            <div id="cfgProfitAssetWrap" class="fullWidth"><label for="cfgProfitAsset">Asset fuer ValueGate</label><select id="cfgProfitAsset"></select></div>
+            <div class="fullWidth"><label class="fieldLabel" for="cfgMinNetProfitFraction">Min Netto Profit vom Positionswert <button class="helpButton" type="button" data-help-target="minNetProfitHelp">?</button></label><input id="cfgMinNetProfitFraction" type="number" min="0" step="0.0001"><div id="minNetProfitHelp" class="helpText">Wirtschaftlicher Mindestgewinn nach intern geschaetzten Entry/Exit-Gebuehren. Beispiel: 0.0006 = 0.06 Prozent vom Positionswert. Im Multi-Asset-Modus gilt der Wert fuer das oben ausgewaehlte Asset.</div></div>
+          </div>
+        </div>
+        <div id="configStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveConfigSettings" class="primaryActionButton">Speichern</button></div>
+    </div>
+  </div>
+
+  <div id="indicatorModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Indicator Settings</h2><button class="closeButton" data-close-modal="indicatorModal">Schliessen</button></div>
+      <div class="modalBody configModalBody">
+        <div class="settingsGroup">
+          <h3>Alle Indikatoren</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorEnabled" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorEnabled">Indikatoren anzeigen <button class="helpButton" type="button" data-help-target="indicatorEnabledHelp">?</button></label><span id="cfgIndicatorEnabledState" class="switchState">Aus</span></div><div id="indicatorEnabledHelp" class="helpText">Hauptschalter fuer alle Chart-Indikatoren. Wenn aus, werden keine Market-Structure-, HMA- oder Triple-EMA-Daten im Chart angezeigt.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>BOS / CHoCH</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowBosChoch" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowBosChoch">BOS / CHoCH anzeigen <button class="helpButton" type="button" data-help-target="indicatorBosChochShowHelp">?</button></label><span id="cfgIndicatorShowBosChochState" class="switchState">Aus</span></div><div id="indicatorBosChochShowHelp" class="helpText">Zeigt Strukturbrueche im Chart. Der BOS / CHoCH Agent liest diese Break-Lines als Rohdaten.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorBosConfirmation">BOS Confirmation <button class="helpButton" type="button" data-help-target="indicatorBosConfirmationHelp">?</button></label><select id="cfgIndicatorBosConfirmation"><option value="Wicks">Wicks</option><option value="Candle Close">Candle Close</option></select><div id="indicatorBosConfirmationHelp" class="helpText">Wicks: Hoch/Tief reicht fuer Break. Candle Close: Kerzenschluss muss das Swing-Level brechen.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorBosChochLookbackDays">BOS / CHoCH Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorBosLookbackHelp">?</button></label><input id="cfgIndicatorBosChochLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorBosLookbackHelp" class="helpText">Begrenzt, wie viele Tage rueckwirkend BOS / CHoCH Linien angezeigt und an den Agenten gemeldet werden. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorFieldRow">
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorRisingColor">BOS Rising Farbe <button class="helpButton" type="button" data-help-target="indicatorBosRisingColorHelp">?</button></label><input id="cfgIndicatorRisingColor" type="color"><div id="indicatorBosRisingColorHelp" class="helpText">Farbe fuer steigende BOS / CHoCH Linien.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorFallingColor">BOS Falling Farbe <button class="helpButton" type="button" data-help-target="indicatorBosFallingColorHelp">?</button></label><input id="cfgIndicatorFallingColor" type="color"><div id="indicatorBosFallingColorHelp" class="helpText">Farbe fuer fallende BOS / CHoCH Linien.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>LL / HH Box</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowBoxes" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowBoxes">LL / HH Box anzeigen <button class="helpButton" type="button" data-help-target="indicatorBoxShowHelp">?</button></label><span id="cfgIndicatorShowBoxesState" class="switchState">Aus</span></div><div id="indicatorBoxShowHelp" class="helpText">Zeigt HH-/LL-Strukturboxen. Der Box Agent und Brain-Entry nutzen diese Zonen fuer Preisposition und Entry-Optimierung.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorHhllRange">HH / LL Range <button class="helpButton" type="button" data-help-target="indicatorHhllRangeHelp">?</button></label><input id="cfgIndicatorHhllRange" type="number" min="1" max="500" step="1"><div id="indicatorHhllRangeHelp" class="helpText">Anzahl Kerzen fuer neue Hoch-/Tief-Bereiche. Hoeher = weniger, aber groessere Strukturboxen.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorBoxExtendCandles">Box Auslauf Kerzen <button class="helpButton" type="button" data-help-target="indicatorBoxExtendHelp">?</button></label><input id="cfgIndicatorBoxExtendCandles" type="number" min="2" max="100" step="1"><div id="indicatorBoxExtendHelp" class="helpText">Verlaengert HH-/LL-Boxen nach rechts. Minimum 2 Kerzen, damit die Zone sichtbar weiterlaeuft.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorBoxesLookbackDays">LL / HH Box Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorBoxLookbackHelp">?</button></label><input id="cfgIndicatorBoxesLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorBoxLookbackHelp" class="helpText">Begrenzt die Anzeige und Agenten-Rohdaten fuer HH-/LL-Boxen. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorFieldRow">
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorBoxHighColor">HH Box Farbe <button class="helpButton" type="button" data-help-target="indicatorBoxHighColorHelp">?</button></label><input id="cfgIndicatorBoxHighColor" type="color"><div id="indicatorBoxHighColorHelp" class="helpText">Farbe fuer obere HH-/High-Boxen.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorBoxLowColor">LL Box Farbe <button class="helpButton" type="button" data-help-target="indicatorBoxLowColorHelp">?</button></label><input id="cfgIndicatorBoxLowColor" type="color"><div id="indicatorBoxLowColorHelp" class="helpText">Farbe fuer untere LL-/Low-Boxen.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>HH / LH / HL / LL</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowSwingLabels" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowSwingLabels">Swing Labels anzeigen <button class="helpButton" type="button" data-help-target="indicatorSwingShowHelp">?</button></label><span id="cfgIndicatorShowSwingLabelsState" class="switchState">Aus</span></div><div id="indicatorSwingShowHelp" class="helpText">Zeigt HH, LH, HL und LL Labels. Der Swing-Label Agent nutzt diese Strukturfolge fuer LONG-/SHORT-Bias.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSwingSize">Swing Length <button class="helpButton" type="button" data-help-target="indicatorSwingSizeHelp">?</button></label><input id="cfgIndicatorSwingSize" type="number" min="1" max="50" step="1"><div id="indicatorSwingSizeHelp" class="helpText">Kerzen links/rechts zur Pivot-Bestaetigung. Hoeher = weniger Labels, niedriger = mehr Labels.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSwingLabelsLookbackDays">Swing Labels Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorSwingLookbackHelp">?</button></label><input id="cfgIndicatorSwingLabelsLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorSwingLookbackHelp" class="helpText">Begrenzt HH, LH, HL, LL Labels im Chart und fuer den Swing-Label Agenten. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorFieldRow">
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorSwingRisingColor">HH / HL Farbe <button class="helpButton" type="button" data-help-target="indicatorSwingRisingColorHelp">?</button></label><input id="cfgIndicatorSwingRisingColor" type="color"><div id="indicatorSwingRisingColorHelp" class="helpText">Farbe fuer bullische Swing Labels HH und HL.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorSwingFallingColor">LH / LL Farbe <button class="helpButton" type="button" data-help-target="indicatorSwingFallingColorHelp">?</button></label><input id="cfgIndicatorSwingFallingColor" type="color"><div id="indicatorSwingFallingColorHelp" class="helpText">Farbe fuer bearische Swing Labels LH und LL.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Support / Resistance Dynamic</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowSupportResistance" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowSupportResistance">Support / Resistance anzeigen <button class="helpButton" type="button" data-help-target="indicatorSupportResistanceShowHelp">?</button></label><span id="cfgIndicatorShowSupportResistanceState" class="switchState">Aus</span></div><div id="indicatorSupportResistanceShowHelp" class="helpText">Berechnet dynamische Support-/Resistance-Level aus Pivot-Clustern. Der Support / Resistance Agent liest diese Levels und Brueche.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrPivotPeriod">Pivot Period <button class="helpButton" type="button" data-help-target="indicatorSrPivotPeriodHelp">?</button></label><input id="cfgIndicatorSrPivotPeriod" type="number" min="4" max="30" step="1"><div id="indicatorSrPivotPeriodHelp" class="helpText">Pivot-Periode fuer die Level-Erkennung.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrSource">Source <button class="helpButton" type="button" data-help-target="indicatorSrSourceHelp">?</button></label><select id="cfgIndicatorSrSource"><option value="High/Low">High/Low</option><option value="Close/Open">Close/Open</option></select><div id="indicatorSrSourceHelp" class="helpText">Welche Kursquelle fuer die Pivot-Berechnung verwendet wird.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrMaxPivots">Max Pivot <button class="helpButton" type="button" data-help-target="indicatorSrMaxPivotsHelp">?</button></label><input id="cfgIndicatorSrMaxPivots" type="number" min="5" max="100" step="1"><div id="indicatorSrMaxPivotsHelp" class="helpText">Maximale Anzahl gespeicherter Pivotpunkte.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrChannelWidthPercent">Channel Width % <button class="helpButton" type="button" data-help-target="indicatorSrChannelWidthHelp">?</button></label><input id="cfgIndicatorSrChannelWidthPercent" type="number" min="1" max="100" step="1"><div id="indicatorSrChannelWidthHelp" class="helpText">Maximale Kanalbreite in Prozent fuer Cluster-Bildung.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrMaxLevels">Max S/R <button class="helpButton" type="button" data-help-target="indicatorSrMaxLevelsHelp">?</button></label><input id="cfgIndicatorSrMaxLevels" type="number" min="1" max="10" step="1"><div id="indicatorSrMaxLevelsHelp" class="helpText">Maximale Anzahl gezeichneter Support-/Resistance-Level.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSrMinStrength">Min Strength <button class="helpButton" type="button" data-help-target="indicatorSrMinStrengthHelp">?</button></label><input id="cfgIndicatorSrMinStrength" type="number" min="1" max="10" step="1"><div id="indicatorSrMinStrengthHelp" class="helpText">Mindeststaerke fuer ein Support-/Resistance-Level.</div></div>
+            <div class="colorField"><label class="fieldLabel" for="cfgIndicatorSrSupportColor">Support Farbe <button class="helpButton" type="button" data-help-target="indicatorSrSupportColorHelp">?</button></label><input id="cfgIndicatorSrSupportColor" type="color"><div id="indicatorSrSupportColorHelp" class="helpText">Farbe fuer Support-Level.</div></div>
+            <div class="colorField"><label class="fieldLabel" for="cfgIndicatorSrResistanceColor">Resistance Farbe <button class="helpButton" type="button" data-help-target="indicatorSrResistanceColorHelp">?</button></label><input id="cfgIndicatorSrResistanceColor" type="color"><div id="indicatorSrResistanceColorHelp" class="helpText">Farbe fuer Resistance-Level.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>HMA</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowHma" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowHma">HMA anzeigen <button class="helpButton" type="button" data-help-target="indicatorHmaShowHelp">?</button></label><span id="cfgIndicatorShowHmaState" class="switchState">Aus</span></div><div id="indicatorHmaShowHelp" class="helpText">Zeigt die Hull Moving Average Linie. Der HMA Agent liest Trendneigung und Preisposition zur HMA.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorHmaPeriod">HMA Period <button class="helpButton" type="button" data-help-target="indicatorHmaPeriodHelp">?</button></label><input id="cfgIndicatorHmaPeriod" type="number" min="1" max="500" step="1"><div id="indicatorHmaPeriodHelp" class="helpText">Periode fuer die Hull Moving Average. Niedriger reagiert schneller, hoeher glättet staerker.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorHmaLookbackDays">HMA Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorHmaLookbackHelp">?</button></label><input id="cfgIndicatorHmaLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorHmaLookbackHelp" class="helpText">Begrenzt die HMA-Linie zeitlich. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorField"><label class="fieldLabel" for="cfgIndicatorHmaColor">HMA Farbe <button class="helpButton" type="button" data-help-target="indicatorHmaColorHelp">?</button></label><input id="cfgIndicatorHmaColor" type="color"><div id="indicatorHmaColorHelp" class="helpText">Farbe der HMA Linie im Chart.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>SMA</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowSma" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowSma">SMA anzeigen <button class="helpButton" type="button" data-help-target="indicatorSmaShowHelp">?</button></label><span id="cfgIndicatorShowSmaState" class="switchState">Aus</span></div><div id="indicatorSmaShowHelp" class="helpText">Zeigt die Simple Moving Average Linie. Der SMA Agent nutzt Preisposition und SMA-Neigung.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSmaPeriod">SMA Period <button class="helpButton" type="button" data-help-target="indicatorSmaPeriodHelp">?</button></label><input id="cfgIndicatorSmaPeriod" type="number" min="1" max="500" step="1"><div id="indicatorSmaPeriodHelp" class="helpText">Periode fuer den Simple Moving Average. Niedriger reagiert schneller, hoeher glättet staerker.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorSmaLookbackDays">SMA Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorSmaLookbackHelp">?</button></label><input id="cfgIndicatorSmaLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorSmaLookbackHelp" class="helpText">Begrenzt die SMA-Linie zeitlich. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorField"><label class="fieldLabel" for="cfgIndicatorSmaColor">SMA Farbe <button class="helpButton" type="button" data-help-target="indicatorSmaColorHelp">?</button></label><input id="cfgIndicatorSmaColor" type="color"><div id="indicatorSmaColorHelp" class="helpText">Farbe der SMA Linie im Chart.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Triple EMA</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowTripleEma" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowTripleEma">Triple EMA anzeigen <button class="helpButton" type="button" data-help-target="indicatorTripleEmaShowHelp">?</button></label><span id="cfgIndicatorShowTripleEmaState" class="switchState">Aus</span></div><div id="indicatorTripleEmaShowHelp" class="helpText">Zeigt Fast und Slow Triple EMA. Der Triple EMA Agent bewertet Fast-zu-Slow Richtung und Abstand.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorTripleEmaPeriod">Triple EMA Fast Period <button class="helpButton" type="button" data-help-target="indicatorTripleFastPeriodHelp">?</button></label><input id="cfgIndicatorTripleEmaPeriod" type="number" min="1" max="500" step="1"><div id="indicatorTripleFastPeriodHelp" class="helpText">Schnelle Triple-EMA-Periode. Diese Linie reagiert schneller auf Trendwechsel.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorTripleEmaSlowPeriod">Triple EMA Slow Period <button class="helpButton" type="button" data-help-target="indicatorTripleSlowPeriodHelp">?</button></label><input id="cfgIndicatorTripleEmaSlowPeriod" type="number" min="1" max="500" step="1"><div id="indicatorTripleSlowPeriodHelp" class="helpText">Langsame Triple-EMA-Periode. Der Agent vergleicht Fast gegen Slow.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorTripleEmaLookbackDays">Triple EMA Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorTripleLookbackHelp">?</button></label><input id="cfgIndicatorTripleEmaLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorTripleLookbackHelp" class="helpText">Begrenzt die Triple-EMA-Linien zeitlich. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorFieldRow">
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorTripleEmaColor">Triple EMA Fast Farbe <button class="helpButton" type="button" data-help-target="indicatorTripleFastColorHelp">?</button></label><input id="cfgIndicatorTripleEmaColor" type="color"><div id="indicatorTripleFastColorHelp" class="helpText">Farbe der schnellen Triple-EMA-Linie.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgIndicatorTripleEmaSlowColor">Triple EMA Slow Farbe <button class="helpButton" type="button" data-help-target="indicatorTripleSlowColorHelp">?</button></label><input id="cfgIndicatorTripleEmaSlowColor" type="color"><div id="indicatorTripleSlowColorHelp" class="helpText">Farbe der langsamen Triple-EMA-Linie.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>MFI</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgIndicatorShowMfi" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgIndicatorShowMfi">MFI anzeigen <button class="helpButton" type="button" data-help-target="indicatorMfiShowHelp">?</button></label><span id="cfgIndicatorShowMfiState" class="switchState">Aus</span></div><div id="indicatorMfiShowHelp" class="helpText">Berechnet den Money Flow Index fuer Kapitalfluss-Kontext. Der MFI Agent nutzt diesen Wert fuer LONG-/SHORT-Bias.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorMfiPeriod">MFI Period <button class="helpButton" type="button" data-help-target="indicatorMfiPeriodHelp">?</button></label><input id="cfgIndicatorMfiPeriod" type="number" min="1" max="500" step="1"><div id="indicatorMfiPeriodHelp" class="helpText">Periode fuer den Money Flow Index.</div></div>
+            <div><label class="fieldLabel" for="cfgIndicatorMfiLookbackDays">MFI Lookback Tage <button class="helpButton" type="button" data-help-target="indicatorMfiLookbackHelp">?</button></label><input id="cfgIndicatorMfiLookbackDays" type="number" min="0" max="365" step="1"><div id="indicatorMfiLookbackHelp" class="helpText">Begrenzt den MFI-Kontext zeitlich. 0 = gesamte geladene Historie.</div></div>
+            <div class="colorField"><label class="fieldLabel" for="cfgIndicatorMfiColor">MFI Farbe <button class="helpButton" type="button" data-help-target="indicatorMfiColorHelp">?</button></label><input id="cfgIndicatorMfiColor" type="color"><div id="indicatorMfiColorHelp" class="helpText">Farbe fuer den MFI-Kontext.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Kerzenfarben</h3>
+          <div class="settingsGroupGrid">
+            <div class="colorFieldRow">
+              <div class="colorField"><label class="fieldLabel" for="cfgChartCandleUpColor">Kerze steigend <button class="helpButton" type="button" data-help-target="chartCandleUpColorHelp">?</button></label><input id="cfgChartCandleUpColor" type="color"><div id="chartCandleUpColorHelp" class="helpText">Farbe fuer steigende Kerzen.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgChartCandleDownColor">Kerze fallend <button class="helpButton" type="button" data-help-target="chartCandleDownColorHelp">?</button></label><input id="cfgChartCandleDownColor" type="color"><div id="chartCandleDownColorHelp" class="helpText">Farbe fuer fallende Kerzen.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgChartCandleNoChangeColor">Kerze neutral <button class="helpButton" type="button" data-help-target="chartCandleNoChangeColorHelp">?</button></label><input id="cfgChartCandleNoChangeColor" type="color"><div id="chartCandleNoChangeColorHelp" class="helpText">Farbe fuer Kerzen ohne Kursveraenderung.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgChartGridColor">Grid Farbe <button class="helpButton" type="button" data-help-target="chartGridColorHelp">?</button></label><input id="cfgChartGridColor" type="color"><div id="chartGridColorHelp" class="helpText">Farbe der Chart-Gitterlinien.</div></div>
+              <div class="colorField"><label class="fieldLabel" for="cfgChartBackgroundColor">Chart Hintergrund <button class="helpButton" type="button" data-help-target="chartBackgroundColorHelp">?</button></label><input id="cfgChartBackgroundColor" type="color"><div id="chartBackgroundColorHelp" class="helpText">Hintergrundfarbe des Chartfensters.</div></div>
+            </div>
+          </div>
+        </div>
+        <div id="indicatorSettingsStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveIndicatorSettings" class="primaryActionButton">Speichern</button></div>
+    </div>
+  </div>
+  <div id="agentSettingsModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Agent Settings</h2><button class="closeButton" data-close-modal="agentSettingsModal">Schliessen</button></div>
+      <div class="modalBody configModalBody">
+        <div class="settingsGroup">
+          <h3>Brain / CEO</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgBrainEnabled" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgBrainEnabled">Brain Handelsentscheidung aktiv <button class="helpButton" type="button" data-help-target="brainEnabledHelp">?</button></label><span id="cfgBrainEnabledState" class="switchState">Aus</span></div><div id="brainEnabledHelp" class="helpText">Aktiviert die neue Pipeline: Agenten liefern Daten, Brain entscheidet, CEO kontrolliert, Economic Gate sperrt hart.</div></div>
+            <div><label class="fieldLabel" for="cfgBrainMinScore">Brain Mindestscore <button class="helpButton" type="button" data-help-target="brainMinScoreHelp">?</button></label><input id="cfgBrainMinScore" type="number" min="1" max="100" step="1"><div id="brainMinScoreHelp" class="helpText">Mindestqualitaet, die der Brain-Kandidat erreichen muss, bevor ein Trade-Plan an CEO und Economic Gate geht.</div></div>
+            <div><label class="fieldLabel" for="cfgBrainMinScoreGap">Min Score Abstand <button class="helpButton" type="button" data-help-target="brainScoreGapHelp">?</button></label><input id="cfgBrainMinScoreGap" type="number" min="1" max="100" step="1"><div id="brainScoreGapHelp" class="helpText">Mindestabstand zwischen LONG- und SHORT-Score. Hoeher = weniger Trades bei gemischten Signalen.</div></div>
+            <div><label class="fieldLabel" for="cfgBrainMinAlignment">Min Agenten Alignment <button class="helpButton" type="button" data-help-target="brainAlignmentHelp">?</button></label><input id="cfgBrainMinAlignment" type="number" min="1" max="10" step="1"><div id="brainAlignmentHelp" class="helpText">Mindestanzahl Agenten, die in dieselbe Richtung zeigen muessen.</div></div>
+            <div><label class="fieldLabel" for="cfgBrainMemoryMinCount">Memory Mindestanzahl <button class="helpButton" type="button" data-help-target="brainMemoryCountHelp">?</button></label><input id="cfgBrainMemoryMinCount" type="number" min="1" max="100" step="1"><div id="brainMemoryCountHelp" class="helpText">Anzahl historischer Paper-Trades, ab der ein Muster statistisch als bekannt gilt.</div></div>
+            <div><label class="fieldLabel" for="cfgBrainEntryBoxOffset">Entry Box Offset <button class="helpButton" type="button" data-help-target="brainEntryOffsetHelp">?</button></label><input id="cfgBrainEntryBoxOffset" type="number" min="0" max="1" step="0.01"><div id="brainEntryOffsetHelp" class="helpText">Position innerhalb der Strukturbox. 0 = untere Kante, 1 = obere Kante. Memory kann diesen Wert spaeter optimieren.</div></div>
+            <div class="fullWidth"><div class="switchLine"><input id="cfgBrainRequireBox" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgBrainRequireBox">Box fuer Trade erzwingen <button class="helpButton" type="button" data-help-target="brainRequireBoxHelp">?</button></label><span id="cfgBrainRequireBoxState" class="switchState">Aus</span></div><div id="brainRequireBoxHelp" class="helpText">Wenn aktiv, darf Brain nur mit passender LL/HH Box einen Trade-Kandidaten bauen.</div></div>
+            <div class="fullWidth"><div class="switchLine"><input id="cfgBrainLlmLayer" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgBrainLlmLayer">LLM Lernschicht Schnittstelle <button class="helpButton" type="button" data-help-target="brainLlmLayerHelp">?</button></label><span id="cfgBrainLlmLayerState" class="switchState">Aus</span></div><div id="brainLlmLayerHelp" class="helpText">Vorbereiteter Analysekanal. LLM erklaert, bewertet und beraet; es gibt keine harte Trade-Freigabe.</div></div>
+            <div class="fullWidth"><div class="switchLine"><input id="cfgAgentShowOffline" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgentShowOffline">Offline Agenten einblenden <button class="helpButton" type="button" data-help-target="agentShowOfflineHelp">?</button></label><span id="cfgAgentShowOfflineState" class="switchState">Aus</span></div><div id="agentShowOfflineHelp" class="helpText">Wenn aktiv, zeigt der Agent Viewer auch deaktivierte Agenten oder Agenten mit ausgeschaltetem gekoppeltem Indikator. Wenn aus, werden diese Agenten im Agent Viewer ausgeblendet.</div></div>
+          </div>
+        </div>
+        <div class="settingsGroup">
+          <h3>Ollama Audit</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgOllamaEnabled" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgOllamaEnabled">Ollama lokal aktiv <button class="helpButton" type="button" data-help-target="ollamaEnabledHelp">?</button></label><span id="cfgOllamaEnabledState" class="switchState">Aus</span></div><div id="ollamaEnabledHelp" class="helpText">Aktiviert nur den lokalen Audit-Call zu Ollama. Entry, SL, TP und Orders bleiben unveraendert in der vorhandenen Pipeline.</div></div>
+            <div><label class="fieldLabel" for="cfgOllamaBaseUrl">Ollama Base URL <button class="helpButton" type="button" data-help-target="ollamaBaseUrlHelp">?</button></label><input id="cfgOllamaBaseUrl" type="text"><div id="ollamaBaseUrlHelp" class="helpText">Lokale Ollama-Adresse. Standard: http://127.0.0.1:11434</div></div>
+            <div><label class="fieldLabel" for="cfgOllamaModel">Ollama Modell <button class="helpButton" type="button" data-help-target="ollamaModelHelp">?</button></label><input id="cfgOllamaModel" type="text"><div id="ollamaModelHelp" class="helpText">Empfohlen fuer diesen Bot: qwen2.5:3b.</div></div>
+            <div><label class="fieldLabel" for="cfgOllamaTimeout">Timeout Sekunden <button class="helpButton" type="button" data-help-target="ollamaTimeoutHelp">?</button></label><input id="cfgOllamaTimeout" type="number" min="1" max="60" step="1"><div id="ollamaTimeoutHelp" class="helpText">Maximale Wartezeit auf die lokale Ollama-Antwort.</div></div>
+            <div><label class="fieldLabel" for="cfgOllamaMaxPrompt">Max Prompt Zeichen <button class="helpButton" type="button" data-help-target="ollamaPromptHelp">?</button></label><input id="cfgOllamaMaxPrompt" type="number" min="500" max="20000" step="100"><div id="ollamaPromptHelp" class="helpText">Begrenzt den Audit-Kontext, der an Ollama gesendet wird.</div></div>
+            <div><label class="fieldLabel" for="cfgOllamaTemperature">Temperature <button class="helpButton" type="button" data-help-target="ollamaTempHelp">?</button></label><input id="cfgOllamaTemperature" type="number" min="0" max="1" step="0.1"><div id="ollamaTempHelp" class="helpText">0 = deterministischer Audit. Hoehere Werte sind fuer diesen Bot nicht empfohlen.</div></div>
+            <div class="fullWidth"><div class="switchLine"><input id="cfgOllamaBlockHint" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgOllamaBlockHint">Block-Hinweis auswerten <button class="helpButton" type="button" data-help-target="ollamaBlockHintHelp">?</button></label><span id="cfgOllamaBlockHintState" class="switchState">Aus</span></div><div id="ollamaBlockHintHelp" class="helpText">Nur Hinweis-Schicht. Das Economic Gate bleibt die harte Sperre.</div></div>
+          </div>
+        </div>
+        <div id="agentSettingsGroups"></div>
+        <div id="agentSettingsStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveAgentSettings" class="primaryActionButton">Speichern</button></div>
+    </div>
+  </div>
+  <div id="strategyConfigModal" class="modalBackdrop">
+    <div class="modal">
+      <div class="modalHeader"><h2>Strategy Setting</h2><button class="closeButton" data-close-modal="strategyConfigModal">Schliessen</button></div>
+      <div class="modalBody configModalBody">
+        <div class="settingsGroup">
+          <h3>Strategy Setting</h3>
+          <div class="settingsGroupGrid">
+            <div><label class="fieldLabel" for="cfgEntryMode">Entry Mode <button class="helpButton" type="button" data-help-target="entryModeHelp">?</button></label><select id="cfgEntryMode"><option value="edge">edge</option><option value="mid">mid</option><option value="conservative">conservative</option></select><div id="entryModeHelp" class="helpText">Legt fest, wo innerhalb der Entry-Zone geplant wird: aggressiv an der Kante, mittig oder konservativer.</div></div>
+            <div><label class="fieldLabel" for="cfgStopMode">Stop-Loss Methode <button class="helpButton" type="button" data-help-target="stopModeHelp">?</button></label><select id="cfgStopMode"><option value="structure">Zone/Struktur</option><option value="fixed_percent">Fixer Prozent-Stop</option></select><div id="stopModeHelp" class="helpText">Zone/Struktur setzt den Stop hinter die 5m Supply-/Demand-Zone. Fixer Prozent-Stop setzt ihn mit festem Abstand vom Entry.</div></div>
+            <div><label class="fieldLabel" for="cfgStopPercent">SL Prozent vom Entry <button class="helpButton" type="button" data-help-target="stopPercentHelp">?</button></label><input id="cfgStopPercent" type="number" min="0" step="0.01"><div id="stopPercentHelp" class="helpText">Nur beim fixen Prozent-Stop: Abstand des Stop-Loss vom Entry in Prozent.</div></div>
+            <div><label class="fieldLabel" for="cfgStopBuffer">SL Struktur-Puffer Prozent <button class="helpButton" type="button" data-help-target="stopBufferHelp">?</button></label><input id="cfgStopBuffer" type="number" min="0" step="0.01"><div id="stopBufferHelp" class="helpText">Nur bei Zone/Struktur: Extra-Puffer hinter der Supply-/Demand-Zone, um sehr knappe Stops zu vermeiden.</div></div>
+            <div><label class="fieldLabel" for="cfgMinSweep">Min Zone/Impuls Filter <button class="helpButton" type="button" data-help-target="sweepHelp">?</button></label><input id="cfgMinSweep" type="number" min="0" step="0.01"><div id="sweepHelp" class="helpText">Legacy-Feld: wird fuer die neue Supply/Demand-Strategie nicht als Hauptfilter verwendet.</div></div>
+            <div><label class="fieldLabel" for="cfgStructureLookback">Structure Lookback Kerzen <button class="helpButton" type="button" data-help-target="lookbackHelp">?</button></label><input id="cfgStructureLookback" type="number" min="10" step="1"><div id="lookbackHelp" class="helpText">Wie weit der Bot auf dem Signal-Timeframe nach Supply-/Demand-Zonen sucht.</div></div>
+            <div><label class="fieldLabel" for="cfgPivotStrength">Pivot Strength (Legacy) <button class="helpButton" type="button" data-help-target="pivotHelp">?</button></label><input id="cfgPivotStrength" type="number" min="1" step="1"><div id="pivotHelp" class="helpText">Legacy-Feld: fuer alte Pivot-Sweeps, nicht fuer die Supply/Demand-Zonenerkennung.</div></div>
+            <div><label class="fieldLabel" for="cfgRejectionMode">Sweep Ablehnung (Legacy) <button class="helpButton" type="button" data-help-target="rejectionHelp">?</button></label><select id="cfgRejectionMode"><option value="close">Close zurueck ins Level</option><option value="wick">Wick Ablehnung</option></select><div id="rejectionHelp" class="helpText">Legacy-Feld: die neue Strategie bestaetigt ueber 1m Entry-Reaktion statt reiner Sweep-Ablehnung.</div></div>
+            <div><label class="fieldLabel" for="cfgEntrySearchCandles">Reaction Lookback Kerzen <button class="helpButton" type="button" data-help-target="entrySearchHelp">?</button></label><input id="cfgEntrySearchCandles" type="number" min="1" step="1"><div id="entrySearchHelp" class="helpText"></div></div>
+            <div><label class="fieldLabel" for="cfgSwingLookback">Swing Lookback Kerzen <button class="helpButton" type="button" data-help-target="swingLookbackHelp">?</button></label><input id="cfgSwingLookback" type="number" min="20" step="1"><div id="swingLookbackHelp" class="helpText">Wie weit der Bot im gleichen Timeframe nach signifikanten Swing Highs / Swing Lows sucht.</div></div>
+            <div><label class="fieldLabel" for="cfgSwingPivot">Swing Pivot Strength <button class="helpButton" type="button" data-help-target="swingPivotHelp">?</button></label><input id="cfgSwingPivot" type="number" min="1" step="1"><div id="swingPivotHelp" class="helpText">Wie viele Kerzen links/rechts ein Swing High oder Swing Low bestaetigen.</div></div>
+            <div><label class="fieldLabel" for="cfgSwingPadding">Swing Zone Padding <button class="helpButton" type="button" data-help-target="swingPaddingHelp">?</button></label><input id="cfgSwingPadding" type="number" min="0" step="0.0001"><div id="swingPaddingHelp" class="helpText">Zusatzbreite fuer die Swing-Level-Zone.</div></div>
+            <div><label class="fieldLabel" for="cfgDipWick">Dip Wick Ratio <button class="helpButton" type="button" data-help-target="dipWickHelp">?</button></label><input id="cfgDipWick" type="number" min="0" max="1" step="0.01"><div id="dipWickHelp" class="helpText">Mindest-Wick-Reaktion fuer Dip / Abpraller.</div></div>
+            <div><label class="fieldLabel" for="cfgMinBody">Dip Body Ratio <button class="helpButton" type="button" data-help-target="bodyHelp">?</button></label><input id="cfgMinBody" type="number" min="0" max="1" step="0.01"><div id="bodyHelp" class="helpText">Mindest-Koerperanteil fuer Dip-Reaktion. Kein Volumenfilter.</div></div>
+            <div><label class="fieldLabel" for="cfgTrendFilter">Trendfilter <button class="helpButton" type="button" data-help-target="trendHelp">?</button></label><div class="checkField"><div class="switchLine"><input id="cfgTrendFilter" class="switchInput" type="checkbox"><label for="cfgTrendFilter">Blockierend nutzen</label><span id="cfgTrendState" class="switchState">Aus</span></div></div><div id="trendHelp" class="helpText">Standard ist Day-Candle als Status. Nur wenn aktiv, blockt der Bot je nach Modus gegen die Trendrichtung.</div></div>
+            <div><label class="fieldLabel" for="cfgTrendMode">Trend Modus <button class="helpButton" type="button" data-help-target="trendModeHelp">?</button></label><select id="cfgTrendMode"><option value="day_candle">Day-Candle</option><option value="ema">EMA optional</option><option value="none">Aus</option></select><div id="trendModeHelp" class="helpText">Day-Candle wird aus den geladenen Trade-Timeframe-Kerzen gebaut. EMA ist nur optional.</div></div>
+            <div><label class="fieldLabel" for="cfgTrendEmaSource">Custom EMA <button class="helpButton" type="button" data-help-target="emaSourceHelp">?</button></label><select id="cfgTrendEmaSource"><option value="daily">Daily EMA</option><option value="trade_timeframe">Custom EMA</option></select><div id="emaSourceHelp" class="helpText">Daily EMA nutzt den festen Daily-EMA-Kontext. Custom EMA nutzt den eingestellten Trade-Timeframe mit frei einstellbarem EMA-Wert.</div></div>
+            <div><label class="fieldLabel" for="cfgTrendEma">Custom EMA Wert <button class="helpButton" type="button" data-help-target="emaHelp">?</button></label><input id="cfgTrendEma" type="number" min="2" step="1"><div id="emaHelp" class="helpText">Nur bei Custom EMA sichtbar. Beispiel: 50 = EMA 50 auf dem Trade-Timeframe.</div></div>
+          </div>
+        </div>
+        <div id="strategyConfigStatus" class="label"></div>
+      </div>
+      <div class="modalActions"><button id="saveStrategyConfigSettings" class="primaryActionButton">Speichern</button></div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.5/dist/umd/klinecharts.min.js"></script>
+  <script>
+
+    const fmt = (value, fallback='-') => value === null || value === undefined ? fallback : value;
+    const pct = value => value === null || value === undefined ? '-' : (value * 100).toFixed(2) + '%';
+    const money = (value, currency='USDT') => value === null || value === undefined ? '-' : Number(value).toFixed(2) + ' ' + currency;
+    const ALL_ASSETS_VALUE = '__ALL__';
+    let selectedAsset = null;
+    let selectedAgentAsset = null;
+    let latestStatusData = null;
+    let currentView = 'dashboard';
+    let lastChartKey = '';
+    let klineChart = null;
+    let klineOverlayIds = [];
+    let marketStructureOverlaysRegistered = false;
+    let chartConfig = null;
+    let latestConfig = {};
+    function applyUiTheme(theme) {
+      const value = theme === 'light' ? 'light' : 'dark';
+      document.body.dataset.theme = value;
+    }
+    let localTradeSizes = {};
+    let activeTradeSizeSymbol = null;
+    let localMinProfitFractions = {};
+    let lastActionMessage = null;
+    let lastIndicatorData = null;
+    let lastChartRows = [];
+    function td(value) { return `<td>${value}</td>`; }
+    function assetViewLabel(value) {
+      return value ? value : 'Gesamt';
+    }
+    function selectedAssetValue() {
+      return selectedAsset || ALL_ASSETS_VALUE;
+    }
+    function setSelectedAssetFromDropdown(value) {
+      selectedAsset = value === ALL_ASSETS_VALUE ? null : value;
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+    }
+    function timeframeLabel(seconds) {
+      const map = {60:'1m', 300:'5m', 900:'15m', 1800:'30m', 3600:'1h', 14400:'4h', 86400:'1D'};
+      return map[Number(seconds)] || `${seconds}s`;
+    }
+    function emaSourceLabel(source, signalTf) {
+      if (source === 'daily') return 'Daily EMA';
+      return `EMA auf ${timeframeLabel(signalTf)}`;
+    }
+    function updateEmaConfigVisibility() {
+      const mode = document.getElementById('cfgTrendMode')?.value || 'day_candle';
+      const source = document.getElementById('cfgTrendEmaSource');
+      const period = document.getElementById('cfgTrendEma');
+      const showSource = mode === 'ema';
+      const showCustomPeriod = showSource && source && source.value !== 'daily';
+      if (source) source.parentElement.style.display = showSource ? 'block' : 'none';
+      if (period) period.parentElement.style.display = showCustomPeriod ? 'block' : 'none';
+    }
+    function isModalOpen(id) {
+      const modal = document.getElementById(id);
+      return modal && modal.classList.contains('open');
+    }
+    function setControlMessage(message, level='ok') {
+      lastActionMessage = { message, level, until: Date.now() + 4500 };
+      renderControlMessage(message);
+    }
+    function renderControlMessage(fallback='Bereit') {
+      const el = document.getElementById('controlStatus');
+      if (!el) return;
+      if (lastActionMessage && Date.now() < lastActionMessage.until) {
+        el.textContent = lastActionMessage.message;
+        el.className = `controlStatus ${lastActionMessage.level}`;
+        return;
+      }
+      lastActionMessage = null;
+      el.textContent = fallback;
+      el.className = 'controlStatus';
+    }
+    function renderBotControls(cfg) {
+      const running = !!cfg.observer_enabled;
+      const start = document.getElementById('startBot');
+      const stop = document.getElementById('stopBot');
+      const activeSymbols = cfg.symbols || [];
+      const active = cfg.observer_asset_mode === 'multi'
+        ? `${activeSymbols.length} Assets`
+        : (activeSymbols[0] || '-');
+      if (start) {
+        start.classList.toggle('active', running);
+        start.disabled = running;
+        start.textContent = running ? 'Aktiv' : 'Start';
+      }
+      if (stop) {
+        stop.classList.toggle('active', !running);
+        stop.disabled = !running;
+        stop.textContent = running ? 'Stop' : 'Gestoppt';
+      }
+      renderControlMessage(running ? `Scanner aktiv: ${active}` : `Scanner gestoppt: ${active}`);
+    }
+    function renderDayCandleStatus(data, cfg) {
+      const activeSymbols = cfg.symbols || [];
+      const symbol = selectedAsset || activeSymbols[0] || 'BTCUSDT';
+      const scan = data.cycle?.symbols?.[symbol]?.scan || {};
+      const day = scan.day_candle || {};
+      const direction = String(day.direction || 'neutral').toLowerCase();
+      const panel = document.getElementById('dayCandlePanel');
+      const icon = document.getElementById('dayCandleIcon');
+      const detail = document.getElementById('dayCandleDetail');
+      if (!panel || !icon || !detail) return;
+      panel.className = `dayCandlePanel ${direction}`;
+      if (direction === 'long' || direction === 'short') {
+        const image = direction === 'long' ? '/files/arrow_up.png' : '/files/arrow_down.png';
+        icon.innerHTML = `<img src="${image}" alt="${direction}">`;
+      } else {
+        icon.innerHTML = '<span class="dayCandleFallback">–</span>';
+      }
+      const label = direction === 'long' ? 'LONG' : direction === 'short' ? 'SHORT' : 'NEUTRAL';
+      const open = day.open !== undefined ? `O ${fmt(day.open)}` : '';
+      const close = day.close !== undefined ? `C ${fmt(day.close)}` : '';
+      const candles = day.candles !== undefined ? `${fmt(day.candles)} Kerzen` : 'keine Day-Candle';
+      detail.textContent = `${label} · ${[open, close, candles].filter(Boolean).join(' · ')}`;
+    }
+    function flashButton(id) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.classList.add('flash');
+      window.setTimeout(() => btn.classList.remove('flash'), 700);
+    }
+    function syncSwitchState(inputId, stateId, activeText='Aktiv', inactiveText='Aus', boxId=null) {
+      const input = document.getElementById(inputId);
+      const state = document.getElementById(stateId);
+      if (!input || !state) return;
+      const active = !!input.checked;
+      state.textContent = active ? activeText : inactiveText;
+      state.classList.toggle('active', active);
+      if (boxId) {
+        const box = document.getElementById(boxId);
+        if (box) box.classList.toggle('active', active);
+      }
+    }
+    function syncAllSwitchStates() {
+      syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
+      syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState');
+      syncSwitchState('cfgTrendFilter', 'cfgTrendState');
+      syncSwitchState('cfgIndicatorEnabled', 'cfgIndicatorEnabledState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowBosChoch', 'cfgIndicatorShowBosChochState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowBoxes', 'cfgIndicatorShowBoxesState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowSwingLabels', 'cfgIndicatorShowSwingLabelsState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowHma', 'cfgIndicatorShowHmaState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowSma', 'cfgIndicatorShowSmaState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowTripleEma', 'cfgIndicatorShowTripleEmaState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowMfi', 'cfgIndicatorShowMfiState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgIndicatorShowSupportResistance', 'cfgIndicatorShowSupportResistanceState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgBrainEnabled', 'cfgBrainEnabledState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgBrainRequireBox', 'cfgBrainRequireBoxState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgBrainLlmLayer', 'cfgBrainLlmLayerState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgOllamaEnabled', 'cfgOllamaEnabledState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgOllamaBlockHint', 'cfgOllamaBlockHintState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgAgentShowOffline', 'cfgAgentShowOfflineState', 'Aktiv', 'Aus');
+      document.querySelectorAll('[data-agent-enabled]').forEach(input => syncSwitchState(input.id, `${input.id}State`, 'Aktiv', 'Aus'));
+      document.querySelectorAll('[data-agent-blocking]').forEach(input => syncSwitchState(input.id, `${input.id}State`, 'Block', 'Info'));
+    }
+    async function refresh() {
+      const response = await fetch('/api/status', { cache: 'no-store' });
+      const data = await response.json();
+      latestStatusData = data;
+      const perf = data.paper?.performance || {};
+      const cfg = data.config || {};
+      latestConfig = cfg;
+      applyUiTheme(cfg.ui_theme);
+      updateKlineChartStyles();
+      const account = data.account || {};
+      const currency = account.currency || cfg.account_balance_currency || 'USDT';
+      const activeSymbols = cfg.symbols || [];
+      const activeSummary = cfg.observer_asset_mode === 'multi'
+        ? `${activeSymbols.length} Assets aktiv`
+        : `${activeSymbols[0] || '-'} aktiv`;
+      document.getElementById('subtitle').textContent = `Letztes Update: ${fmt(data.bot?.last_update_utc)} | ${activeSummary}`;
+      const scanner = cfg.observer_enabled ? 'Scanner läuft' : 'Scanner gestoppt';
+      const paperMode = cfg.paper_trading_enabled ? 'Testmodus/Paper' : 'Testmodus/Signal-only';
+      const assetModeLabel = cfg.observer_asset_mode === 'multi' ? 'Multi Asset' : 'Single Asset';
+      const statusPanel = document.getElementById('statusPanel');
+      const liveActive = !!data.bot?.live_trading_enabled;
+      const apiWarning = account.status && account.status !== 'ok';
+      statusPanel.className = 'statusPanel ' + (liveActive ? 'live' : apiWarning ? 'warning' : cfg.observer_enabled ? 'running' : 'stopped');
+      document.getElementById('statusTitle').textContent = liveActive ? 'LIVE' : paperMode.toUpperCase();
+      document.getElementById('statusDetail').textContent = apiWarning ? `${assetModeLabel} | ${scanner} | API pruefen` : `${assetModeLabel} | ${scanner}`;
+      document.getElementById('accountBalance').textContent = account.status === 'ok' ? money(account.account_balance, currency) : 'API nicht verbunden';
+      document.getElementById('availableBalance').textContent = account.status === 'ok' ? money(account.available_balance_estimate, currency) : fmt(account.error, '-');
+      document.getElementById('profit').textContent = pct(perf.profit_fraction);
+      document.getElementById('profit').className = 'value ' + ((perf.profit_fraction || 0) >= 0 ? 'good' : 'bad');
+      document.getElementById('winrate').textContent = pct(perf.win_rate);
+      if (!isModalOpen('tradingModal')) {
+        document.getElementById('paperToggle').checked = !!cfg.paper_trading_enabled;
+        syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
+        localTradeSizes = JSON.parse(JSON.stringify(cfg.trade_sizes_by_symbol || {}));
+        renderTradeSizeAssetSelector(cfg);
+        loadTradeSizeForSelectedAsset();
+        updateSizeVisibility();
+      }
+
+      const tradesAll = data.paper?.trades || [];
+      const watchlist = cfg.watchlist_assets || [];
+      const watchSymbols = watchlist.map(item => item.symbol);
+      const extraSymbols = tradesAll.map(t => t.setup?.symbol).filter(Boolean).filter(symbol => !watchSymbols.includes(symbol));
+      const symbols = [...watchSymbols, ...Array.from(new Set(extraSymbols))];
+      if (selectedAsset && !symbols.includes(selectedAsset)) selectedAsset = null;
+      syncChartAssetOptions(cfg);
+      const assetFilter = document.getElementById('assetFilter');
+      const oldValue = assetFilter.value || selectedAssetValue();
+      const assetOptions = [`<option value="${ALL_ASSETS_VALUE}">Gesamt / alles anzeigen</option>`].concat(symbols.map(symbol => {
+        const item = watchlist.find(asset => asset.symbol === symbol);
+        const active = (cfg.symbols || []).includes(symbol) ? ' *' : '';
+        return `<option value="${symbol}">${item ? item.label : symbol}${active}</option>`;
+      }));
+      assetFilter.innerHTML = assetOptions.join('');
+      if (oldValue === ALL_ASSETS_VALUE || !symbols.includes(oldValue)) {
+        selectedAsset = null;
+      } else {
+        selectedAsset = oldValue;
+      }
+      assetFilter.value = selectedAssetValue();
+      renderDayCandleStatus(data, cfg);
+      renderBotControls(cfg);
+      syncAgentAssetOptions(cfg);
+      renderLlmAuditSummary(data, cfg);
+      renderAgentViewer(data, cfg);
+      const viewLabel = assetViewLabel(selectedAsset);
+      document.getElementById('tradesTitle').textContent = `Aktive & letzte Trades (${viewLabel})`;
+      const assetStats = selectedAsset ? data.paper?.per_symbol?.[selectedAsset] : null;
+      if (assetStats && !lastActionMessage) {
+        renderControlMessage(`Ansicht ${selectedAsset}: ${assetStats.closed} geschlossen, Winrate ${pct(assetStats.win_rate)}, Sum R ${assetStats.sum_r}`);
+      } else if (!selectedAsset && !lastActionMessage) {
+        renderControlMessage(`Gesamtansicht: ${fmt(perf.closed, 0)} geschlossen, ${fmt(data.paper?.open_trades, 0)} offen, ${fmt(data.paper?.pending_trades, 0)} pending`);
+      }
+
+      const trades = tradesAll.filter(t => !selectedAsset || t.setup?.symbol === selectedAsset).slice().reverse().slice(0, 25);
+      document.getElementById('tradeRows').innerHTML = trades.map(t => {
+        const s = t.setup || {};
+        const size = s.trade_size_mode === 'asset'
+          ? `${fmt(s.planned_quantity_asset)} asset`
+          : `${fmt(s.planned_notional_usd)} USD`;
+        return '<tr>' + [
+          td(fmt(t.status)), td(fmt(s.symbol)), td(fmt(s.side)), td(size), td(fmt(s.entry)), td(fmt(s.stop_loss)),
+          td(fmt(s.take_profit)), td(fmt(t.result_r)), td(fmt(s.confidence))
+        ].join('') + '</tr>';
+      }).join('') || '<tr><td colspan="9">Noch keine Paper-Trades.</td></tr>';
+
+      const cycle = data.cycle || {};
+      const eventBySymbol = {};
+      (cycle.events || []).forEach(event => {
+        if (event.symbol && !eventBySymbol[event.symbol]) eventBySymbol[event.symbol] = event;
+        if (event.setup?.symbol && !eventBySymbol[event.setup.symbol]) eventBySymbol[event.setup.symbol] = event;
+      });
+      const debugSymbols = Object.entries(cycle.symbols || {}).filter(([symbol]) => !selectedAsset || symbol === selectedAsset);
+      document.getElementById('debugRows').innerHTML = debugSymbols.map(([symbol, info]) => {
+        const scan = info.scan || {};
+        const event = eventBySymbol[symbol] || {};
+        const gate = event.reason === 'value_gate'
+          ? `<span class="dangerText">${fmt(event.value_result?.reason)}</span>`
+          : 'nicht erreicht';
+        const status = scan.setup_found ? '<span class="good">Setup Kandidat</span>' : '<span class="dangerText">Kein Setup</span>';
+        const side = scan.side ? `side ${scan.side}` : 'side -';
+        const zone = scan.zone_type
+          ? `zone ${scan.zone_type} ${fmt(scan.zone_low)} - ${fmt(scan.zone_high)} score ${fmt(scan.zone_score)} retests ${fmt(scan.retests)}`
+          : `nearest ${fmt(scan.nearest_zone_type)} ${fmt(scan.nearest_zone_low)} - ${fmt(scan.nearest_zone_high)} dist ${fmt(scan.nearest_zone_distance)}`;
+        const impulse = scan.impulse_time ? `base ${fmt(scan.base_candles)} | impulse body ${fmt(scan.impulse_body_ratio)} xRange ${fmt(scan.impulse_range_multiple)}` : '';
+        const entry = scan.entry_method ? `entry ${scan.entry_method} | has_fvg ${fmt(scan.has_fvg)} | zone ${fmt(scan.entry_zone_low)} - ${fmt(scan.entry_zone_high)}` : '';
+        const confirm = scan.confirmation_candles_after_signal !== undefined ? `confirm ${scan.confirmation_candles_after_signal}` : '';
+        const emaInfo = scan.ema?.active ? `ema ${emaSourceLabel(scan.ema.source, cfg.signal_timeframe_seconds)} ${fmt(scan.ema.period)} | ${fmt(scan.ema.direction)} | C ${fmt(scan.ema.close)} / EMA ${fmt(scan.ema.ema)}` : '';
+        const confirmationDebug = scan.confirmation_debug?.closest
+          ? `best window: touch ${fmt(scan.confirmation_debug.closest.zone_touch_ok)} / body ${fmt(scan.confirmation_debug.closest.body_ok)} / break ${fmt(scan.confirmation_debug.closest.break_ok)} / fvg ${fmt(scan.confirmation_debug.closest.fvg_ok)} / rejection ${fmt(scan.confirmation_debug.closest.rejection_ok)}<br>windows touch ${fmt(scan.confirmation_debug.zone_touch_windows, 0)} body ${fmt(scan.confirmation_debug.body_ok_windows, 0)} break ${fmt(scan.confirmation_debug.break_ok_windows, 0)} fvg ${fmt(scan.confirmation_debug.fvg_ok_windows, 0)} rejection ${fmt(scan.confirmation_debug.rejection_ok_windows, 0)}`
+          : '';
+        return '<tr>' + [
+          td(symbol),
+          td(status),
+          td(fmt(scan.reason || event.reason)),
+          td([side, zone, impulse, entry, confirm, emaInfo, confirmationDebug].filter(Boolean).join('<br>')),
+          td(gate)
+        ].join('') + '</tr>';
+      }).join('') || '<tr><td colspan="5">Noch kein Scan-Debug vorhanden.</td></tr>';
+
+      const botRows = [
+        ['Modus', data.bot?.mode],
+        ['Live', data.bot?.live_trading_enabled ? 'aktiv' : 'gesperrt'],
+        ['Scanner', cfg.observer_enabled ? 'läuft' : 'gestoppt'],
+        ['Paper-Trading', cfg.paper_trading_enabled ? 'aktiv' : 'aus'],
+        ['Asset Mode', cfg.observer_asset_mode === 'multi' ? 'Multi Asset' : 'Single Asset'],
+        ['Risk Locks', `max ${cfg.max_open_trades_total} gesamt / ${cfg.max_open_trades_per_asset} je Asset`],
+        ['Correlation Lock', cfg.block_same_direction_correlated_trades ? 'aktiv' : 'aus'],
+        ['Stop-Loss', cfg.stop_loss_mode === 'fixed_percent' ? `${cfg.stop_loss_percent}% vom Entry` : `Zone/Struktur + ${cfg.stop_loss_buffer_percent}% Puffer`],
+        ['Phemex Balance', account.status === 'ok' ? money(account.account_balance, currency) : fmt(account.error)],
+        ['Positionsgroesse', cfg.trade_size_mode === 'asset' ? `${cfg.trade_size_asset} Asset` : `${cfg.trade_size_usd} USD/USDT`],
+        ['Timeframes', `${timeframeLabel(data.config?.signal_timeframe_seconds)} / ${timeframeLabel(data.config?.confirmation_timeframe_seconds)}`],
+        ['Trend', cfg.trend_filter_mode === 'ema' ? `${emaSourceLabel(cfg.trend_ema_source, cfg.signal_timeframe_seconds)} ${cfg.trend_ema_period}${cfg.use_trend_filter ? ' blockierend' : ' optional'}` : (cfg.trend_filter_mode === 'day_candle' ? `Day-Candle${cfg.use_trend_filter ? ' blockierend' : ' Status'}` : 'aus')],
+        ['Loops', `Phemex ${fmt(cfg.phemex_poll_seconds ?? cfg.poll_seconds)}s / System ${fmt(cfg.system_loop_seconds)}s`],
+        ['TP/SL', `${data.config?.reward_risk}:1`],
+        ['Value Gate', `min Netto ${fmt(cfg.min_net_profit_fraction)} vom Positionswert`],
+        ['Ollama Audit', `${cfg.brain_llm_layer_enabled && cfg.ollama_enabled ? 'aktiv' : 'aus'} | ${fmt(cfg.ollama_model || 'qwen2.5:3b')}`],
+        ['Paper-Trades', `${fmt(perf.closed, 0)} geschlossen / ${fmt(data.paper?.open_trades, 0)} offen / ${fmt(data.paper?.pending_trades, 0)} pending`],
+      ];
+      document.getElementById('botRows').innerHTML = botRows.map(([k,v]) => `<tr><th>${k}</th><td>${fmt(v)}</td></tr>`).join('');
+
+      const buckets = data.memory?.top_buckets || [];
+      document.getElementById('bucketRows').innerHTML = buckets.map(b => '<tr>' + [
+        td(`<code>${b.key}</code>`), td(b.count), td(pct(b.win_rate)), td(b.avg_r)
+      ].join('') + '</tr>').join('') || '<tr><td colspan="4">Noch keine abgeschlossenen Trades im Lernspeicher.</td></tr>';
+      document.getElementById('cycle').textContent = JSON.stringify(data.cycle || {}, null, 2);
+    }
+    function setView(view) {
+      currentView = view;
+      document.getElementById('dashboardView').classList.toggle('hidden', view !== 'dashboard');
+      document.getElementById('chartView').classList.toggle('hidden', view !== 'chart');
+      document.getElementById('agentView').classList.toggle('hidden', view !== 'agents');
+      document.getElementById('chartViewButton').classList.toggle('active', view === 'chart');
+      document.getElementById('agentViewButton').classList.toggle('active', view === 'agents');
+      document.getElementById('chartViewButton').textContent = view === 'chart' ? 'Bot View' : 'Chart View';
+      document.getElementById('agentViewButton').textContent = view === 'agents' ? 'Bot View' : 'Agent Viewer';
+      if (view === 'chart') {
+        window.setTimeout(() => {
+          resizeKlineChart();
+          loadChartData(true);
+        }, 0);
+      }
+      if (view === 'agents') {
+        syncAgentAssetOptions(latestConfig || {});
+        renderAgentViewer(latestStatusData || {}, latestConfig || {});
+      }
+    }
+    function syncChartAssetOptions(cfg) {
+      chartConfig = cfg || chartConfig || {};
+      const mode = chartConfig.observer_asset_mode || 'single';
+      const activeSymbols = chartConfig.symbols || [];
+      const watchlist = chartConfig.watchlist_assets || [];
+      const chartAsset = document.getElementById('chartAsset');
+      const chartAssetWrap = document.getElementById('chartAssetWrap');
+      if (!chartAsset || !chartAssetWrap) return;
+      chartAssetWrap.style.display = mode === 'multi' ? 'block' : 'none';
+      const allowedSymbols = mode === 'multi' ? activeSymbols : activeSymbols.slice(0, 1);
+      const current = chartAsset.value;
+      chartAsset.innerHTML = allowedSymbols.map(symbol => {
+        const item = watchlist.find(asset => asset.symbol === symbol);
+        return `<option value="${symbol}">${item ? item.label : symbol}</option>`;
+      }).join('');
+      if (mode === 'multi' && allowedSymbols.includes(current)) {
+        chartAsset.value = current;
+      } else if (allowedSymbols.length) {
+        chartAsset.value = allowedSymbols[0];
+      }
+    }
+    function activeChartSymbol() {
+      const cfg = chartConfig || {};
+      const activeSymbols = cfg.symbols || [];
+      if ((cfg.observer_asset_mode || 'single') === 'multi') {
+        return document.getElementById('chartAsset').value || activeSymbols[0] || 'BTCUSDT';
+      }
+      return activeSymbols[0] || 'BTCUSDT';
+    }
+    function syncAgentAssetOptions(cfg) {
+      const activeSymbols = (cfg?.symbols || latestConfig?.symbols || []);
+      const watchlist = (cfg?.watchlist_assets || latestConfig?.watchlist_assets || []);
+      const agentAsset = document.getElementById('agentAsset');
+      if (!agentAsset) return;
+      const current = agentAsset.value || selectedAgentAsset || selectedAsset;
+      agentAsset.innerHTML = activeSymbols.map(symbol => {
+        const item = watchlist.find(asset => asset.symbol === symbol);
+        return `<option value="${escapeHtml(symbol)}">${escapeHtml(item ? item.label : symbol)}</option>`;
+      }).join('');
+      if (activeSymbols.includes(current)) {
+        agentAsset.value = current;
+      } else if (activeSymbols.length) {
+        agentAsset.value = activeSymbols[0];
+      }
+      selectedAgentAsset = agentAsset.value || selectedAgentAsset || selectedAsset || activeSymbols[0] || 'BTCUSDT';
+    }
+    function activeAgentSymbol() {
+      return document.getElementById('agentAsset')?.value || selectedAgentAsset || selectedAsset || (latestConfig?.symbols || [])[0] || 'BTCUSDT';
+    }
+    function llmLayerForSymbol(data, cfg, symbol) {
+      const activeSymbol = symbol || selectedAgentAsset || selectedAsset || (cfg?.symbols || [])[0] || 'BTCUSDT';
+      const board = data?.cycle?.agents?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.agents || null;
+      const brainState = data?.cycle?.brains?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.brain || null;
+      const layer = board?.llm_layer || brainState?.llm_layer || null;
+      if (layer) return layer;
+      const enabled = !!cfg?.brain_llm_layer_enabled && !!cfg?.ollama_enabled;
+      return {
+        enabled,
+        provider: 'ollama',
+        model: cfg?.ollama_model || 'qwen2.5:3b',
+        role: 'local_trade_auditor',
+        verdict: enabled ? 'NO_DATA' : 'NO_DATA',
+        confidence_note: '-',
+        risk_note: enabled ? 'Wartet auf naechsten Agentenzyklus.' : 'LLM/Ollama ist deaktiviert.',
+        conflict_note: '-',
+        advice: enabled ? 'Noch kein LLM-Audit im aktuellen Status.' : 'Aktivierung ueber Agent Settings / Ollama Audit.',
+        block_hint: false,
+      };
+    }
+    function renderLlmAuditContent(llmLayer, cfg) {
+      const layer = llmLayer || llmLayerForSymbol(latestStatusData || {}, cfg || latestConfig || {}, selectedAgentAsset || selectedAsset);
+      const enabled = !!layer?.enabled;
+      const provider = layer?.provider || 'ollama';
+      const model = layer?.model || cfg?.ollama_model || 'qwen2.5:3b';
+      const verdict = layer?.verdict || 'NO_DATA';
+      const blockHint = !!layer?.block_hint;
+      const riskNote = layer?.risk_note && layer.risk_note !== '-' ? layer.risk_note : (layer?.message || '-');
+      const conflictNote = layer?.conflict_note && layer.conflict_note !== '-' ? layer.conflict_note : '-';
+      const auditNote = layer?.advice && layer.advice !== '-' ? layer.advice : (layer?.message || '-');
+      return `<div class="llmAuditGrid">
+        <div class="llmAuditItem"><div class="label">Status</div><div class="llmBadge ${enabled ? 'active' : 'inactive'}">${enabled ? 'Aktiv' : 'Aus'}</div></div>
+        <div class="llmAuditItem"><div class="label">Provider</div><div class="llmAuditValue">${escapeHtml(provider)}</div></div>
+        <div class="llmAuditItem"><div class="label">Modell</div><div class="llmAuditValue">${escapeHtml(model)}</div></div>
+        <div class="llmAuditItem"><div class="label">Verdict</div><div class="llmVerdict ${escapeHtml(String(verdict).toLowerCase())}">${escapeHtml(verdict)}</div></div>
+        <div class="llmAuditItem fullWidth"><div class="label">Risiko-Hinweis</div><div class="llmNote">${escapeHtml(riskNote)}</div></div>
+        <div class="llmAuditItem fullWidth"><div class="label">Konflikt-Hinweis</div><div class="llmNote">${escapeHtml(conflictNote)}</div></div>
+        <div class="llmAuditItem fullWidth"><div class="label">Audit-Hinweis</div><div class="llmNote">${escapeHtml(auditNote)}</div></div>
+        <div class="llmAuditItem"><div class="label">Block Hint</div><div class="llmBadge ${blockHint ? 'warn' : 'inactive'}">${blockHint ? 'Hinweis' : 'Nein'}</div></div>
+      </div>`;
+    }
+    function renderLlmAuditSummary(data, cfg) {
+      const panel = document.getElementById('llmAuditSummary');
+      if (!panel) return;
+      const activeSymbols = cfg?.symbols || [];
+      const symbol = selectedAgentAsset || selectedAsset || activeSymbols[0] || 'BTCUSDT';
+      panel.innerHTML = renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg);
+    }
+    function signalClass(signal) {
+      const value = String(signal || 'NEUTRAL').toLowerCase();
+      return value === 'long' ? 'long' : value === 'short' ? 'short' : 'neutral';
+    }
+    function renderAgentCard(report, ceo=false) {
+      const cls = signalClass(report?.signal);
+      const conflict = report?.conflict ? ' conflict' : '';
+      const score = Math.max(0, Math.min(100, Number(report?.score || 0)));
+      const reads = escapeHtml(report?.reads || '-');
+      const message = escapeHtml(report?.message || '-');
+      const name = escapeHtml(report?.agent_name || '-');
+      const fn = escapeHtml(report?.function || '-');
+      return `<div class="${ceo ? 'agentCeoCard' : 'agentCube'} ${cls}${conflict}">
+        <div class="agentHead"><div class="agentName">${name}</div><span class="agentSignal ${cls}">${escapeHtml(report?.signal || 'NEUTRAL')} · ${score}</span></div>
+        <div class="agentFunction">${fn}</div>
+        <div class="agentScore"><span style="width:${score}%"></span></div>
+        <div class="agentTextBox">Liest: ${reads}
+Rueckmeldung: ${message}</div>
+      </div>`;
+    }
+    function renderAgentViewer(data, cfg) {
+      const agentStatus = document.getElementById('agentStatus');
+      const agentGrid = document.getElementById('agentGrid');
+      const agentRiskGrid = document.getElementById('agentRiskGrid');
+      const agentCeo = document.getElementById('agentCeoCard');
+      const agentLlmAudit = document.getElementById('agentLlmAuditCard');
+      if (!agentStatus || !agentGrid || !agentRiskGrid || !agentCeo) return;
+      const symbol = activeAgentSymbol();
+      const board = data?.cycle?.agents?.[symbol] || data?.cycle?.symbols?.[symbol]?.agents || null;
+      if (!board) {
+        agentStatus.textContent = `${symbol} | noch keine Agenten-Daten`;
+        agentCeo.innerHTML = renderAgentCard({agent_name:'CEO Agent', function:'Wartet auf Agentenberichte', signal:'NEUTRAL', score:0, reads:'keine Daten', message:'Scanner starten oder Reload abwarten.'}, true);
+        if (agentLlmAudit) agentLlmAudit.innerHTML = `<h3>Ollama Audit</h3>${renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg)}`;
+        agentGrid.innerHTML = '<div class="agentTextBox">Keine Indikator-Agenten geladen.</div>';
+        agentRiskGrid.innerHTML = '<div class="agentTextBox">Keine Risk-/Pipeline-Agenten geladen.</div>';
+        return;
+      }
+      const reports = board.reports || [];
+      const visibleReports = cfg?.agent_show_offline_agents === false ? reports.filter(report => !isOfflineAgentReport(report)) : reports;
+      const hiddenOfflineCount = reports.length - visibleReports.length;
+      const indicatorReports = visibleReports.filter(report => !isRiskPipelineReport(report));
+      const riskReports = visibleReports.filter(report => isRiskPipelineReport(report));
+      const brain = board.brain || data?.cycle?.brains?.[symbol]?.brain || null;
+      const tradePlan = board.trade_plan || data?.cycle?.brains?.[symbol]?.candidate || null;
+      const gate = board.economic_gate || data?.cycle?.brains?.[symbol]?.economic_gate || null;
+      const llmLayer = board.llm_layer || data?.cycle?.brains?.[symbol]?.llm_layer || null;
+      const flowInfo = tradePlan
+        ? `<div class="agentTextBox">Trade Plan: ${escapeHtml(tradePlan.decision)} | Entry ${escapeHtml(fmt(tradePlan.entry_price))} | SL ${escapeHtml(fmt(tradePlan.sl_price))} | TP ${escapeHtml(fmt(tradePlan.tp_price))}<br>Economic Gate: ${escapeHtml(gate ? (gate.trade_allowed ? 'OK' : 'BLOCKED ' + (gate.reason || '')) : 'wartet')}</div>`
+        : `<div class="agentTextBox">Trade Plan: kein freigegebener Brain-Kandidat<br>Economic Gate: wartet</div>`;
+      const offlineInfo = hiddenOfflineCount > 0 ? ` | ${hiddenOfflineCount} Offline ausgeblendet` : '';
+      agentStatus.textContent = `${board.symbol || symbol} | ${timeframeLabel(board.timeframe_seconds || cfg?.signal_timeframe_seconds || 0)} | ${indicatorReports.length} Indikator / ${riskReports.length} Risk${offlineInfo} | ${board.ceo?.message || '-'}`;
+      agentCeo.innerHTML = `${brain ? renderAgentCard(brain, true) : ''}${renderAgentCard(board.ceo || {}, true)}${flowInfo}`;
+      if (agentLlmAudit) agentLlmAudit.innerHTML = `<h3>Ollama Audit</h3>${renderLlmAuditContent(llmLayer || llmLayerForSymbol(data, cfg, symbol), cfg)}`;
+      agentGrid.innerHTML = indicatorReports.map(report => renderAgentCard(report)).join('') || '<div class="agentTextBox">Keine sichtbaren Indikator-Agenten.</div>';
+      agentRiskGrid.innerHTML = riskReports.map(report => renderAgentCard(report)).join('') || '<div class="agentTextBox">Keine sichtbaren Risk-/Pipeline-Agenten.</div>';
+    }
+    function isOfflineAgentReport(report) {
+      const reads = String(report?.reads || '').toLowerCase();
+      const message = String(report?.message || '').toLowerCase();
+      return reads.includes('_enabled=false') || reads.includes('indicator_show_') || message.includes('deaktiviert') || message.includes('ausgeschaltet');
+    }
+    function isRiskPipelineReport(report) {
+      const name = String(report?.agent_name || '').toLowerCase();
+      const fn = String(report?.function || '').toLowerCase();
+      return name.includes('risk') || name.includes('gate') || fn.includes('risk') || fn.includes('gate') || fn.includes('pipeline');
+    }
+    async function loadChartData(force) {
+      const asset = activeChartSymbol();
+      const resolution = document.getElementById('chartTimeframe').value || '60';
+      const limit = Number(document.getElementById('chartCandleLimit').value || 100);
+      const cfgKey = JSON.stringify(indicatorConfig());
+      const key = `${asset}:${resolution}:${limit}:${cfgKey}`;
+      if (!force && key === lastChartKey) return;
+      lastChartKey = key;
+      document.getElementById('chartStatus').textContent = 'Lade Phemex-Kerzen...';
+      const response = await fetch(`/api/chart-data?symbol=${encodeURIComponent(asset)}&resolution=${encodeURIComponent(resolution)}&limit=${encodeURIComponent(limit)}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) {
+        document.getElementById('chartStatus').textContent = data.error || 'Chart Fehler';
+        clearKlineChart();
+        return;
+      }
+      const statusResponse = await fetch('/api/status', { cache: 'no-store' });
+      const indicatorData = await loadCustomIndicatorData(asset, resolution, limit);
+      const statusData = statusResponse.ok ? await statusResponse.json() : {};
+      const overlay = buildChartOverlay(asset, statusData);
+      drawChart(data.candles || [], overlay, indicatorData);
+      const minutes = Number(data.resolution) / 60;
+      const indicatorLabel = indicatorData?.label || 'Market Structure nicht geladen';
+      document.getElementById('chartStatus').textContent = `${data.chart_symbol || data.symbol} | ${minutes}m | ${data.candles.length} Kerzen | ${indicatorLabel} | ${overlay.status}`;
+      document.getElementById('chartMeta').textContent = data.candles.length
+        ? `${overlay.summary} | Indikator: ${indicatorLabel} | letzte Kerze: ${new Date(data.candles[data.candles.length - 1].timestamp * 1000).toISOString()} | Close: ${data.candles[data.candles.length - 1].close}`
+        : 'Keine Kerzen erhalten.';
+    }
+    function buildChartOverlay(asset, statusData) {
+      const cycle = statusData.cycle || {};
+      const symbolInfo = (cycle.symbols || {})[asset] || {};
+      const scan = symbolInfo.scan || {};
+      const events = cycle.events || [];
+      const setupEvent = events.find(event => event.setup?.symbol === asset) || null;
+      const tradeEvent = events.find(event => event.trade?.setup?.symbol === asset) || null;
+      const trade = tradeEvent?.trade || null;
+      const setup = setupEvent?.setup || trade?.setup || null;
+      const side = setup?.side || scan.side || '-';
+      const zoneLow = scan.zone_low;
+      const zoneHigh = scan.zone_high;
+      const entryZoneLow = setup?.fvg_low ?? scan.entry_zone_low ?? scan.fvg_low;
+      const entryZoneHigh = setup?.fvg_high ?? scan.entry_zone_high ?? scan.fvg_high;
+      const entry = setup?.entry ?? scan.entry;
+      const stop = setup?.stop_loss ?? scan.stop_loss;
+      const tp = setup?.take_profit;
+      const status = setup
+        ? (setupEvent?.reason === 'value_gate' ? 'Setup blockiert: Value Gate' : `Setup ${String(side).toUpperCase()}`)
+        : `Kein Setup: ${scan.reason || 'noch kein Scan'}`;
+      const zoneReady = Number.isFinite(Number(zoneLow)) && Number.isFinite(Number(zoneHigh));
+      const entryZoneReady = Number.isFinite(Number(entryZoneLow)) && Number.isFinite(Number(entryZoneHigh));
+      const valueGateBlocked = setupEvent?.reason === 'value_gate';
+      const diagnostics = [
+        {
+          label: `Swing-Level ${zoneReady ? 'OK' : 'fehlt'}`,
+          detail: zoneReady ? `${fmt(scan.zone_type)} ${fmt(zoneLow)} - ${fmt(zoneHigh)}` : scan.reason || '-',
+          state: zoneReady ? 'ok' : 'fail'
+        },
+        {
+          label: `Swing Score ${fmt(scan.swing_level_score || scan.zone_score)}`,
+          detail: `Age ${fmt(scan.swing_level_age_candles)} | Target ${fmt(scan.target_level)}`,
+          state: zoneReady ? 'ok' : 'neutral'
+        },
+        {
+          label: scan.entry_method ? `Reaction ${scan.entry_method}` : 'Reaction offen',
+          detail: entryZoneReady ? `${fmt(entryZoneLow)} - ${fmt(entryZoneHigh)}` : scan.reason || '-',
+          state: setup || scan.entry_method ? 'ok' : 'neutral'
+        },
+        {
+          label: entryZoneReady ? 'Reaktionszone OK' : 'Reaktionszone fehlt',
+          detail: entryZoneReady ? `${fmt(entryZoneLow)} - ${fmt(entryZoneHigh)}` : scan.reason || '-',
+          state: entryZoneReady ? 'ok' : 'neutral'
+        },
+        {
+          label: valueGateBlocked ? 'Value Gate blockiert' : setup ? 'Value Gate OK' : 'Value Gate offen',
+          detail: valueGateBlocked ? fmt(setupEvent?.value_result?.reason) : setup ? 'wirtschaftlich akzeptiert' : 'erst nach Setup',
+          state: valueGateBlocked ? 'fail' : setup ? 'ok' : 'neutral'
+        }
+      ];
+      const summaryParts = [
+        status,
+        scan.zone_type ? `${scan.zone_type} ${fmt(scan.zone_low)}-${fmt(scan.zone_high)}` : '',
+        scan.entry_method ? `Entry ${scan.entry_method}` : '',
+        diagnostics[0].label,
+        diagnostics[2].label,
+        entry ? `Entry ${fmt(entry)}` : '',
+        stop ? `SL ${fmt(stop)}` : '',
+        tp ? `TP ${fmt(tp)}` : '',
+      ].filter(Boolean);
+      return {
+        asset,
+        status,
+        summary: summaryParts.join(' | '),
+        scan,
+        setup,
+        diagnostics,
+        levels: [
+          scan.zone_low ? { price: Number(scan.zone_low), label: 'Zone Low', color: '#475569', time: scan.base_start_time } : null,
+          scan.zone_high ? { price: Number(scan.zone_high), label: 'Zone High', color: '#475569', time: scan.base_end_time } : null,
+          scan.structure_level ? { price: Number(scan.structure_level), label: scan.structure_level_type || 'Level', color: '#7c3aed', time: scan.structure_level_time } : null,
+          entry ? { price: Number(entry), label: 'Entry', color: '#2357c6', strong: true } : null,
+          stop ? { price: Number(stop), label: 'SL', color: '#b42318', strong: true } : null,
+          tp ? { price: Number(tp), label: 'TP', color: '#047857', strong: true } : null,
+        ].filter(Boolean),
+        fvg: Number.isFinite(Number(entryZoneLow)) && Number.isFinite(Number(entryZoneHigh)) ? { low: Number(entryZoneLow), high: Number(entryZoneHigh), label: scan.has_fvg ? 'FVG Entry-Zone' : 'Entry-Zone' } : null,
+        markers: [
+          scan.signal_candle_time ? { time: Number(scan.signal_candle_time), label: scan.setup_found ? 'Zone + Setup' : 'Zone-Check', color: scan.setup_found ? '#0f766e' : '#d97706', lineColor: scan.setup_found ? 'rgba(15,118,110,.28)' : 'rgba(217,119,6,.28)' } : null,
+          scan.confirmation_candle_time ? { time: Number(scan.confirmation_candle_time), label: 'Entry-Bestaetigung', color: '#2357c6', lineColor: 'rgba(35,87,198,.28)' } : null,
+        ].filter(Boolean)
+      };
+    }
+    function klinechartsApi() {
+      return window.klinecharts || window.KLineCharts || window.KLineChart || null;
+    }
+    function safeHexColor(value, fallback) {
+      const color = String(value || '').trim();
+      return /^#[0-9a-fA-F]{6}$/.test(color) ? color : fallback;
+    }
+    function colorWithAlpha(hex, alpha = 1) {
+      const color = safeHexColor(hex, '#000000');
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+    function chartColors() {
+      const cfg = latestConfig || {};
+      return {
+        candleUp: safeHexColor(cfg.chart_candle_up_color, '#047857'),
+        candleDown: safeHexColor(cfg.chart_candle_down_color, '#b42318'),
+        candleNoChange: safeHexColor(cfg.chart_candle_no_change_color, '#667085'),
+        grid: safeHexColor(cfg.chart_grid_color, '#d9e0ea'),
+        background: safeHexColor(cfg.chart_background_color, (cfg.ui_theme === 'light' ? '#ffffff' : '#020617')),
+        bosRising: safeHexColor(cfg.indicator_bos_rising_color || cfg.indicator_rising_color, '#047857'),
+        bosFalling: safeHexColor(cfg.indicator_bos_falling_color || cfg.indicator_falling_color, '#b42318'),
+        swingRising: safeHexColor(cfg.indicator_swing_rising_color || cfg.indicator_rising_color, '#047857'),
+        swingFalling: safeHexColor(cfg.indicator_swing_falling_color || cfg.indicator_falling_color, '#b42318'),
+        boxHigh: safeHexColor(cfg.indicator_box_high_color, '#b42318'),
+        boxLow: safeHexColor(cfg.indicator_box_low_color, '#047857'),
+        hma: safeHexColor(cfg.indicator_hma_color, '#7c3aed'),
+        sma: safeHexColor(cfg.indicator_sma_color, '#06b6d4'),
+        tripleEma: safeHexColor(cfg.indicator_triple_ema_color, '#d97706'),
+        tripleEmaSlow: safeHexColor(cfg.indicator_triple_ema_slow_color, '#2563eb'),
+        mfi: safeHexColor(cfg.indicator_mfi_color, '#db2777'),
+        srSupport: safeHexColor(cfg.indicator_sr_support_color, '#22c55e'),
+        srResistance: safeHexColor(cfg.indicator_sr_resistance_color, '#ef4444'),
+      };
+    }
+    function klineChartStyleOptions() {
+      const colors = chartColors();
+      return {
+        grid: { show: true, horizontal: { show: true, color: colors.grid }, vertical: { show: true, color: colors.grid } },
+        candle: {
+          area: { backgroundColor: colors.background },
+          bar: { upColor: colors.candleUp, downColor: colors.candleDown, noChangeColor: colors.candleNoChange }
+        }
+      };
+    }
+    function updateKlineChartStyles() {
+      const colors = chartColors();
+      const container = document.getElementById('klineChart');
+      if (container) container.style.backgroundColor = colors.background;
+      if (!klineChart) return;
+      const styles = klineChartStyleOptions();
+      if (typeof klineChart.setStyles === 'function') {
+        klineChart.setStyles(styles);
+      } else if (typeof klineChart.applyStyles === 'function') {
+        klineChart.applyStyles(styles);
+      }
+    }
+    function marketStructureStyle(direction, alpha = 1, kind = 'bos') {
+      const colors = chartColors();
+      if (kind === 'box') {
+        return colorWithAlpha(direction === 'rising' ? colors.boxLow : colors.boxHigh, alpha);
+      }
+      if (kind === 'swing') {
+        return colorWithAlpha(direction === 'rising' ? colors.swingRising : colors.swingFalling, alpha);
+      }
+      return colorWithAlpha(direction === 'rising' ? colors.bosRising : colors.bosFalling, alpha);
+    }
+    function registerMarketStructureOverlays() {
+      const api = klinechartsApi();
+      if (marketStructureOverlaysRegistered || !api?.registerOverlay) return;
+      const textStyle = (color, size = 11) => ({
+        color,
+        size,
+        family: 'Arial',
+        weight: 'normal',
+        style: 'fill',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderSize: 0,
+        paddingLeft: 0,
+        paddingRight: 0,
+        paddingTop: 0,
+        paddingBottom: 0
+      });
+      api.registerOverlay({
+        name: 'marketStructureLabel',
+        totalStep: 1,
+        lock: true,
+        createPointFigures: ({ overlay, coordinates }) => {
+          const point = coordinates[0];
+          if (!point) return [];
+          const data = overlay.extendData || {};
+          const color = marketStructureStyle(data.direction, 1, 'swing');
+          const isHigh = data.text === 'HH' || data.text === 'LH';
+          const width = Math.max(22, String(data.text || '').length * 8 + 10);
+          const x = point.x - width / 2;
+          const y = point.y + (isHigh ? -26 : 10);
+          return [
+            { type: 'rect', attrs: { x, y, width, height: 18 }, styles: { style: 'stroke_fill', color: 'rgba(255,255,255,0.82)', borderColor: color }, ignoreEvent: true },
+            { type: 'text', attrs: { x: point.x, y: y + 9, text: String(data.text || ''), align: 'center', baseline: 'middle' }, styles: textStyle(color, 11), ignoreEvent: true }
+          ];
+        }
+      });
+      api.registerOverlay({
+        name: 'marketStructureBreakLine',
+        totalStep: 2,
+        lock: true,
+        createPointFigures: ({ overlay, coordinates }) => {
+          if (coordinates.length < 2) return [];
+          const data = overlay.extendData || {};
+          const color = marketStructureStyle(data.direction, 0.95);
+          const y = coordinates[0].y;
+          const labelX = coordinates[0].x + Math.max(24, (coordinates[1].x - coordinates[0].x) / 2);
+          return [
+            { type: 'line', attrs: { coordinates: [{ x: coordinates[0].x, y }, { x: coordinates[1].x, y }] }, styles: { color, size: data.text === 'CHoCH' ? 2 : 1 }, ignoreEvent: true },
+            { type: 'text', attrs: { x: labelX, y: y - 10, text: String(data.text || ''), align: 'center', baseline: 'middle' }, styles: textStyle(color, 11), ignoreEvent: true }
+          ];
+        }
+      });
+      api.registerOverlay({
+        name: 'marketStructureBox',
+        totalStep: 2,
+        lock: true,
+        createPointFigures: ({ overlay, coordinates }) => {
+          if (coordinates.length < 2) return [];
+          const data = overlay.extendData || {};
+          const color = marketStructureStyle(data.direction, 0.55, 'box');
+          const fill = marketStructureStyle(data.direction, Number(data.opacity || 0.12), 'box');
+          const x = Math.min(coordinates[0].x, coordinates[1].x);
+          const y = Math.min(coordinates[0].y, coordinates[1].y);
+          const width = Math.abs(coordinates[1].x - coordinates[0].x);
+          const height = Math.max(2, Math.abs(coordinates[1].y - coordinates[0].y));
+          const figures = [
+            { type: 'rect', attrs: { x, y, width: Math.max(1, width), height }, styles: { style: 'stroke_fill', color: fill, borderColor: color }, ignoreEvent: true }
+          ];
+          if (data.text) {
+            figures.push({ type: 'text', attrs: { x: x + Math.max(12, width - 18), y: y + 12, text: String(data.text), align: 'center', baseline: 'middle' }, styles: textStyle(marketStructureStyle(data.direction, 0.95, 'box'), 11), ignoreEvent: true });
+          }
+          return figures;
+        }
+      });
+      api.registerOverlay({
+        name: 'indicatorLineSegment',
+        totalStep: 2,
+        lock: true,
+        createPointFigures: ({ overlay, coordinates }) => {
+          if (coordinates.length < 2) return [];
+          const data = overlay.extendData || {};
+          const color = data.color || '#7c3aed';
+          return [
+            {
+              type: 'line',
+              attrs: { coordinates: [{ x: coordinates[0].x, y: coordinates[0].y }, { x: coordinates[1].x, y: coordinates[1].y }] },
+              styles: { color, size: Number(data.size || 1) },
+              ignoreEvent: true
+            }
+          ];
+        }
+      });
+      marketStructureOverlaysRegistered = true;
+    }
+    function initKlineChart() {
+      if (klineChart) return klineChart;
+      const api = klinechartsApi();
+      const container = document.getElementById('klineChart');
+      if (!api?.init || !container) {
+        document.getElementById('chartStatus').textContent = 'KLineChart konnte nicht geladen werden.';
+        return null;
+      }
+      klineChart = api.init(container, {
+        styles: klineChartStyleOptions()
+      });
+      updateKlineChartStyles();
+      registerMarketStructureOverlays();
+      return klineChart;
+    }
+    function indicatorConfig() {
+      const cfg = latestConfig || {};
+      const colors = chartColors();
+      return {
+        enabled: cfg.indicator_enabled !== false,
+        showBosChoch: cfg.indicator_show_bos_choch !== false,
+        showBoxes: cfg.indicator_show_boxes !== false,
+        showSwingLabels: cfg.indicator_show_swing_labels !== false,
+        showHma: cfg.indicator_show_hma === true,
+        showSma: cfg.indicator_show_sma !== false,
+        showTripleEma: cfg.indicator_show_triple_ema === true,
+        showMfi: cfg.indicator_show_mfi !== false,
+        showSupportResistance: cfg.indicator_show_support_resistance !== false,
+        swingSize: Number(cfg.indicator_swing_size ?? 5),
+        hhllRange: Number(cfg.indicator_hhll_range ?? 50),
+        hmaPeriod: Number(cfg.indicator_hma_period ?? 20),
+        smaPeriod: Number(cfg.indicator_sma_period ?? 14),
+        tripleEmaPeriod: Number(cfg.indicator_triple_ema_period ?? 20),
+        tripleEmaSlowPeriod: Number(cfg.indicator_triple_ema_slow_period ?? 50),
+        mfiPeriod: Number(cfg.indicator_mfi_period ?? 14),
+        srPivotPeriod: Number(cfg.indicator_sr_pivot_period ?? 10),
+        srSource: String(cfg.indicator_sr_source || 'High/Low'),
+        srMaxPivots: Number(cfg.indicator_sr_max_pivots ?? 20),
+        srChannelWidthPercent: Number(cfg.indicator_sr_channel_width_percent ?? 10),
+        srMaxLevels: Number(cfg.indicator_sr_max_levels ?? 5),
+        srMinStrength: Number(cfg.indicator_sr_min_strength ?? 2),
+        boxExtendCandles: Math.max(2, Number(cfg.indicator_box_extend_candles ?? 4)),
+        bosChochLookbackDays: Number(cfg.indicator_bos_choch_lookback_days ?? cfg.indicator_lookback_days ?? 3),
+        boxesLookbackDays: Number(cfg.indicator_boxes_lookback_days ?? cfg.indicator_lookback_days ?? 3),
+        swingLabelsLookbackDays: Number(cfg.indicator_swing_labels_lookback_days ?? cfg.indicator_lookback_days ?? 3),
+        hmaLookbackDays: Number(cfg.indicator_hma_lookback_days ?? 0),
+        smaLookbackDays: Number(cfg.indicator_sma_lookback_days ?? 0),
+        tripleEmaLookbackDays: Number(cfg.indicator_triple_ema_lookback_days ?? 0),
+        mfiLookbackDays: Number(cfg.indicator_mfi_lookback_days ?? 0),
+        bosConfirmation: String(cfg.indicator_bos_confirmation || 'Wicks'),
+        hmaColor: colors.hma,
+        smaColor: colors.sma,
+        tripleEmaColor: colors.tripleEma,
+        tripleEmaSlowColor: colors.tripleEmaSlow,
+        mfiColor: colors.mfi,
+        srSupportColor: colors.srSupport,
+        srResistanceColor: colors.srResistance,
+      };
+    }
+    function renderIndicatorChartSettings(indicatorData) {
+      const el = document.getElementById('indicatorChartSettings');
+      if (!el) return;
+      const cfg = indicatorConfig();
+      if (!cfg.enabled) {
+        el.textContent = 'Indikatoren: aus';
+        return;
+      }
+      const labels = indicatorData?.labels?.length || 0;
+      const breaks = indicatorData?.break_lines?.length || 0;
+      const boxes = indicatorData?.boxes?.length || 0;
+      const srLevels = indicatorData?.support_resistance?.length || 0;
+      const lines = (indicatorData?.lines || []).map(line => `${line.label}: ${line.series?.length || 0}`).join(' · ');
+      el.textContent = `Indikatoren: BOS/CHoCH ${breaks} (${cfg.bosChochLookbackDays}T) · Boxen ${boxes} (${cfg.boxesLookbackDays}T) · Swing Labels ${labels} (${cfg.swingLabelsLookbackDays}T) · S/R ${srLevels} · Box Auslauf ${cfg.boxExtendCandles} Kerzen${lines ? ' · ' + lines : ''}`;
+    }
+    async function loadCustomIndicatorData(asset, resolution, limit) {
+      const cfg = indicatorConfig();
+      if (!cfg.enabled) {
+        lastIndicatorData = null;
+        renderIndicatorChartSettings(null);
+        return null;
+      }
+      try {
+        const params = new URLSearchParams({
+          symbol: asset,
+          resolution: resolution,
+          limit: String(limit),
+          swing_size: String(cfg.swingSize),
+          hhll_range: String(cfg.hhllRange),
+          hma_period: String(cfg.hmaPeriod),
+          sma_period: String(cfg.smaPeriod),
+          triple_ema_period: String(cfg.tripleEmaPeriod),
+          triple_ema_slow_period: String(cfg.tripleEmaSlowPeriod),
+          mfi_period: String(cfg.mfiPeriod),
+          sr_pivot_period: String(cfg.srPivotPeriod),
+          sr_source: cfg.srSource,
+          sr_max_pivots: String(cfg.srMaxPivots),
+          sr_channel_width_percent: String(cfg.srChannelWidthPercent),
+          sr_max_levels: String(cfg.srMaxLevels),
+          sr_min_strength: String(cfg.srMinStrength),
+          box_extend_candles: String(cfg.boxExtendCandles),
+          bos_choch_lookback_days: String(cfg.bosChochLookbackDays),
+          boxes_lookback_days: String(cfg.boxesLookbackDays),
+          swing_labels_lookback_days: String(cfg.swingLabelsLookbackDays),
+          hma_lookback_days: String(cfg.hmaLookbackDays),
+          sma_lookback_days: String(cfg.smaLookbackDays),
+          triple_ema_lookback_days: String(cfg.tripleEmaLookbackDays),
+          mfi_lookback_days: String(cfg.mfiLookbackDays),
+          bos_confirmation: cfg.bosConfirmation,
+          hma_color: cfg.hmaColor,
+          sma_color: cfg.smaColor,
+          triple_ema_color: cfg.tripleEmaColor,
+          triple_ema_slow_color: cfg.tripleEmaSlowColor,
+          mfi_color: cfg.mfiColor,
+          sr_support_color: cfg.srSupportColor,
+          sr_resistance_color: cfg.srResistanceColor,
+          show_bos_choch: String(cfg.showBosChoch),
+          show_boxes: String(cfg.showBoxes),
+          show_swing_labels: String(cfg.showSwingLabels),
+          show_hma: String(cfg.showHma),
+          show_sma: String(cfg.showSma),
+          show_triple_ema: String(cfg.showTripleEma),
+          show_mfi: String(cfg.showMfi),
+          show_support_resistance: String(cfg.showSupportResistance)
+        });
+        const response = await fetch(`/api/indicator-data?${params.toString()}`, { cache: 'no-store' });
+        lastIndicatorData = response.ok ? await response.json() : null;
+        renderIndicatorChartSettings(lastIndicatorData);
+        return lastIndicatorData;
+      } catch (error) {
+        console.warn('indicator request failed', error);
+        lastIndicatorData = null;
+        renderIndicatorChartSettings(null);
+        return null;
+      }
+    }
+    function drawMarketStructureOverlay(rows, indicatorData) {
+      if (!klineChart || !rows.length || !indicatorData || typeof klineChart.createOverlay !== 'function') return;
+      registerMarketStructureOverlays();
+      const toPoint = (timestamp, price) => ({ timestamp: Number(timestamp) * 1000, value: Number(price) });
+      (indicatorData.lines || []).filter(line => (line.pane || 'price') === 'price').forEach(line => {
+        const series = line.series || [];
+        for (let index = 1; index < series.length; index += 1) {
+          const previous = series[index - 1];
+          const current = series[index];
+          if (!Number.isFinite(Number(previous.timestamp)) || !Number.isFinite(Number(current.timestamp))) continue;
+          if (!Number.isFinite(Number(previous.value)) || !Number.isFinite(Number(current.value))) continue;
+          rememberKlineOverlay(klineChart.createOverlay({
+            name: 'indicatorLineSegment',
+            groupId: 'indicator_lines',
+            lock: true,
+            zLevel: 5,
+            points: [toPoint(previous.timestamp, previous.value), toPoint(current.timestamp, current.value)],
+            extendData: { color: line.color, label: line.label, size: 1 },
+          }));
+        }
+      });
+      (indicatorData.boxes || []).forEach(box => {
+        if (!Number.isFinite(Number(box.start_timestamp)) || !Number.isFinite(Number(box.end_timestamp))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'marketStructureBox',
+          groupId: 'market_structure',
+          lock: true,
+          zLevel: 10,
+          points: [toPoint(box.start_timestamp, box.top), toPoint(box.end_timestamp, box.bottom)],
+          extendData: { text: box.text, direction: box.direction, opacity: box.opacity },
+        }));
+      });
+      (indicatorData.support_resistance || []).forEach(level => {
+        if (!Number.isFinite(Number(level.price))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'horizontalStraightLine',
+          groupId: 'indicator_sr_levels',
+          lock: true,
+          zLevel: 14,
+          points: [{ timestamp: rows[rows.length - 1]?.timestamp, value: Number(level.price) }],
+          extendData: level.label || `${level.kind || 'SR'} ${Number(level.price).toFixed(4)}`,
+          styles: { line: { color: level.color || (level.kind === 'support' ? chartColors().srSupport : chartColors().srResistance), size: 1, style: 'dashed' } }
+        }));
+      });
+      (indicatorData.break_lines || []).forEach(line => {
+        if (!Number.isFinite(Number(line.start_timestamp)) || !Number.isFinite(Number(line.end_timestamp))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'marketStructureBreakLine',
+          groupId: 'market_structure',
+          lock: true,
+          zLevel: 20,
+          points: [toPoint(line.start_timestamp, line.price), toPoint(line.end_timestamp, line.price)],
+          extendData: { text: line.text, direction: line.direction },
+        }));
+      });
+      (indicatorData.labels || []).forEach(label => {
+        if (!Number.isFinite(Number(label.timestamp))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'marketStructureLabel',
+          groupId: 'market_structure',
+          lock: true,
+          zLevel: 30,
+          points: [toPoint(label.timestamp, label.price)],
+          extendData: { text: label.text, direction: label.direction },
+        }));
+      });
+    }
+    function resizeKlineChart() {
+      if (!klineChart) return;
+      if (typeof klineChart.resize === 'function') {
+        klineChart.resize();
+      }
+    }
+    function clearKlineChart() {
+      if (!klineChart) return;
+      clearKlineOverlays();
+      if (typeof klineChart.clearData === 'function') {
+        klineChart.clearData();
+      } else if (typeof klineChart.applyNewData === 'function') {
+        klineChart.applyNewData([]);
+      }
+    }
+    function candleToKlineData(candle) {
+      return {
+        timestamp: Number(candle.timestamp) * 1000,
+        open: Number(candle.open),
+        high: Number(candle.high),
+        low: Number(candle.low),
+        close: Number(candle.close),
+        volume: Number(candle.volume || 0),
+        turnover: Number(candle.turnover || 0)
+      };
+    }
+    function drawChart(candles, overlay, indicatorData) {
+      const chart = initKlineChart();
+      if (!chart) return;
+      const rows = candles.map(candleToKlineData).filter(row =>
+        Number.isFinite(row.timestamp) && Number.isFinite(row.open) && Number.isFinite(row.high) &&
+        Number.isFinite(row.low) && Number.isFinite(row.close)
+      );
+      if (typeof chart.applyNewData !== 'function') {
+        document.getElementById('chartStatus').textContent = 'KLineChart Version ohne applyNewData geladen.';
+        return;
+      }
+      chart.applyNewData(rows, false);
+      lastChartRows = rows;
+      resizeKlineChart();
+      renderKlineStrategyOverlay(rows, overlay);
+      drawMarketStructureOverlay(rows, indicatorData);
+    }
+    function clearKlineOverlays() {
+      if (!klineChart || typeof klineChart.removeOverlay !== 'function') {
+        klineOverlayIds = [];
+        return;
+      }
+      klineOverlayIds.forEach(id => {
+        try { klineChart.removeOverlay({ id }); } catch (error) { try { klineChart.removeOverlay(id); } catch (_) {} }
+      });
+      klineOverlayIds = [];
+    }
+    function rememberKlineOverlay(result) {
+      if (Array.isArray(result)) {
+        result.filter(Boolean).forEach(id => klineOverlayIds.push(id));
+      } else if (result) {
+        klineOverlayIds.push(result);
+      }
+    }
+    function overlayPoint(rows, price, timestamp = null) {
+      const time = timestamp ? Number(timestamp) * 1000 : rows[rows.length - 1]?.timestamp;
+      return { timestamp: time, value: Number(price) };
+    }
+    function renderKlineStrategyOverlay(rows, overlay) {
+      clearKlineOverlays();
+      if (!klineChart || !rows.length || !overlay || typeof klineChart.createOverlay !== 'function') return;
+      (overlay.levels || []).forEach(level => {
+        if (!Number.isFinite(Number(level.price))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'horizontalStraightLine',
+          groupId: 'strategy',
+          lock: true,
+          points: [overlayPoint(rows, level.price, level.time)],
+          extendData: `${level.label} ${Number(level.price).toFixed(4)}`,
+          styles: { line: { color: level.color, size: level.strong ? 2 : 1, style: level.strong ? 'solid' : 'dashed' } }
+        }));
+      });
+      if (overlay.fvg) {
+        [
+          { price: overlay.fvg.low, label: `${overlay.fvg.label} Low` },
+          { price: overlay.fvg.high, label: `${overlay.fvg.label} High` }
+        ].forEach(item => rememberKlineOverlay(klineChart.createOverlay({
+          name: 'horizontalStraightLine',
+          groupId: 'strategy',
+          lock: true,
+          points: [overlayPoint(rows, item.price)],
+          extendData: `${item.label} ${Number(item.price).toFixed(4)}`,
+          styles: { line: { color: '#2357c6', size: 1, style: 'dashed' } }
+        })));
+      }
+      (overlay.markers || []).forEach(marker => {
+        if (!Number.isFinite(Number(marker.time))) return;
+        rememberKlineOverlay(klineChart.createOverlay({
+          name: 'verticalStraightLine',
+          groupId: 'strategy',
+          lock: true,
+          points: [{ timestamp: Number(marker.time) * 1000 }],
+          extendData: marker.label,
+          styles: { line: { color: marker.color, size: 1, style: 'dashed' } }
+        }));
+      });
+    }
+    async function loadIndicatorSettings() {
+      const response = await fetch('/api/config-json', { cache: 'no-store' });
+      const data = await response.json();
+      latestConfig = data;
+      document.getElementById('cfgIndicatorEnabled').checked = data.indicator_enabled !== false;
+      document.getElementById('cfgIndicatorShowBosChoch').checked = data.indicator_show_bos_choch !== false;
+      document.getElementById('cfgIndicatorShowBoxes').checked = data.indicator_show_boxes !== false;
+      document.getElementById('cfgIndicatorShowSwingLabels').checked = data.indicator_show_swing_labels !== false;
+      document.getElementById('cfgIndicatorShowHma').checked = data.indicator_show_hma === true;
+      document.getElementById('cfgIndicatorShowSma').checked = data.indicator_show_sma !== false;
+      document.getElementById('cfgIndicatorShowTripleEma').checked = data.indicator_show_triple_ema === true;
+      document.getElementById('cfgIndicatorShowMfi').checked = data.indicator_show_mfi !== false;
+      document.getElementById('cfgIndicatorShowSupportResistance').checked = data.indicator_show_support_resistance !== false;
+      document.getElementById('cfgIndicatorSwingSize').value = data.indicator_swing_size ?? 5;
+      document.getElementById('cfgIndicatorHhllRange').value = data.indicator_hhll_range ?? 50;
+      document.getElementById('cfgIndicatorBoxExtendCandles').value = data.indicator_box_extend_candles ?? 4;
+      document.getElementById('cfgIndicatorBosChochLookbackDays').value = data.indicator_bos_choch_lookback_days ?? data.indicator_lookback_days ?? 3;
+      document.getElementById('cfgIndicatorBoxesLookbackDays').value = data.indicator_boxes_lookback_days ?? data.indicator_lookback_days ?? 3;
+      document.getElementById('cfgIndicatorSwingLabelsLookbackDays').value = data.indicator_swing_labels_lookback_days ?? data.indicator_lookback_days ?? 3;
+      document.getElementById('cfgIndicatorHmaLookbackDays').value = data.indicator_hma_lookback_days ?? 0;
+      document.getElementById('cfgIndicatorSmaLookbackDays').value = data.indicator_sma_lookback_days ?? 0;
+      document.getElementById('cfgIndicatorTripleEmaLookbackDays').value = data.indicator_triple_ema_lookback_days ?? 0;
+      document.getElementById('cfgIndicatorMfiLookbackDays').value = data.indicator_mfi_lookback_days ?? 0;
+      document.getElementById('cfgIndicatorBosConfirmation').value = data.indicator_bos_confirmation || 'Wicks';
+      document.getElementById('cfgIndicatorHmaPeriod').value = data.indicator_hma_period ?? 20;
+      document.getElementById('cfgIndicatorSmaPeriod').value = data.indicator_sma_period ?? 50;
+      document.getElementById('cfgIndicatorTripleEmaPeriod').value = data.indicator_triple_ema_period ?? 20;
+      document.getElementById('cfgIndicatorTripleEmaSlowPeriod').value = data.indicator_triple_ema_slow_period ?? 50;
+      document.getElementById('cfgIndicatorMfiPeriod').value = data.indicator_mfi_period ?? 14;
+      document.getElementById('cfgIndicatorSrPivotPeriod').value = data.indicator_sr_pivot_period ?? 10;
+      document.getElementById('cfgIndicatorSrSource').value = data.indicator_sr_source || 'High/Low';
+      document.getElementById('cfgIndicatorSrMaxPivots').value = data.indicator_sr_max_pivots ?? 20;
+      document.getElementById('cfgIndicatorSrChannelWidthPercent').value = data.indicator_sr_channel_width_percent ?? 10;
+      document.getElementById('cfgIndicatorSrMaxLevels').value = data.indicator_sr_max_levels ?? 5;
+      document.getElementById('cfgIndicatorSrMinStrength').value = data.indicator_sr_min_strength ?? 2;
+      document.getElementById('cfgChartCandleUpColor').value = safeHexColor(data.chart_candle_up_color, '#047857');
+      document.getElementById('cfgChartCandleDownColor').value = safeHexColor(data.chart_candle_down_color, '#b42318');
+      document.getElementById('cfgChartCandleNoChangeColor').value = safeHexColor(data.chart_candle_no_change_color, '#667085');
+      document.getElementById('cfgChartGridColor').value = safeHexColor(data.chart_grid_color, '#d9e0ea');
+      document.getElementById('cfgChartBackgroundColor').value = safeHexColor(data.chart_background_color, '#ffffff');
+      document.getElementById('cfgIndicatorRisingColor').value = safeHexColor(data.indicator_bos_rising_color || data.indicator_rising_color, '#047857');
+      document.getElementById('cfgIndicatorFallingColor').value = safeHexColor(data.indicator_bos_falling_color || data.indicator_falling_color, '#b42318');
+      document.getElementById('cfgIndicatorSwingRisingColor').value = safeHexColor(data.indicator_swing_rising_color || data.indicator_rising_color, '#047857');
+      document.getElementById('cfgIndicatorSwingFallingColor').value = safeHexColor(data.indicator_swing_falling_color || data.indicator_falling_color, '#b42318');
+      document.getElementById('cfgIndicatorBoxHighColor').value = safeHexColor(data.indicator_box_high_color, '#b42318');
+      document.getElementById('cfgIndicatorBoxLowColor').value = safeHexColor(data.indicator_box_low_color, '#047857');
+      document.getElementById('cfgIndicatorHmaColor').value = safeHexColor(data.indicator_hma_color, '#7c3aed');
+      document.getElementById('cfgIndicatorSmaColor').value = safeHexColor(data.indicator_sma_color, '#06b6d4');
+      document.getElementById('cfgIndicatorTripleEmaColor').value = safeHexColor(data.indicator_triple_ema_color, '#d97706');
+      document.getElementById('cfgIndicatorTripleEmaSlowColor').value = safeHexColor(data.indicator_triple_ema_slow_color, '#2563eb');
+      document.getElementById('cfgIndicatorMfiColor').value = safeHexColor(data.indicator_mfi_color, '#db2777');
+      document.getElementById('cfgIndicatorSrSupportColor').value = safeHexColor(data.indicator_sr_support_color, '#22c55e');
+      document.getElementById('cfgIndicatorSrResistanceColor').value = safeHexColor(data.indicator_sr_resistance_color, '#ef4444');
+      syncAllSwitchStates();
+      document.getElementById('indicatorSettingsStatus').textContent = '';
+      openModal('indicatorModal');
+    }
+    async function saveIndicatorSettings() {
+      const parsed = {
+        indicator_enabled: document.getElementById('cfgIndicatorEnabled').checked,
+        indicator_show_bos_choch: document.getElementById('cfgIndicatorShowBosChoch').checked,
+        indicator_show_boxes: document.getElementById('cfgIndicatorShowBoxes').checked,
+        indicator_show_swing_labels: document.getElementById('cfgIndicatorShowSwingLabels').checked,
+        indicator_show_hma: document.getElementById('cfgIndicatorShowHma').checked,
+        indicator_show_sma: document.getElementById('cfgIndicatorShowSma').checked,
+        indicator_show_triple_ema: document.getElementById('cfgIndicatorShowTripleEma').checked,
+        indicator_show_mfi: document.getElementById('cfgIndicatorShowMfi').checked,
+        indicator_show_support_resistance: document.getElementById('cfgIndicatorShowSupportResistance').checked,
+        indicator_swing_size: Number(document.getElementById('cfgIndicatorSwingSize').value),
+        indicator_hhll_range: Number(document.getElementById('cfgIndicatorHhllRange').value),
+        indicator_box_extend_candles: Number(document.getElementById('cfgIndicatorBoxExtendCandles').value),
+        indicator_bos_choch_lookback_days: Number(document.getElementById('cfgIndicatorBosChochLookbackDays').value),
+        indicator_boxes_lookback_days: Number(document.getElementById('cfgIndicatorBoxesLookbackDays').value),
+        indicator_swing_labels_lookback_days: Number(document.getElementById('cfgIndicatorSwingLabelsLookbackDays').value),
+        indicator_hma_lookback_days: Number(document.getElementById('cfgIndicatorHmaLookbackDays').value),
+        indicator_sma_lookback_days: Number(document.getElementById('cfgIndicatorSmaLookbackDays').value),
+        indicator_triple_ema_lookback_days: Number(document.getElementById('cfgIndicatorTripleEmaLookbackDays').value),
+        indicator_mfi_lookback_days: Number(document.getElementById('cfgIndicatorMfiLookbackDays').value),
+        indicator_bos_confirmation: document.getElementById('cfgIndicatorBosConfirmation').value,
+        indicator_hma_period: Number(document.getElementById('cfgIndicatorHmaPeriod').value),
+        indicator_sma_period: Number(document.getElementById('cfgIndicatorSmaPeriod').value),
+        indicator_triple_ema_period: Number(document.getElementById('cfgIndicatorTripleEmaPeriod').value),
+        indicator_triple_ema_slow_period: Number(document.getElementById('cfgIndicatorTripleEmaSlowPeriod').value),
+        indicator_mfi_period: Number(document.getElementById('cfgIndicatorMfiPeriod').value),
+        indicator_sr_pivot_period: Number(document.getElementById('cfgIndicatorSrPivotPeriod').value),
+        indicator_sr_source: document.getElementById('cfgIndicatorSrSource').value,
+        indicator_sr_max_pivots: Number(document.getElementById('cfgIndicatorSrMaxPivots').value),
+        indicator_sr_channel_width_percent: Number(document.getElementById('cfgIndicatorSrChannelWidthPercent').value),
+        indicator_sr_max_levels: Number(document.getElementById('cfgIndicatorSrMaxLevels').value),
+        indicator_sr_min_strength: Number(document.getElementById('cfgIndicatorSrMinStrength').value),
+        chart_candle_up_color: document.getElementById('cfgChartCandleUpColor').value,
+        chart_candle_down_color: document.getElementById('cfgChartCandleDownColor').value,
+        chart_candle_no_change_color: document.getElementById('cfgChartCandleNoChangeColor').value,
+        chart_grid_color: document.getElementById('cfgChartGridColor').value,
+        chart_background_color: document.getElementById('cfgChartBackgroundColor').value,
+        indicator_bos_rising_color: document.getElementById('cfgIndicatorRisingColor').value,
+        indicator_bos_falling_color: document.getElementById('cfgIndicatorFallingColor').value,
+        indicator_swing_rising_color: document.getElementById('cfgIndicatorSwingRisingColor').value,
+        indicator_swing_falling_color: document.getElementById('cfgIndicatorSwingFallingColor').value,
+        indicator_box_high_color: document.getElementById('cfgIndicatorBoxHighColor').value,
+        indicator_box_low_color: document.getElementById('cfgIndicatorBoxLowColor').value,
+        indicator_hma_color: document.getElementById('cfgIndicatorHmaColor').value,
+        indicator_sma_color: document.getElementById('cfgIndicatorSmaColor').value,
+        indicator_triple_ema_color: document.getElementById('cfgIndicatorTripleEmaColor').value,
+        indicator_triple_ema_slow_color: document.getElementById('cfgIndicatorTripleEmaSlowColor').value,
+        indicator_mfi_color: document.getElementById('cfgIndicatorMfiColor').value,
+        indicator_sr_support_color: document.getElementById('cfgIndicatorSrSupportColor').value,
+        indicator_sr_resistance_color: document.getElementById('cfgIndicatorSrResistanceColor').value,
+      };
+      const response = await fetch('/api/config-json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+      const result = await response.json();
+      document.getElementById('indicatorSettingsStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
+      if (response.ok) {
+        latestConfig = { ...latestConfig, ...parsed };
+        updateKlineChartStyles();
+        lastChartKey = '';
+        closeModal('indicatorModal');
+        await loadChartData(true);
+      }
+    }
+    const AGENT_SETTING_DEFS = [
+      ['bos_choch', 'BOS / CHoCH Agent', 'liest BOS / CHoCH aus den Break-Lines', 'indicator_show_bos_choch', null],
+      ['box', 'LL / HH Box Agent', 'liest aktive Strukturboxen', 'indicator_show_boxes', null],
+      ['support_resistance', 'Support / Resistance Agent', 'liest dynamische Support-/Resistance-Level', 'indicator_show_support_resistance', null],
+      ['swing_labels', 'HH / LH / HL / LL Agent', 'liest Swing Labels', 'indicator_show_swing_labels', null],
+      ['hma', 'HMA Agent', 'liest HMA Trend / Momentum', 'indicator_show_hma', null],
+      ['sma', 'SMA Agent', 'liest Preisposition und SMA-Neigung', 'indicator_show_sma', { id:'cfgAgentSmaPeriod', key:'agent_sma_period', label:'SMA Period', fallback:50, help:'Anzahl Kerzen fuer den SMA-Trendfilter des SMA Agents.' }],
+      ['triple_ema', 'Triple EMA Agent', 'liest Fast / Slow Triple EMA', 'indicator_show_triple_ema', null],
+      ['mfi', 'MFI Agent', 'liest Money Flow Index und Kapitalfluss', 'indicator_show_mfi', { id:'cfgAgentMfiPeriod', key:'agent_mfi_period', label:'MFI Period', fallback:14, help:'Anzahl Kerzen fuer den Money Flow Index des MFI Agents.' }],
+      ['volume', 'Volume Agent', 'liest Kerzenvolumen', null, { id:'cfgAgentVolumePeriod', key:'agent_volume_period', label:'Volume Period', fallback:20, help:'Anzahl Kerzen fuer den Volumen-Durchschnitt des Volume Agents.' }],
+      ['risk', 'Risk Agent', 'liest Pipeline- und Gate-Kontext', null, null],
+    ];
+    function renderAgentSettingsGroups(data) {
+      const wrap = document.getElementById('agentSettingsGroups');
+      wrap.innerHTML = AGENT_SETTING_DEFS.map(([key, title, info, linked, period]) => {
+        const prefix = `agent_${key}`;
+        const linkedText = linked ? `Gekoppelt mit ${linked}` : 'Direkter Agent ohne Chart-Indikator-Pflicht';
+        const safeKey = key.replace(/[^a-zA-Z0-9]/g, '_');
+        const periodField = period
+          ? `<div><label class="fieldLabel" for="${period.id}">${escapeHtml(period.label)} <button class="helpButton" type="button" data-help-target="agent_${safeKey}_period_help">?</button></label><input id="${period.id}" type="number" min="2" max="500" step="1" value="${Number(data[period.key] ?? period.fallback)}"><div id="agent_${safeKey}_period_help" class="helpText">${escapeHtml(period.help)}</div></div>`
+          : '';
+        return `<div class="settingsGroup">
+          <h3>${escapeHtml(title)}</h3>
+          <div class="settingsGroupGrid">
+            <div class="fullWidth"><div class="switchLine"><input id="cfgAgent${key}Enabled" data-agent-enabled="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Enabled">Agent aktiv <button class="helpButton" type="button" data-help-target="agent_${safeKey}_enabled_help">?</button></label><span id="cfgAgent${key}EnabledState" class="switchState">Aus</span></div><div id="agent_${safeKey}_enabled_help" class="helpText">Schaltet diesen Agenten ein oder aus. Bei Aus liefert er keine aktive Bewertung.</div></div>
+            <div><label class="fieldLabel" for="cfgAgent${key}Weight">Gewichtung <button class="helpButton" type="button" data-help-target="agent_${safeKey}_weight_help">?</button></label><input id="cfgAgent${key}Weight" type="number" min="0" max="5" step="0.1"><div id="agent_${safeKey}_weight_help" class="helpText">Multiplikator fuer den Agenten-Score. 1 = normal, 0 = keine Wirkung, ueber 1 = staerkerer Einfluss.</div></div>
+            <div><label class="fieldLabel" for="cfgAgent${key}MinScore">Mindestscore <button class="helpButton" type="button" data-help-target="agent_${safeKey}_min_help">?</button></label><input id="cfgAgent${key}MinScore" type="number" min="0" max="100" step="1"><div id="agent_${safeKey}_min_help" class="helpText">Unter diesem Score wird das Agentensignal auf neutral gesetzt.</div></div>
+            ${periodField}
+            <div class="fullWidth"><div class="switchLine"><input id="cfgAgent${key}Blocking" data-agent-blocking="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Blocking">blockierend wenn keine Freigabe <button class="helpButton" type="button" data-help-target="agent_${safeKey}_blocking_help">?</button></label><span id="cfgAgent${key}BlockingState" class="switchState">Info</span></div><div id="agent_${safeKey}_blocking_help" class="helpText">Wenn aktiv, kann dieser Agent einen Trade blockieren, sobald seine Mindestanforderung nicht erfuellt ist.</div></div>
+            <div class="label fullWidth">${escapeHtml(info)} · ${escapeHtml(linkedText)}</div>
+          </div>
+        </div>`;
+      }).join('');
+      for (const [key] of AGENT_SETTING_DEFS) {
+        document.getElementById(`cfgAgent${key}Enabled`).checked = data[`agent_${key}_enabled`] !== false;
+        document.getElementById(`cfgAgent${key}Weight`).value = data[`agent_${key}_weight`] ?? 1;
+        document.getElementById(`cfgAgent${key}MinScore`).value = data[`agent_${key}_min_score`] ?? 0;
+        document.getElementById(`cfgAgent${key}Blocking`).checked = data[`agent_${key}_blocking`] === true;
+      }
+      document.querySelectorAll('[data-agent-enabled],[data-agent-blocking]').forEach(input => {
+        input.addEventListener('change', syncAllSwitchStates);
+      });
+      bindHelpButtons(wrap);
+    }
+    async function loadAgentSettings() {
+      const response = await fetch('/api/settings', { cache: 'no-store' });
+      const data = await response.json();
+      latestConfig = data;
+      document.getElementById('cfgBrainEnabled').checked = data.brain_enabled !== false;
+      document.getElementById('cfgBrainMinScore').value = data.brain_min_score ?? 58;
+      document.getElementById('cfgBrainMinScoreGap').value = data.brain_min_score_gap ?? 18;
+      document.getElementById('cfgBrainMinAlignment').value = data.brain_min_agent_alignment ?? 2;
+      document.getElementById('cfgBrainMemoryMinCount').value = data.brain_memory_min_count ?? 3;
+      document.getElementById('cfgBrainEntryBoxOffset').value = data.brain_entry_box_offset ?? 0.35;
+      document.getElementById('cfgBrainRequireBox').checked = data.brain_require_box_for_trade !== false;
+      document.getElementById('cfgBrainLlmLayer').checked = data.brain_llm_layer_enabled === true;
+      document.getElementById('cfgOllamaEnabled').checked = data.ollama_enabled === true;
+      document.getElementById('cfgOllamaBaseUrl').value = data.ollama_base_url || 'http://127.0.0.1:11434';
+      document.getElementById('cfgOllamaModel').value = data.ollama_model || 'qwen2.5:3b';
+      document.getElementById('cfgOllamaTimeout').value = data.ollama_timeout_seconds ?? 5;
+      document.getElementById('cfgOllamaMaxPrompt').value = data.ollama_max_prompt_chars ?? 4000;
+      document.getElementById('cfgOllamaTemperature').value = data.ollama_temperature ?? 0;
+      document.getElementById('cfgOllamaBlockHint').checked = data.ollama_block_hint_enabled === true;
+      document.getElementById('cfgAgentShowOffline').checked = data.agent_show_offline_agents !== false;
+      renderAgentSettingsGroups(data);
+      syncAllSwitchStates();
+      document.getElementById('agentSettingsStatus').textContent = '';
+      openModal('agentSettingsModal');
+    }
+    async function saveAgentSettings() {
+      const parsed = {
+        trade_decision_mode: 'brain',
+        brain_enabled: document.getElementById('cfgBrainEnabled').checked,
+        brain_min_score: Number(document.getElementById('cfgBrainMinScore').value),
+        brain_min_score_gap: Number(document.getElementById('cfgBrainMinScoreGap').value),
+        brain_min_agent_alignment: Number(document.getElementById('cfgBrainMinAlignment').value),
+        brain_memory_min_count: Number(document.getElementById('cfgBrainMemoryMinCount').value),
+        brain_entry_box_offset: Number(document.getElementById('cfgBrainEntryBoxOffset').value),
+        brain_require_box_for_trade: document.getElementById('cfgBrainRequireBox').checked,
+        brain_llm_layer_enabled: document.getElementById('cfgBrainLlmLayer').checked,
+        ollama_enabled: document.getElementById('cfgOllamaEnabled').checked,
+        ollama_base_url: document.getElementById('cfgOllamaBaseUrl').value.trim(),
+        ollama_model: document.getElementById('cfgOllamaModel').value.trim(),
+        ollama_timeout_seconds: Number(document.getElementById('cfgOllamaTimeout').value),
+        ollama_max_prompt_chars: Number(document.getElementById('cfgOllamaMaxPrompt').value),
+        ollama_temperature: Number(document.getElementById('cfgOllamaTemperature').value),
+        ollama_block_hint_enabled: document.getElementById('cfgOllamaBlockHint').checked,
+        agent_show_offline_agents: document.getElementById('cfgAgentShowOffline').checked,
+      };
+      for (const [key, _title, _info, _linked, period] of AGENT_SETTING_DEFS) {
+        parsed[`agent_${key}_enabled`] = document.getElementById(`cfgAgent${key}Enabled`).checked;
+        parsed[`agent_${key}_weight`] = Number(document.getElementById(`cfgAgent${key}Weight`).value);
+        parsed[`agent_${key}_min_score`] = Number(document.getElementById(`cfgAgent${key}MinScore`).value);
+        parsed[`agent_${key}_blocking`] = document.getElementById(`cfgAgent${key}Blocking`).checked;
+        if (period) {
+          parsed[period.key] = Number(document.getElementById(period.id)?.value || latestConfig[period.key] || period.fallback);
+        }
+      }
+      const response = await fetch('/api/config-json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+      const result = await response.json();
+      document.getElementById('agentSettingsStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
+      if (response.ok) {
+        latestConfig = { ...latestConfig, ...parsed };
+        await refresh();
+        closeModal('agentSettingsModal');
+      }
+    }
+    async function saveSettings() {
+      persistCurrentTradeSizeDraft();
+      const payload = {
+        paper_trading_enabled: document.getElementById('paperToggle').checked,
+        trade_size_mode: document.getElementById('sizeMode').value,
+        trade_size_usd: Number(document.getElementById('sizeUsd').value || 0),
+        trade_size_asset: Number(document.getElementById('sizeAsset').value || 0),
+        trade_sizes_by_symbol: localTradeSizes
+      };
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      document.getElementById('settingsStatus').textContent = response.ok ? 'Gespeichert' : (result.error || 'Fehler');
+      if (response.ok) {
+        closeModal('tradingModal');
+        await refresh();
+      }
+    }
+    async function botControl(action) {
+      const dropdownValue = document.getElementById('assetFilter')?.value || selectedAssetValue();
+      const resetSymbol = dropdownValue === ALL_ASSETS_VALUE ? null : dropdownValue;
+      const resetLabel = resetSymbol || 'Gesamt';
+      if (action === 'reset') {
+        const scopeText = resetSymbol
+          ? `nur fuer ${resetSymbol}`
+          : 'fuer alle Assets';
+        const ok = window.confirm(`Reset ${scopeText} wirklich ausfuehren? Das loescht Paper-Trades und Lernspeicher ${scopeText} und setzt den Scanner auf Stop.`);
+        if (!ok) return;
+      }
+      const pendingLabels = {
+        start: 'Scanner wird gestartet...',
+        stop: 'Scanner wird gestoppt...',
+        reset: `Reset ${resetLabel} in Arbeit...`
+      };
+      setControlMessage(pendingLabels[action] || 'Aktion in Arbeit...', 'warn');
+      const response = await fetch('/api/bot-control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, symbol: action === 'reset' ? resetSymbol : null })
+      });
+      const result = await response.json();
+      const doneLabels = {
+        start: 'Scanner gestartet',
+        stop: 'Scanner gestoppt',
+        reset: `Speicher ${resetLabel} zurueckgesetzt`
+      };
+      setControlMessage(response.ok ? (doneLabels[action] || 'Aktion ausgefuehrt') : (result.error || 'Fehler'), response.ok ? 'ok' : 'warn');
+      await refresh();
+    }
+    async function reloadDashboardData() {
+      flashButton('reloadBot');
+      setControlMessage('Reload in Arbeit...', 'warn');
+      lastChartKey = '';
+      await refresh();
+      if (currentView === 'chart') await loadChartData(true);
+      setControlMessage('Reload abgeschlossen', 'ok');
+    }
+    function updateSizeVisibility() {
+      const mode = document.getElementById('sizeMode').value;
+      document.getElementById('sizeUsdWrap').style.display = mode === 'usd' ? 'block' : 'none';
+      document.getElementById('sizeAssetWrap').style.display = mode === 'asset' ? 'block' : 'none';
+    }
+    function renderTradeSizeAssetSelector(cfg) {
+      const wrap = document.getElementById('tradeSizeAssetSelectorWrap');
+      const select = document.getElementById('tradeSizeAssetSelector');
+      const isMulti = cfg.observer_asset_mode === 'multi';
+      wrap.style.display = isMulti ? 'block' : 'none';
+      const symbols = isMulti ? (cfg.symbols || []) : [(cfg.symbols || [selectedAsset || 'BTCUSDT'])[0]];
+      const watchlist = cfg.watchlist_assets || [];
+      select.innerHTML = symbols.map(symbol => {
+        const item = watchlist.find(asset => asset.symbol === symbol);
+        return `<option value="${symbol}">${item ? item.label : symbol}</option>`;
+      }).join('');
+      if (selectedAsset && symbols.includes(selectedAsset)) select.value = selectedAsset;
+      activeTradeSizeSymbol = select.value || symbols[0] || null;
+    }
+    function persistCurrentTradeSizeDraft(symbolOverride = null) {
+      const selector = document.getElementById('tradeSizeAssetSelector');
+      const symbol = symbolOverride || activeTradeSizeSymbol || selector.value || (latestConfig.symbols || [selectedAsset || 'BTCUSDT'])[0];
+      if (!symbol) return;
+      localTradeSizes[symbol] = {
+        mode: document.getElementById('sizeMode').value,
+        usd: Number(document.getElementById('sizeUsd').value || 0),
+        asset: Number(document.getElementById('sizeAsset').value || 0)
+      };
+    }
+    function loadTradeSizeForSelectedAsset() {
+      const selector = document.getElementById('tradeSizeAssetSelector');
+      const symbol = selector.value || (latestConfig.symbols || [selectedAsset || 'BTCUSDT'])[0];
+      activeTradeSizeSymbol = symbol;
+      const size = localTradeSizes[symbol] || {
+        mode: latestConfig.trade_size_mode || 'usd',
+        usd: latestConfig.trade_size_usd || 0,
+        asset: latestConfig.trade_size_asset || 0
+      };
+      document.getElementById('sizeMode').value = size.mode || 'usd';
+      document.getElementById('sizeUsd').value = fmt(size.usd, 0);
+      document.getElementById('sizeAsset').value = fmt(size.asset, 0);
+      updateSizeVisibility();
+    }
+    async function loadTradingSettings() {
+      const response = await fetch('/api/status', { cache: 'no-store' });
+      const data = await response.json();
+      latestConfig = data.config || {};
+      document.getElementById('paperToggle').checked = !!latestConfig.paper_trading_enabled;
+      syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
+      localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
+      renderTradeSizeAssetSelector(latestConfig);
+      loadTradeSizeForSelectedAsset();
+      openModal('tradingModal');
+    }
+    async function openSetupFile(target) {
+      const response = await fetch('/api/open-setup-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target })
+      });
+      const result = await response.json();
+      document.getElementById('settingsStatus').textContent = response.ok ? `Geoeffnet: ${result.opened}` : (result.error || 'Fehler');
+    }
+    function openModal(id) { document.getElementById(id).classList.add('open'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+    async function loadApiSettings() {
+      const response = await fetch('/api/env-settings', { cache: 'no-store' });
+      const data = await response.json();
+      document.getElementById('apiBaseUrl').value = data.base_url || 'https://api.phemex.com';
+      document.getElementById('apiKey').value = '';
+      document.getElementById('apiSecret').value = '';
+      document.getElementById('apiPreview').textContent =
+        `Key: ${data.api_key_present ? data.api_key_preview : 'nicht gesetzt'} | Secret: ${data.api_secret_present ? data.api_secret_preview : 'nicht gesetzt'}`;
+      document.getElementById('apiStatus').textContent = '';
+      openModal('apiModal');
+    }
+    async function saveApiSettings() {
+      const payload = {
+        base_url: document.getElementById('apiBaseUrl').value,
+        api_key: document.getElementById('apiKey').value,
+        api_secret: document.getElementById('apiSecret').value
+      };
+      const response = await fetch('/api/env-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      document.getElementById('apiStatus').textContent = response.ok ? 'Gespeichert und im laufenden Bot aktualisiert.' : (result.error || 'Fehler');
+      if (response.ok) {
+        document.getElementById('apiPreview').textContent =
+          `Key: ${result.api_key_present ? result.api_key_preview : 'nicht gesetzt'} | Secret: ${result.api_secret_present ? result.api_secret_preview : 'nicht gesetzt'}`;
+        document.getElementById('apiKey').value = '';
+        document.getElementById('apiSecret').value = '';
+        await refresh();
+      }
+    }
+    async function loadStrategySettings() {
+      const response = await fetch('/api/strategy-md', { cache: 'no-store' });
+      const data = await response.json();
+      document.getElementById('strategyPath').textContent = response.ok ? data.path : '';
+      document.getElementById('strategyContent').value = response.ok ? data.content : '';
+      document.getElementById('strategyStatus').textContent = response.ok ? '' : (data.error || 'Fehler');
+      openModal('strategyModal');
+    }
+    async function loadConfigSettings() {
+      const response = await fetch('/api/config-json', { cache: 'no-store' });
+      const data = await response.json();
+      latestConfig = data;
+      document.getElementById('cfgUiTheme').value = data.ui_theme === 'dark' ? 'dark' : 'light';
+      document.getElementById('cfgAssetMode').value = data.observer_asset_mode || 'single';
+      localMinProfitFractions = JSON.parse(JSON.stringify(data.min_net_profit_fraction_by_symbol || {}));
+      renderConfigSingleAsset(data);
+      document.getElementById('cfgMaxOpenTotal').value = data.max_open_trades_total ?? 3;
+      document.getElementById('cfgMaxOpenAsset').value = data.max_open_trades_per_asset ?? 1;
+      document.getElementById('cfgCorrelationBlock').checked = data.block_same_direction_correlated_trades !== false;
+      renderConfigWatchlist(data);
+      document.getElementById('cfgSignalTf').value = String(data.signal_timeframe_seconds ?? 900);
+      document.getElementById('cfgConfirmTf').value = String(data.confirmation_timeframe_seconds ?? 300);
+      updateMultiAssetVisibility();
+      document.getElementById('cfgPhemexPoll').value = data.phemex_poll_seconds ?? data.poll_seconds ?? 20;
+      document.getElementById('cfgSystemLoop').value = data.system_loop_seconds ?? 1;
+      document.getElementById('cfgKlineLimit').value = data.kline_limit ?? 500;
+      const riskUnit = data.risk_unit ?? 1;
+      document.getElementById('cfgRiskUnit').value = riskUnit;
+      document.getElementById('cfgRewardRisk').value = (data.reward_risk ?? 2) * riskUnit;
+      renderConfigProfitAssetSelector(data);
+      loadMinProfitForSelectedAsset(data);
+      updateRewardRiskHint();
+      document.getElementById('configStatus').textContent = '';
+      openModal('configModal');
+    }
+    async function loadStrategyConfigSettings() {
+      const response = await fetch('/api/config-json', { cache: 'no-store' });
+      const data = await response.json();
+      latestConfig = data;
+      document.getElementById('cfgEntryMode').value = data.entry_mode || 'edge';
+      document.getElementById('cfgStopMode').value = data.stop_loss_mode || 'structure';
+      document.getElementById('cfgStopPercent').value = data.stop_loss_percent ?? 0.25;
+      document.getElementById('cfgStopBuffer').value = data.stop_loss_buffer_percent ?? 0;
+      updateStopLossVisibility();
+      document.getElementById('cfgMinSweep').value = data.min_sweep_percent_of_prev_range ?? 0.05;
+      document.getElementById('cfgStructureLookback').value = data.structure_lookback_candles ?? 80;
+      document.getElementById('cfgPivotStrength').value = data.structure_pivot_strength ?? 2;
+      document.getElementById('cfgRejectionMode').value = data.sweep_rejection_mode || 'close';
+      document.getElementById('cfgEntrySearchCandles').value = data.swing_reaction_lookback_candles ?? data.entry_search_confirmation_candles ?? 5;
+      document.getElementById('cfgSwingLookback').value = data.swing_lookback_candles ?? data.structure_lookback_candles ?? 80;
+      document.getElementById('cfgSwingPivot').value = data.swing_pivot_strength ?? data.structure_pivot_strength ?? 2;
+      document.getElementById('cfgSwingPadding').value = data.swing_zone_padding_fraction ?? 0.0005;
+      document.getElementById('cfgDipWick').value = data.dip_rejection_wick_ratio ?? 0.25;
+      updateEntrySearchHelp();
+      document.getElementById('cfgMinBody').value = data.dip_rejection_body_ratio ?? 0.2;
+      document.getElementById('cfgTrendFilter').checked = !!data.use_trend_filter;
+      document.getElementById('cfgTrendMode').value = data.trend_filter_mode || 'day_candle';
+      document.getElementById('cfgTrendEmaSource').value = data.trend_ema_source || 'trade_timeframe';
+      document.getElementById('cfgTrendEma').value = data.trend_ema_period ?? 50;
+      syncAllSwitchStates();
+      updateEmaConfigVisibility();
+      document.getElementById('strategyConfigStatus').textContent = '';
+      openModal('strategyConfigModal');
+    }
+    function renderConfigSingleAsset(data) {
+      const watchlist = data.watchlist_assets || [
+        {label:'XRPUSDT', symbol:'XRPUSDT'}, {label:'KASUSDT', symbol:'KASUSDT'}, {label:'PTUSDT', symbol:'PTUSDT'}, {label:'BTCUSDT', symbol:'BTCUSDT'}, {label:'ETHUSDT', symbol:'ETHUSDT'}, {label:'SOLUSDT', symbol:'SOLUSDT'}, {label:'LINKUSDT', symbol:'LINKUSDT'}, {label:'BCHUSDT', symbol:'BCHUSDT'}, {label:'BNBUSDT', symbol:'BNBUSDT'}, {label:'PAXGUSDT', symbol:'PAXGUSDT'}
+      ];
+      const select = document.getElementById('cfgSingleAsset');
+      select.innerHTML = watchlist.map(asset => `<option value="${asset.symbol}">${asset.label}</option>`).join('');
+      select.value = (data.symbols || [watchlist[0]?.symbol])[0] || 'BTCUSDT';
+    }
+    function renderConfigWatchlist(data) {
+      const active = new Set(data.symbols || []);
+      const watchlist = (data.watchlist_assets || [
+        {label:'XRPUSDT', symbol:'XRPUSDT'}, {label:'KASUSDT', symbol:'KASUSDT'}, {label:'PTUSDT', symbol:'PTUSDT'}, {label:'BTCUSDT', symbol:'BTCUSDT'}, {label:'ETHUSDT', symbol:'ETHUSDT'}, {label:'SOLUSDT', symbol:'SOLUSDT'}, {label:'LINKUSDT', symbol:'LINKUSDT'}, {label:'BCHUSDT', symbol:'BCHUSDT'}, {label:'BNBUSDT', symbol:'BNBUSDT'}, {label:'PAXGUSDT', symbol:'PAXGUSDT'}
+      ]);
+      document.getElementById('cfgWatchlistBox').innerHTML =
+        '<label>Watchlist Assets</label><div class="watchlistChecks">' +
+        watchlist.map(asset => `<label><input type="checkbox" data-cfg-symbol="${asset.symbol}" ${active.has(asset.symbol) ? 'checked' : ''}>${asset.label}</label>`).join('') +
+        '</div>';
+      document.querySelectorAll('[data-cfg-symbol]').forEach(input => {
+        input.addEventListener('change', () => {
+          persistCurrentMinProfitDraft();
+          renderConfigProfitAssetSelector(latestConfig);
+          loadMinProfitForSelectedAsset(latestConfig);
+        });
+      });
+    }
+    function currentConfigSymbols() {
+      const checkedSymbols = Array.from(document.querySelectorAll('[data-cfg-symbol]:checked')).map(input => input.dataset.cfgSymbol);
+      const singleAsset = document.getElementById('cfgSingleAsset').value;
+      return document.getElementById('cfgAssetMode').value === 'single'
+        ? [singleAsset]
+        : Array.from(new Set([...checkedSymbols, singleAsset]));
+    }
+    function renderConfigProfitAssetSelector(data) {
+      const wrap = document.getElementById('cfgProfitAssetWrap');
+      const select = document.getElementById('cfgProfitAsset');
+      const isMulti = document.getElementById('cfgAssetMode').value === 'multi';
+      wrap.style.display = isMulti ? 'block' : 'none';
+      const symbols = currentConfigSymbols();
+      const watchlist = data.watchlist_assets || [];
+      const labelFor = symbol => (watchlist.find(asset => asset.symbol === symbol)?.label || symbol);
+      const previous = select.value;
+      select.innerHTML = symbols.map(symbol => `<option value="${symbol}">${labelFor(symbol)}</option>`).join('');
+      select.value = symbols.includes(previous) ? previous : (symbols[0] || '');
+    }
+    function persistCurrentMinProfitDraft() {
+      const selector = document.getElementById('cfgProfitAsset');
+      const symbol = selector.value || currentConfigSymbols()[0];
+      if (!symbol) return;
+      localMinProfitFractions[symbol] = Number(document.getElementById('cfgMinNetProfitFraction').value || 0);
+    }
+    function loadMinProfitForSelectedAsset(data = latestConfig) {
+      const isMulti = document.getElementById('cfgAssetMode').value === 'multi';
+      const symbol = document.getElementById('cfgProfitAsset').value || currentConfigSymbols()[0];
+      const fallback = data.min_net_profit_fraction ?? 0.001;
+      document.getElementById('cfgMinNetProfitFraction').value = isMulti
+        ? (localMinProfitFractions[symbol] ?? fallback)
+        : fallback;
+    }
+    function updateMultiAssetVisibility() {
+      const isMulti = document.getElementById('cfgAssetMode').value === 'multi';
+      document.getElementById('cfgMultiAssetSection').style.display = isMulti ? 'grid' : 'none';
+      document.getElementById('cfgMultiAssetSection').style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+      document.getElementById('cfgMultiAssetSection').style.gap = '14px';
+      document.getElementById('cfgProfitAssetWrap').style.display = isMulti ? 'block' : 'none';
+    }
+    async function saveConfigSettings() {
+      persistCurrentMinProfitDraft();
+      const checkedSymbols = Array.from(document.querySelectorAll('[data-cfg-symbol]:checked')).map(input => input.dataset.cfgSymbol);
+      const singleAsset = document.getElementById('cfgSingleAsset').value;
+      let symbols = document.getElementById('cfgAssetMode').value === 'single'
+        ? [singleAsset]
+        : Array.from(new Set([...checkedSymbols, singleAsset]));
+      const profitBySymbol = {};
+      for (const symbol of symbols) {
+        profitBySymbol[symbol] = Number(localMinProfitFractions[symbol] ?? document.getElementById('cfgMinNetProfitFraction').value ?? 0);
+      }
+      const parsed = {
+        symbols,
+        ui_theme: document.getElementById('cfgUiTheme').value,
+        observer_asset_mode: document.getElementById('cfgAssetMode').value,
+        max_open_trades_total: Number(document.getElementById('cfgMaxOpenTotal').value),
+        max_open_trades_per_asset: Number(document.getElementById('cfgMaxOpenAsset').value),
+        block_same_direction_correlated_trades: document.getElementById('cfgCorrelationBlock').checked,
+        signal_timeframe_seconds: Number(document.getElementById('cfgSignalTf').value),
+        confirmation_timeframe_seconds: Number(document.getElementById('cfgConfirmTf').value),
+        poll_seconds: Number(document.getElementById('cfgPhemexPoll').value),
+        phemex_poll_seconds: Number(document.getElementById('cfgPhemexPoll').value),
+        system_loop_seconds: Number(document.getElementById('cfgSystemLoop').value),
+        kline_limit: Number(document.getElementById('cfgKlineLimit').value),
+        reward_risk: Number(document.getElementById('cfgRewardRisk').value) / Number(document.getElementById('cfgRiskUnit').value || 1),
+        risk_unit: Number(document.getElementById('cfgRiskUnit').value || 1),
+        min_rr: 1,
+        min_tp_distance_fraction: 0,
+        max_sl_distance_fraction: 0,
+        estimated_taker_fee_rate: 0.0006,
+        min_net_profit_fraction: document.getElementById('cfgAssetMode').value === 'single'
+          ? Number(document.getElementById('cfgMinNetProfitFraction').value)
+          : Number(localMinProfitFractions[symbols[0]] ?? document.getElementById('cfgMinNetProfitFraction').value),
+        min_net_profit_fraction_by_symbol: document.getElementById('cfgAssetMode').value === 'multi' ? profitBySymbol : {}
+      };
+      const response = await fetch('/api/config-json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+      const result = await response.json();
+      document.getElementById('configStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
+      if (response.ok) {
+        await refresh();
+        closeModal('configModal');
+      }
+    }
+    async function saveStrategyConfigSettings() {
+      const parsed = {
+        entry_mode: document.getElementById('cfgEntryMode').value,
+        stop_loss_mode: document.getElementById('cfgStopMode').value,
+        stop_loss_percent: Number(document.getElementById('cfgStopPercent').value),
+        stop_loss_buffer_percent: Number(document.getElementById('cfgStopBuffer').value),
+        min_sweep_percent_of_prev_range: Number(document.getElementById('cfgMinSweep').value),
+        structure_lookback_candles: Number(document.getElementById('cfgStructureLookback').value),
+        structure_pivot_strength: Number(document.getElementById('cfgPivotStrength').value),
+        sweep_rejection_mode: document.getElementById('cfgRejectionMode').value,
+        entry_search_confirmation_candles: Number(document.getElementById('cfgEntrySearchCandles').value),
+        swing_reaction_lookback_candles: Number(document.getElementById('cfgEntrySearchCandles').value),
+        swing_lookback_candles: Number(document.getElementById('cfgSwingLookback').value),
+        swing_pivot_strength: Number(document.getElementById('cfgSwingPivot').value),
+        swing_zone_padding_fraction: Number(document.getElementById('cfgSwingPadding').value),
+        dip_rejection_wick_ratio: Number(document.getElementById('cfgDipWick').value),
+        dip_rejection_body_ratio: Number(document.getElementById('cfgMinBody').value),
+        min_displacement_body_percent_of_range: Number(document.getElementById('cfgMinBody').value),
+        single_timeframe_mode: true,
+        take_profit_mode: 'target_swing',
+        allow_reward_risk_fallback_tp: false,
+        use_trend_filter: document.getElementById('cfgTrendFilter').checked && document.getElementById('cfgTrendMode').value !== 'none',
+        trend_filter_mode: document.getElementById('cfgTrendMode').value,
+        trend_ema_source: document.getElementById('cfgTrendEmaSource').value,
+        daily_bias_blocks_against_direction: document.getElementById('cfgTrendFilter').checked,
+        trend_ema_period: Number(document.getElementById('cfgTrendEma').value)
+      };
+      const response = await fetch('/api/config-json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+      const result = await response.json();
+      document.getElementById('strategyConfigStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
+      if (response.ok) {
+        await refresh();
+        closeModal('strategyConfigModal');
+      }
+    }
+    function updateRewardRiskHint() {
+      const tp = Number(document.getElementById('cfgRewardRisk').value || 0);
+      const sl = Number(document.getElementById('cfgRiskUnit').value || 1);
+      const ratio = sl ? tp / sl : 0;
+      const shownTp = Number.isInteger(tp) ? String(tp) : tp.toFixed(2);
+      const shownSl = Number.isInteger(sl) ? String(sl) : sl.toFixed(2);
+      document.getElementById('cfgRewardRiskHint').textContent = `TP ${shownTp} : SL ${shownSl}  |  Bot rechnet ${ratio.toFixed(2)}R`;
+    }
+    function updateEntrySearchHelp() {
+      const signalTf = timeframeLabel(document.getElementById('cfgSignalTf').value || 300);
+      const entrySeconds = Number(document.getElementById('cfgConfirmTf').value || 60);
+      const entryTf = timeframeLabel(entrySeconds);
+      const candles = Number(document.getElementById('cfgEntrySearchCandles').value || 20);
+      const minutes = Math.round(candles * entrySeconds / 60);
+      const help = document.getElementById('entrySearchHelp');
+      help.innerHTML = `Der Bot prueft die letzten ${candles} ${signalTf}-Kerzen auf Reaktion an einem Swing High / Swing Low.<br><br>Gueltig ist:<br>- Liquidity Sweep + Reclaim<br>- Dip / Abpraller<br><br>Kein Supply/Demand, kein FVG-Zwang, kein Volumenfilter.`;
+    }
+    function updateStopLossVisibility() {
+      const mode = document.getElementById('cfgStopMode').value;
+      document.getElementById('cfgStopPercent').parentElement.style.display = mode === 'fixed_percent' ? 'block' : 'none';
+      document.getElementById('cfgStopBuffer').parentElement.style.display = mode === 'structure' ? 'block' : 'none';
+    }
+    function toggleSettingsMenu() {
+      const panel = document.getElementById('settingsMenuPanel');
+      const button = document.getElementById('settingsMenuButton');
+      const open = !panel.classList.contains('open');
+      panel.classList.toggle('open', open);
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    document.getElementById('saveSettings').addEventListener('click', saveSettings);
+    document.getElementById('startBot').addEventListener('click', () => botControl('start'));
+    document.getElementById('stopBot').addEventListener('click', () => botControl('stop'));
+    document.getElementById('reloadBot').addEventListener('click', reloadDashboardData);
+    document.getElementById('resetBot').addEventListener('click', () => botControl('reset'));
+    document.getElementById('assetFilter').addEventListener('change', event => {
+      setSelectedAssetFromDropdown(event.target.value);
+      refresh();
+    });
+    document.getElementById('tradeSizeAssetSelector').addEventListener('change', () => {
+      persistCurrentTradeSizeDraft(activeTradeSizeSymbol);
+      loadTradeSizeForSelectedAsset();
+    });
+    document.getElementById('sizeMode').addEventListener('change', () => {
+      updateSizeVisibility();
+      persistCurrentTradeSizeDraft();
+    });
+    document.getElementById('sizeUsd').addEventListener('input', () => persistCurrentTradeSizeDraft());
+    document.getElementById('sizeAsset').addEventListener('input', () => persistCurrentTradeSizeDraft());
+    document.getElementById('paperToggle').addEventListener('change', () => syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox'));
+    document.getElementById('cfgCorrelationBlock').addEventListener('change', () => syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState'));
+    document.getElementById('cfgTrendFilter').addEventListener('change', () => syncSwitchState('cfgTrendFilter', 'cfgTrendState'));
+    document.getElementById('cfgIndicatorEnabled').addEventListener('change', () => syncSwitchState('cfgIndicatorEnabled', 'cfgIndicatorEnabledState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowBosChoch').addEventListener('change', () => syncSwitchState('cfgIndicatorShowBosChoch', 'cfgIndicatorShowBosChochState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowBoxes').addEventListener('change', () => syncSwitchState('cfgIndicatorShowBoxes', 'cfgIndicatorShowBoxesState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowSwingLabels').addEventListener('change', () => syncSwitchState('cfgIndicatorShowSwingLabels', 'cfgIndicatorShowSwingLabelsState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowHma').addEventListener('change', () => syncSwitchState('cfgIndicatorShowHma', 'cfgIndicatorShowHmaState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowSma').addEventListener('change', () => syncSwitchState('cfgIndicatorShowSma', 'cfgIndicatorShowSmaState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowTripleEma').addEventListener('change', () => syncSwitchState('cfgIndicatorShowTripleEma', 'cfgIndicatorShowTripleEmaState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowMfi').addEventListener('change', () => syncSwitchState('cfgIndicatorShowMfi', 'cfgIndicatorShowMfiState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorShowSupportResistance').addEventListener('change', () => syncSwitchState('cfgIndicatorShowSupportResistance', 'cfgIndicatorShowSupportResistanceState', 'Aktiv', 'Aus'));
+    ['cfgBrainEnabled', 'cfgBrainRequireBox', 'cfgBrainLlmLayer', 'cfgOllamaEnabled', 'cfgOllamaBlockHint', 'cfgAgentShowOffline'].forEach(id => {
+      const input = document.getElementById(id);
+      if (input) input.addEventListener('change', syncAllSwitchStates);
+    });
+    document.getElementById('cfgTrendMode').addEventListener('change', updateEmaConfigVisibility);
+    document.getElementById('cfgTrendEmaSource').addEventListener('change', updateEmaConfigVisibility);
+    document.getElementById('cfgRewardRisk').addEventListener('input', updateRewardRiskHint);
+    document.getElementById('cfgRiskUnit').addEventListener('input', updateRewardRiskHint);
+    document.getElementById('cfgStopMode').addEventListener('change', updateStopLossVisibility);
+    document.getElementById('cfgSignalTf').addEventListener('change', updateEntrySearchHelp);
+    document.getElementById('cfgConfirmTf').addEventListener('change', updateEntrySearchHelp);
+    document.getElementById('cfgEntrySearchCandles').addEventListener('input', updateEntrySearchHelp);
+    document.getElementById('cfgUiTheme').addEventListener('change', event => applyUiTheme(event.target.value));
+    document.getElementById('cfgAssetMode').addEventListener('change', () => {
+      persistCurrentMinProfitDraft();
+      updateMultiAssetVisibility();
+      renderConfigProfitAssetSelector(latestConfig);
+      loadMinProfitForSelectedAsset(latestConfig);
+    });
+    document.getElementById('cfgSingleAsset').addEventListener('change', () => {
+      persistCurrentMinProfitDraft();
+      renderConfigProfitAssetSelector(latestConfig);
+      loadMinProfitForSelectedAsset(latestConfig);
+    });
+    document.getElementById('cfgProfitAsset').addEventListener('change', () => {
+      loadMinProfitForSelectedAsset(latestConfig);
+    });
+    document.getElementById('cfgMinNetProfitFraction').addEventListener('input', persistCurrentMinProfitDraft);
+    function bindHelpButtons(root = document) {
+      root.querySelectorAll('[data-help-target]').forEach(button => {
+        if (button.dataset.helpBound === 'true') return;
+        button.dataset.helpBound = 'true';
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          const target = document.getElementById(button.dataset.helpTarget);
+          if (target) target.classList.toggle('open');
+        });
+      });
+    }
+    bindHelpButtons();
+    document.getElementById('chartViewButton').addEventListener('click', () => setView(currentView === 'chart' ? 'dashboard' : 'chart'));
+    document.getElementById('agentViewButton').addEventListener('click', () => setView(currentView === 'agents' ? 'dashboard' : 'agents'));
+    document.getElementById('reloadAgents').addEventListener('click', refresh);
+    document.getElementById('agentAsset').addEventListener('change', event => {
+      selectedAgentAsset = event.target.value;
+      renderAgentViewer(latestStatusData || {}, latestConfig || {});
+    });
+    document.getElementById('reloadChart').addEventListener('click', () => loadChartData(true));
+    document.getElementById('chartAsset').addEventListener('change', () => loadChartData(true));
+    document.getElementById('chartTimeframe').addEventListener('change', () => loadChartData(true));
+    document.getElementById('chartCandleLimit').addEventListener('change', () => loadChartData(true));
+    document.getElementById('settingsMenuButton').addEventListener('click', toggleSettingsMenu);
+    document.getElementById('apiSettingsButton').addEventListener('click', async () => {
+      document.getElementById('settingsMenuPanel').classList.remove('open');
+      await loadApiSettings();
+    });
+    document.getElementById('tradingSettingsButton').addEventListener('click', async () => {
+      document.getElementById('settingsMenuPanel').classList.remove('open');
+      await loadTradingSettings();
+    });
+    document.getElementById('configSettingsButton').addEventListener('click', async () => {
+      document.getElementById('settingsMenuPanel').classList.remove('open');
+      await loadConfigSettings();
+    });
+    document.getElementById('indicatorSettingsButton').addEventListener('click', async () => {
+      document.getElementById('settingsMenuPanel').classList.remove('open');
+      await loadIndicatorSettings();
+    });
+    document.getElementById('agentSettingsButton').addEventListener('click', async () => {
+      document.getElementById('settingsMenuPanel').classList.remove('open');
+      await loadAgentSettings();
+    });
+    document.getElementById('saveApiSettings').addEventListener('click', saveApiSettings);
+    document.getElementById('saveConfigSettings').addEventListener('click', saveConfigSettings);
+    document.getElementById('saveStrategyConfigSettings').addEventListener('click', saveStrategyConfigSettings);
+    document.getElementById('saveIndicatorSettings').addEventListener('click', saveIndicatorSettings);
+    document.getElementById('saveAgentSettings').addEventListener('click', saveAgentSettings);
+    document.querySelectorAll('[data-close-modal]').forEach(button => {
+      button.addEventListener('click', () => closeModal(button.dataset.closeModal));
+    });
+    document.querySelectorAll('[data-open-target]').forEach(button => {
+      button.addEventListener('click', async () => {
+        document.getElementById('settingsMenuPanel').classList.remove('open');
+        document.getElementById('settingsMenuButton').setAttribute('aria-expanded', 'false');
+        await openSetupFile(button.dataset.openTarget);
+      });
+    });
+    document.addEventListener('click', event => {
+      const menu = document.querySelector('.menu');
+      if (!menu.contains(event.target)) {
+        document.getElementById('settingsMenuPanel').classList.remove('open');
+        document.getElementById('settingsMenuButton').setAttribute('aria-expanded', 'false');
+      }
+    });
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

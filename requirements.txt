@@ -1,8 +1,2 @@
-ccxt
-matplotlib
-numpy
-requests
-scikit-learn
-scipy
-statsmodels
-ta-lib
+requests>=2.32.0
+python-dotenv>=1.0.1
