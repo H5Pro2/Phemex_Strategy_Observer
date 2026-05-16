@@ -162,7 +162,19 @@ Fuer Public-Klines werden keine privaten Orderrechte benoetigt.
 # Start
 # --------------------------------------------------
 
-Mit Dashboard:
+Empfohlen unter Windows PowerShell:
+
+```powershell
+.\start_bot.ps1
+```
+
+Alternative mit Batch-Datei:
+
+```powershell
+.\start_bot.bat
+```
+
+Manueller Start mit Dashboard:
 
 ```powershell
 python .\phemex_strategy_observer.py --config .\config.json --web
@@ -191,6 +203,20 @@ Wenn `.env` fehlt:
 ```powershell
 Copy-Item .env.example .env
 ```
+
+# --------------------------------------------------
+# Startdateien
+# --------------------------------------------------
+
+`start_bot.ps1` und `start_bot.bat` pruefen:
+
+- Python vorhanden
+- `requirements.txt` vorhanden
+- `config.json` vorhanden oder aus Vorlage erstellbar
+- `.env` vorhanden oder aus Vorlage erstellbar
+- `data`-Ordner vorhanden oder erstellbar
+- Python-Abhaengigkeiten installierbar
+- Bot-Start ohne Fehler
 
 # --------------------------------------------------
 # Konfiguration
