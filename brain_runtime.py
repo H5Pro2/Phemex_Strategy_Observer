@@ -29,6 +29,7 @@ class BrainReport:
     message: str
     conflict: bool = False
     blocking: bool = False
+    details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -132,17 +133,43 @@ def _agent_weight(name: str) -> float:
         return 1.0
     if "triple" in text:
         return 0.9
+    if "macd" in text:
+        return 0.85
     if "hma" in text:
         return 0.8
     if "sma" in text:
         return 0.8
     if "mfi" in text:
         return 0.75
+    if "rsi" in text:
+        return 0.8
+    if "vwap" in text:
+        return 0.85
+    if "breakout" in text or "fakeout" in text:
+        return 1.05
     if "volume" in text:
         return 0.75
+    if "volatility" in text:
+        return 0.55
     if "risk" in text:
         return 0.5
     return 1.0
+
+
+def _report_quality_weight(report: dict[str, Any]) -> float:
+    details = report.get("details") if isinstance(report.get("details"), dict) else {}
+    profile = details.get("quality_profile") if isinstance(details.get("quality_profile"), dict) else {}
+    quality = str(profile.get("quality", "OK")).upper()
+    reliability = max(0.0, min(100.0, _safe_float(profile.get("reliability_score"), report.get("score", 50.0))))
+    if bool(report.get("blocking", False)) or quality == "BLOCK":
+        return 0.0
+    if quality == "OFFLINE":
+        return 0.0
+    if quality == "WEAK":
+        return max(0.35, reliability / 140.0)
+    if quality == "STRONG":
+        return 1.12
+    return max(0.65, min(1.05, reliability / 75.0))
 
 
 def _direction_scores(agent_board: dict[str, Any]) -> dict[str, Any]:
@@ -152,26 +179,51 @@ def _direction_scores(agent_board: dict[str, Any]) -> dict[str, Any]:
     long_count = 0
     short_count = 0
     neutral_count = 0
+    long_weight_sum = 0.0
+    short_weight_sum = 0.0
+    weak_count = 0
+    offline_count = 0
+    blocking_count = 0
     parts: list[str] = []
     for report in reports:
         signal = str(report.get("signal", "NEUTRAL")).upper()
         score = max(0.0, min(100.0, _safe_float(report.get("score"), 0.0)))
-        weight = _agent_weight(str(report.get("agent_name", "")))
-        if signal == "LONG":
-            long_score += score * weight
+        details = report.get("details") if isinstance(report.get("details"), dict) else {}
+        profile = details.get("quality_profile") if isinstance(details.get("quality_profile"), dict) else {}
+        quality = str(profile.get("quality", "OK")).upper()
+        if quality == "WEAK":
+            weak_count += 1
+        if quality == "OFFLINE":
+            offline_count += 1
+        if bool(report.get("blocking", False)):
+            blocking_count += 1
+        weight = _agent_weight(str(report.get("agent_name", ""))) * _report_quality_weight(report)
+        adjusted = score * weight
+        if signal == "LONG" and adjusted > 0:
+            long_score += adjusted
+            long_weight_sum += weight
             long_count += 1
-        elif signal == "SHORT":
-            short_score += score * weight
+        elif signal == "SHORT" and adjusted > 0:
+            short_score += adjusted
+            short_weight_sum += weight
             short_count += 1
         else:
             neutral_count += 1
-        parts.append(f"{report.get('agent_name', '-')}: {signal} {int(score)}")
+        parts.append(f"{report.get('agent_name', '-')}: {signal} {int(score)} q={quality} w={round(weight, 2)}")
     return {
         "long_score": round(long_score, 3),
         "short_score": round(short_score, 3),
+        "long_weight_sum": round(long_weight_sum, 6),
+        "short_weight_sum": round(short_weight_sum, 6),
         "long_count": long_count,
         "short_count": short_count,
         "neutral_count": neutral_count,
+        "long_weight_sum": round(long_weight_sum, 6),
+        "short_weight_sum": round(short_weight_sum, 6),
+        "weak_count": weak_count,
+        "offline_count": offline_count,
+        "blocking_count": blocking_count,
+        "data_quality_penalty": min(12, weak_count * 2),
         "reads": " | ".join(parts),
         "conflict": long_count > 0 and short_count > 0,
     }
@@ -231,6 +283,79 @@ def _memory_score_adjustment(match: BrainMemoryMatch, min_count: int) -> int:
     win_component = int((match.win_rate - 0.5) * 30)
     r_component = int(max(-1.0, min(1.5, match.avg_r)) * 12)
     return max(-20, min(22, win_component + r_component))
+
+
+
+
+# --------------------------------------------------
+# REPLAY RULE WEIGHTING
+# --------------------------------------------------
+def _rule_pattern_matches(rule: dict[str, Any], pattern_key: str) -> bool:
+    rule_pattern = str(rule.get("pattern_key") or "")
+    rule_key = str(rule.get("key") or "")
+    if rule_pattern and rule_pattern == pattern_key:
+        return True
+    if rule_key == pattern_key:
+        return True
+    return f"pattern={pattern_key}" in rule_key
+
+
+def _replay_rule_weight(pattern_key: str, config: dict[str, Any], symbol: str | None = None) -> dict[str, Any]:
+    if not bool(config.get("replay_rule_weight_enabled", False)):
+        return {"enabled": False, "matched": False, "adjustment": 0, "quality": "OFF", "reason": "replay_rule_weight_enabled=false"}
+
+    rules = config.get("replay_rule_weight_rules", []) or []
+    if not isinstance(rules, list):
+        return {"enabled": True, "matched": False, "adjustment": 0, "quality": "INVALID", "reason": "replay_rule_weight_rules ist keine Liste"}
+
+    active_symbol = str(symbol or "").replace(".P", "").split(":", 1)[0].strip().upper()
+    default_scope = str(config.get("replay_rule_scope", "asset")).lower()
+    min_count = int(config.get("replay_rule_weight_min_count", 2))
+    good_bonus = int(config.get("replay_rule_good_bonus", 8))
+    bad_penalty = int(config.get("replay_rule_bad_penalty", -14))
+    max_abs = max(0, int(config.get("replay_rule_max_abs_adjustment", 18)))
+
+    skipped_asset = 0
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        scope = str(rule.get("scope") or default_scope or "asset").lower()
+        rule_symbol = str(rule.get("symbol") or "").replace(".P", "").split(":", 1)[0].strip().upper()
+        if scope == "asset" and active_symbol and rule_symbol and rule_symbol != active_symbol:
+            skipped_asset += 1
+            continue
+        if not _rule_pattern_matches(rule, pattern_key):
+            continue
+        count = int(rule.get("count") or 0)
+        if count < min_count:
+            return {"enabled": True, "matched": True, "adjustment": 0, "quality": str(rule.get("quality", "WATCH")), "count": count, "symbol": rule_symbol, "scope": scope, "key": rule.get("key", pattern_key), "reason": "Replay-Regel unter Mindestanzahl"}
+        quality = str(rule.get("quality", "WATCH")).upper()
+        if quality == "GOOD":
+            adjustment = good_bonus
+        elif quality == "BAD":
+            adjustment = bad_penalty
+        else:
+            adjustment = 0
+        adjustment = max(-max_abs, min(max_abs, int(adjustment)))
+        return {
+            "enabled": True,
+            "matched": True,
+            "adjustment": adjustment,
+            "quality": quality,
+            "count": count,
+            "symbol": rule_symbol,
+            "scope": scope,
+            "key": rule.get("key", pattern_key),
+            "pattern_key": rule.get("pattern_key", pattern_key),
+            "win_rate": rule.get("win_rate"),
+            "avg_r": rule.get("avg_r"),
+            "reason": "Asset-gebundene Replay-Regel angewendet" if scope == "asset" and adjustment else "Replay-Regelgewicht angewendet" if adjustment else "Replay-Regel nur Watch/Neutral",
+        }
+
+    reason = "Keine passende Replay-Regel"
+    if skipped_asset:
+        reason = f"Keine passende Replay-Regel für {active_symbol}; {skipped_asset} Regel(n) anderes Asset"
+    return {"enabled": True, "matched": False, "adjustment": 0, "quality": "NO_MATCH", "symbol": active_symbol, "scope": default_scope, "reason": reason}
 
 
 # --------------------------------------------------
@@ -295,18 +420,82 @@ def _target_from_labels(decision: str, entry: float, indicator_data: dict[str, A
 
 
 def _target_from_recent_range(decision: str, entry: float, candles: list[Any], config: dict[str, Any]) -> tuple[float | None, str]:
-    lookback = max(10, int(config.get("brain_target_lookback_candles", 120)))
+    lookback = max(10, int(config.get("brain_target_lookback_candles", 36)))
     window = candles[-min(len(candles), lookback):]
     if not window:
         return None, "missing_recent_range"
     if decision == "LONG":
         target = max(_value(candle, "high") for candle in window)
-        return (_round_price(target), "recent_visible_high") if target > entry else (None, "recent_high_not_above_entry")
+        return (_round_price(target), "local_visible_high") if target > entry else (None, "local_high_not_above_entry")
     target = min(_value(candle, "low") for candle in window)
-    return (_round_price(target), "recent_visible_low") if 0 < target < entry else (None, "recent_low_not_below_entry")
+    return (_round_price(target), "local_visible_low") if 0 < target < entry else (None, "local_low_not_below_entry")
 
 
-def _stop_price(decision: str, entry: float, zone_low: float, zone_high: float, candles: list[Any], config: dict[str, Any]) -> float:
+def _target_from_reward_risk(decision: str, entry: float, sl: float, rr: float) -> float | None:
+    risk = abs(entry - sl)
+    if risk <= 0 or rr <= 0:
+        return None
+    if decision == "LONG":
+        return _round_price(entry + risk * rr)
+    return _round_price(entry - risk * rr)
+
+
+def _apply_timeframe_target_cap(
+    decision: str,
+    entry: float,
+    sl: float,
+    tp: float,
+    target_method: str,
+    config: dict[str, Any],
+) -> tuple[float, str]:
+    if not bool(config.get("brain_cap_target_to_max_rr", True)):
+        return _round_price(tp), target_method
+
+    risk = abs(entry - sl)
+    reward = abs(tp - entry)
+    if risk <= 0 or reward <= 0:
+        return _round_price(tp), target_method
+
+    configured_rr = _safe_float(config.get("reward_risk", 1.5), 1.5)
+    max_rr = _safe_float(config.get("brain_max_target_rr", configured_rr), configured_rr)
+    if max_rr <= 0:
+        return _round_price(tp), target_method
+
+    target_rr = reward / risk
+    if target_rr <= max_rr:
+        return _round_price(tp), target_method
+
+    capped_tp = _target_from_reward_risk(decision, entry, sl, max_rr)
+    if capped_tp is None:
+        return _round_price(tp), target_method
+    return capped_tp, f"{target_method}_capped_to_{round(max_rr, 3)}r"
+
+
+def _true_range(candle: Any, previous_close: float | None) -> float:
+    high = _value(candle, "high")
+    low = _value(candle, "low")
+    if previous_close is None:
+        return max(high - low, 0.0)
+    return max(high - low, abs(high - previous_close), abs(low - previous_close), 0.0)
+
+
+def _atr_value(candles: list[Any], period: int) -> float | None:
+    if not candles:
+        return None
+    safe_period = max(1, int(period))
+    previous_close: float | None = None
+    ranges: list[float] = []
+    for candle in candles:
+        ranges.append(_true_range(candle, previous_close))
+        previous_close = _value(candle, "close")
+    window = ranges[-min(len(ranges), safe_period):]
+    if not window:
+        return None
+    atr = sum(window) / len(window)
+    return atr if atr > 0 else None
+
+
+def _structure_stop_price(decision: str, entry: float, zone_low: float, zone_high: float, candles: list[Any], config: dict[str, Any]) -> float:
     lookback = max(2, int(config.get("brain_stop_lookback_candles", 8)))
     window = candles[-min(len(candles), lookback):]
     buffer_fraction = _safe_float(config.get("stop_loss_buffer_percent", 0.0), 0.0) / 100.0
@@ -316,6 +505,34 @@ def _stop_price(decision: str, entry: float, zone_low: float, zone_high: float, 
         return _round_price(min(zone_low, recent_low) - buffer)
     recent_high = max((_value(candle, "high") for candle in window), default=zone_high)
     return _round_price(max(zone_high, recent_high) + buffer)
+
+
+def _atr_stop_price(decision: str, entry: float, candles: list[Any], config: dict[str, Any]) -> float | None:
+    period = max(1, int(config.get("stop_loss_atr_period", 14)))
+    multiplier = max(0.0, _safe_float(config.get("stop_loss_atr_multiplier", 1.5), 1.5))
+    atr = _atr_value(candles, period)
+    if atr is None or multiplier <= 0:
+        return None
+    distance = atr * multiplier
+    if decision == "LONG":
+        return _round_price(entry - distance)
+    return _round_price(entry + distance)
+
+
+def _stop_price(decision: str, entry: float, zone_low: float, zone_high: float, candles: list[Any], config: dict[str, Any]) -> tuple[float, str]:
+    mode = str(config.get("stop_loss_mode", "structure")).lower()
+    if mode == "atr":
+        atr_stop = _atr_stop_price(decision, entry, candles, config)
+        if atr_stop is not None:
+            return atr_stop, "atr_stop"
+        return _structure_stop_price(decision, entry, zone_low, zone_high, candles, config), "structure_stop_atr_fallback"
+    if mode == "fixed_percent":
+        stop_fraction = _safe_float(config.get("stop_loss_percent", 0.25), 0.25) / 100.0
+        if stop_fraction > 0:
+            if decision == "LONG":
+                return _round_price(entry * (1.0 - stop_fraction)), "fixed_percent_stop"
+            return _round_price(entry * (1.0 + stop_fraction)), "fixed_percent_stop"
+    return _structure_stop_price(decision, entry, zone_low, zone_high, candles, config), "structure_stop"
 
 
 # --------------------------------------------------
@@ -672,33 +889,30 @@ def _build_candidate(
     if not candles:
         return None, "keine Kerzen vorhanden"
     boxes = _boxes_for_direction(indicator_data, decision)
-    require_box = bool(config.get("brain_require_box_for_trade", True))
+    require_box = bool(config.get("brain_require_box_for_trade", False))
     if boxes:
         active_box = boxes[-1]
         entry, zone_low, zone_high, entry_offset = _entry_from_box(decision, active_box, match, config)
         entry_method = "brain_box_optimized_limit"
+        zone_type = "ll_box" if decision == "LONG" else "hh_box"
     elif require_box:
         return None, "keine passende LL/HH Box fuer Brain-Entry"
     else:
         entry, zone_low, zone_high, entry_offset = _fallback_entry(candles, decision)
-        entry_method = "brain_close_fallback"
+        entry_method = "brain_agent_fallback_market_context"
+        zone_type = "candle_fallback_range"
 
-    sl = _stop_price(decision, entry, zone_low, zone_high, candles, config)
+    sl, stop_method = _stop_price(decision, entry, zone_low, zone_high, candles, config)
     if decision == "LONG" and not sl < entry:
         return None, "ungueltiger LONG Stop unter Entry fehlt"
     if decision == "SHORT" and not sl > entry:
         return None, "ungueltiger SHORT Stop ueber Entry fehlt"
 
-    tp, target_method = _target_from_labels(decision, entry, indicator_data)
+    rr_target = _safe_float(config.get("reward_risk", 1.5), 1.5)
+    tp = _target_from_reward_risk(decision, entry, sl, rr_target)
+    target_method = "reward_risk_target"
     if tp is None:
-        tp, target_method = _target_from_recent_range(decision, entry, candles, config)
-    if tp is None and bool(config.get("brain_allow_rr_target_fallback", False)):
-        risk = abs(entry - sl)
-        rr = _safe_float(config.get("reward_risk", 1.5), 1.5)
-        tp = _round_price(entry + risk * rr if decision == "LONG" else entry - risk * rr)
-        target_method = "rr_fallback_target"
-    if tp is None:
-        return None, "kein sichtbares TP-Ziel fuer Brain-Setup"
+        return None, "kein gueltiges RR-TP-Ziel fuer Brain-Setup"
 
     if decision == "LONG" and not entry < tp:
         return None, "ungueltiger LONG TP ueber Entry fehlt"
@@ -719,7 +933,8 @@ def _build_candidate(
         "confirm_tf": int(timeframe_seconds),
         "entry_method": entry_method,
         "target_method": target_method,
-        "zone_type": "ll_box" if decision == "LONG" else "hh_box",
+        "stop_method": stop_method,
+        "zone_type": zone_type,
         "zone_low": zone_low,
         "zone_high": zone_high,
         "zone_size_pct": round((zone_high - zone_low) / max(entry, 1e-12), 6),
@@ -749,7 +964,7 @@ def _build_candidate(
         pattern_key=pattern_key,
         confidence=confidence,
         score=score,
-        reason=f"Brain {decision}: Agentenrichtung + Strukturzone + Memory-Matching.",
+        reason=f"Brain {decision}: Agentenrichtung + Entry-Logik + Memory-Matching.",
         features=features,
     ), "candidate_ok"
 
@@ -833,7 +1048,11 @@ def build_brain_decision(
     pattern = _pattern_key(agent_board)
     min_memory_count = int(cfg.get("brain_memory_min_count", 3))
     match = _memory_match(memory_state, pattern)
-    adjustment = _memory_score_adjustment(match, min_memory_count)
+    memory_adjustment = _memory_score_adjustment(match, min_memory_count)
+    replay_rule_weight = _replay_rule_weight(pattern, cfg, symbol)
+    replay_adjustment = int(replay_rule_weight.get("adjustment", 0))
+    adjustment = memory_adjustment + replay_adjustment
+    quality_penalty = int(scores.get("data_quality_penalty", 0))
     min_score = int(cfg.get("brain_min_score", 58))
     min_gap = float(cfg.get("brain_min_score_gap", 18.0))
     min_alignment = int(cfg.get("brain_min_agent_alignment", 2))
@@ -841,21 +1060,33 @@ def build_brain_decision(
     short_score = float(scores["short_score"])
     long_count = int(scores["long_count"])
     short_count = int(scores["short_count"])
+    long_weight_sum = float(scores.get("long_weight_sum", long_count) or long_count or 1.0)
+    short_weight_sum = float(scores.get("short_weight_sum", short_count) or short_count or 1.0)
     decision: BrainDecisionValue = "WAIT"
     signal: BrainSignal = "NEUTRAL"
     base_score = 50
     reason = "Keine ausreichende Agenten-Mehrheit."
 
     if long_count >= min_alignment and long_score > short_score and (long_score - short_score) >= min_gap:
-        decision = "LONG"
         signal = "LONG"
-        base_score = int(min(100, max(min_score, (long_score / max(1, long_count)) + adjustment)))
-        reason = "Agenten-Matching LONG dominiert."
+        raw_score = (long_score / max(0.1, long_weight_sum)) + adjustment - quality_penalty
+        base_score = int(max(0, min(100, raw_score)))
+        if base_score >= min_score:
+            decision = "LONG"
+            reason = "Agenten-Matching LONG dominiert."
+        else:
+            decision = "WAIT"
+            reason = "LONG-Bias erkannt, aber Score nach Memory/Replay/Datenqualitaet unter Minimum."
     elif short_count >= min_alignment and short_score > long_score and (short_score - long_score) >= min_gap:
-        decision = "SHORT"
         signal = "SHORT"
-        base_score = int(min(100, max(min_score, (short_score / max(1, short_count)) + adjustment)))
-        reason = "Agenten-Matching SHORT dominiert."
+        raw_score = (short_score / max(0.1, short_weight_sum)) + adjustment - quality_penalty
+        base_score = int(max(0, min(100, raw_score)))
+        if base_score >= min_score:
+            decision = "SHORT"
+            reason = "Agenten-Matching SHORT dominiert."
+        else:
+            decision = "WAIT"
+            reason = "SHORT-Bias erkannt, aber Score nach Memory/Replay/Datenqualitaet unter Minimum."
 
     candidate: BrainTradeCandidate | None = None
     candidate_reason = "no_candidate"
@@ -873,8 +1104,55 @@ def build_brain_decision(
         )
         if candidate is None:
             decision = "WAIT"
-            signal = "NEUTRAL"
             reason = candidate_reason
+
+    raw_direction_average = 50.0
+    if signal == "LONG" and long_count:
+        raw_direction_average = long_score / max(0.1, long_weight_sum)
+    elif signal == "SHORT" and short_count:
+        raw_direction_average = short_score / max(0.1, short_weight_sum)
+    score_breakdown = {
+        "decision": decision,
+        "direction": signal,
+        "candidate_reason": candidate_reason,
+        "long_count": long_count,
+        "short_count": short_count,
+        "long_score": round(long_score, 3),
+        "short_score": round(short_score, 3),
+        "long_weight_sum": round(long_weight_sum, 6),
+        "short_weight_sum": round(short_weight_sum, 6),
+        "score_gap": round(abs(long_score - short_score), 3),
+        "raw_direction_average": round(raw_direction_average, 3),
+        "memory_adjustment": memory_adjustment,
+        "replay_adjustment": replay_adjustment,
+        "total_adjustment": adjustment,
+        "quality_penalty": quality_penalty,
+        "weak_count": scores.get("weak_count", 0),
+        "offline_count": scores.get("offline_count", 0),
+        "blocking_count": scores.get("blocking_count", 0),
+        "final_score": base_score if signal != "NEUTRAL" else 50,
+        "min_score": min_score,
+        "min_gap": min_gap,
+        "min_alignment": min_alignment,
+        "memory_count": match.count,
+        "memory_win_rate": match.win_rate,
+        "memory_avg_r": match.avg_r,
+        "replay_rule_quality": replay_rule_weight.get("quality"),
+        "replay_rule_matched": replay_rule_weight.get("matched"),
+        "replay_rule_scope": replay_rule_weight.get("scope"),
+        "replay_rule_symbol": replay_rule_weight.get("symbol", symbol),
+    }
+
+    if candidate is not None:
+        candidate.features["replay_rule_weight"] = replay_rule_weight
+        candidate.features["replay_rule_weight_enabled"] = bool(replay_rule_weight.get("enabled", False))
+        candidate.features["replay_rule_weight_matched"] = bool(replay_rule_weight.get("matched", False))
+        candidate.features["replay_rule_weight_adjustment"] = replay_adjustment
+        candidate.features["replay_rule_weight_quality"] = replay_rule_weight.get("quality", "OFF")
+        candidate.features["replay_rule_weight_key"] = replay_rule_weight.get("key", pattern)
+        candidate.features["replay_rule_weight_symbol"] = replay_rule_weight.get("symbol", symbol)
+        candidate.features["replay_rule_weight_scope"] = replay_rule_weight.get("scope", cfg.get("replay_rule_scope", "asset"))
+        candidate.features["brain_score_breakdown"] = score_breakdown
 
     if candidate is not None:
         llm_layer = _llm_audit_response(
@@ -896,38 +1174,49 @@ def build_brain_decision(
             candidate=None,
         )
 
+    brain_score = base_score if signal != "NEUTRAL" else 50
     brain_report = BrainReport(
         agent_name="Brain / Lernschicht",
-        function="Handelsentscheidung aus Agenten, Struktur und Erfahrung",
+        function="Agenten-Bias bewerten und Entry-Logik mit Erfahrung abgleichen",
         signal=signal,
-        score=base_score if signal != "NEUTRAL" else 50,
-        reads=f"LONG {long_count}/{round(long_score,1)} | SHORT {short_count}/{round(short_score,1)} | Memory {match.count}",
-        message=f"{decision}: {reason} Memory Winrate {match.win_rate if match.win_rate is not None else '-'} AvgR {match.avg_r if match.avg_r is not None else '-'}.",
+        score=brain_score,
+        reads=f"LONG {long_count}/{round(long_score,1)} | SHORT {short_count}/{round(short_score,1)} | Memory {match.count} | ReplayRule {replay_rule_weight.get('quality')} {replay_adjustment:+d} | DataPenalty {quality_penalty}",
+        message=f"{decision}: {reason} Memory Winrate {match.win_rate if match.win_rate is not None else '-'} AvgR {match.avg_r if match.avg_r is not None else '-'}. Replay-Regel {replay_rule_weight.get('quality')} {replay_adjustment:+d}. Datenqualitaet {quality_penalty} Abzug.",
         conflict=bool(scores["conflict"]),
         blocking=decision == "BLOCKED",
+        details={"score_breakdown": score_breakdown},
     )
-    ceo_signal: BrainSignal = signal if candidate is not None else "NEUTRAL"
-    ceo_score = candidate.score if candidate is not None else 50
-    ceo_message = "WAIT: Kein freigegebener Brain-Kandidat."
+    ceo_signal: BrainSignal = signal
+    ceo_score = brain_score
     if candidate is not None:
-        ceo_message = f"{candidate.decision}: Brain-Kandidat bereit; Economic Gate prueft RR/TP/SL."
+        ceo_message = f"{candidate.decision}: Agenten-Bias bestaetigt; Brain-Kandidat bereit; Economic Gate prueft RR/TP/SL."
+    elif signal in ("LONG", "SHORT"):
+        ceo_message = f"WAIT: {signal}-Bias bewertet, aber kein freigegebener Trade-Plan ({candidate_reason})."
+    else:
+        ceo_message = "WAIT: Keine ausreichende Agentenmehrheit fuer einen Trade-Plan."
     ceo_report = BrainReport(
         agent_name="CEO Trader",
-        function="Brain-Vorschlag kontrollieren und an Economic Gate uebergeben",
+        function="Alle Agentendaten bewerten und nur freigegebene Trade-Plaene an Economic Gate uebergeben",
         signal=ceo_signal,
         score=ceo_score,
-        reads=f"Brain {decision} | Candidate {candidate_reason}",
+        reads=f"Agenten-Bias {signal} | Trade {decision} | Candidate {candidate_reason}",
         message=ceo_message,
         conflict=bool(scores["conflict"]),
         blocking=False,
+        details={"score_breakdown": score_breakdown},
     )
     return {
         "decision": decision,
         "scores": scores,
+        "agent_bias": signal,
+        "agent_bias_score": brain_score,
+        "candidate_reason": candidate_reason,
         "brain": brain_report.to_dict(),
         "ceo": ceo_report.to_dict(),
         "candidate": candidate.to_dict() if candidate else None,
         "memory_match": match.to_dict(),
+        "replay_rule_weight": replay_rule_weight,
+        "score_breakdown": score_breakdown,
         "llm_layer": llm_layer,
     }
 

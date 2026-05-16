@@ -17,8 +17,8 @@ Kernaufgabe:
 - Phemex-Kerzen laden
 - Market-Structure-Indikatoren berechnen
 - Agentenberichte erzeugen
-- Brain-/Lernschicht auswerten
-- CEO-Kontrolle anwenden
+- CEO-Gesamtbewertung anwenden
+- Brain-/Lernschicht fuer Entry-Optimierung auswerten
 - Economic Gate pruefen
 - Paper-Trades verwalten
 - Lernspeicher aus abgeschlossenen Paper-Trades fortschreiben
@@ -30,19 +30,20 @@ Live-Trading bleibt im vorhandenen Regelwerk gesperrt.
 
 ## 1.2 Aktuelle Pipeline
 
-Die vorhandene Pipeline lautet:
+Die vorhandene Ziel-Pipeline lautet:
 
 Agenten  
-→ Brain / Lernschicht  
-→ CEO Trader  
+→ CEO Trader Gesamtbewertung  
+→ Brain / Lernschicht Entry-Optimierung  
 → Economic Gate  
 → Paper Trade
 
 Bedeutung:
 
-- Agenten lesen Indikator- und Kerzendaten.
-- Brain erzeugt daraus eine Handelsentscheidung bzw. einen Trade-Kandidaten.
-- CEO kontrolliert Brain-Entscheidung und Konflikte.
+- Agenten lesen Indikator-, Kerzen- und Kontextdaten.
+- Jeder Agent bewertet seine eigene Datenquelle eigenstaendig.
+- CEO kontrolliert die Gesamtlage aller Agenten, Konflikte und Blocking-Signale.
+- Brain erzeugt und optimiert daraus den Trade-Kandidaten mit Entry-Logik und Memory.
 - Economic Gate bleibt harte wirtschaftliche Sperre.
 - PaperBroker fuehrt nur Paper-Trades aus.
 
@@ -90,6 +91,7 @@ Aktive Bausteine:
 - HMA
 - SMA
 - Triple EMA
+- MACD
 - MFI
 - Volume-Kontext
 - dynamische Support-/Resistance-Level
@@ -107,19 +109,23 @@ Jeder Agent liefert:
 - Konfliktstatus
 - optional Blocking
 
-Agenten entscheiden keinen Trade alleine.
+Agenten entscheiden keinen Trade alleine. Kein einzelner Agent ist automatisch Pflichtbedingung fuer einen Trade.
 
 ## 2.4 Brain / Lernschicht
 
 Das Brain soll Agentenkombinationen mit gespeicherter Paper-Erfahrung abgleichen.
+
+Das Brain ist nicht von einer einzelnen LL / HH Box abhaengig. Boxen sind bevorzugte Entry-Zonen, aber keine Pflichtbedingung.
+
+Das Brain berechnet den Stop-Loss wahlweise strukturell oder per ATR. Der Take-Profit entsteht aus dem echten SL-Risiko und dem konfigurierten RR. Alte entfernte Strukturziele duerfen einen 5m-Trade nicht mehr zu einem Swing-Trade machen.
 
 Das Brain optimiert:
 
 - Richtung
 - Entry-Kandidat
 - Entry-Offset in Strukturboxen
-- SL-Kandidat
-- TP-Kandidat
+- SL-Kandidat aus Struktur oder ATR
+- TP-Kandidat aus RR
 - Pattern-Key
 - Confidence
 
@@ -166,7 +172,8 @@ Aufgabe:
 
 - Agentenberichte zusammenfassen
 - Konflikte erkennen und erklaeren
-- Brain-Entscheidung sprachlich bewerten
+- CEO-Gesamtbewertung sprachlich erklaeren
+- Brain-Entry-Logik sprachlich bewerten
 - Memory-Kontext erklaeren
 - Risiko-Hinweis erzeugen
 - WAIT / BLOCKED / APPROVED nachvollziehbarer machen
@@ -254,11 +261,11 @@ Nicht erlaubte Eingabedaten:
 
 Geplanter Ablauf:
 
-1. Agenten erzeugen Reports.
-2. Brain erzeugt Score, Richtung und optional Candidate.
-3. `_llm_learning_layer` baut einen reduzierten Audit-Kontext.
-4. Ollama bewertet diesen Kontext lokal.
-5. LLM-Antwort wird als Zusatzinfo gespeichert.
+1. Agenten erzeugen eigenstaendige Reports.
+2. CEO bewertet die Gesamtlage der Agenten.
+3. Brain erzeugt Entry-Logik, Score, Richtung und optional Candidate.
+4. `_llm_learning_layer` baut einen reduzierten Audit-Kontext.
+5. Ollama bewertet diesen Kontext lokal.
 6. CEO zeigt LLM-Hinweis im Agent Viewer.
 7. Economic Gate bleibt entscheidend.
 8. PaperBroker erstellt nur bei bestehender Freigabe einen Paper-Trade.
@@ -297,19 +304,19 @@ Berechnet Struktur, Linien, Boxen und Zusatzindikatoren.
 
 ### Agent Runtime
 
-Macht aus Indikator- und Kerzendaten einzelne Agentenberichte.
+Macht aus Indikator-, Kerzen- und Kontextdaten einzelne eigenstaendige Agentenberichte.
+
+### CEO Trader
+
+Bewertet alle Agentenberichte, Konflikte, Blocking-Signale und den Gesamtkonsens. CEO bleibt ohne eigene Preislogik.
 
 ### Brain Runtime
 
-Berechnet Score, Pattern-Key, Memory-Match und Trade-Kandidat.
+Lernt aus Paper-Trades und berechnet Pattern-Key, Memory-Match, Entry-Logik und Trade-Kandidat.
 
 ### Ollama Audit Layer
 
 Bewertet vorhandene Reports lokal und erzeugt eine begrenzte textliche Zusatzbewertung.
-
-### CEO Trader
-
-Kontrolliert Brain- und LLM-Kontext, bleibt aber ohne eigene Preislogik.
 
 ### Economic Gate
 

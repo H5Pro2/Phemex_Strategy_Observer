@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 from trade_value_gate import TradeValueGate
 from indikator import build_indicator_response
-from agent_runtime import build_agent_board
+from agent_runtime import build_agent_board, refresh_risk_agent_report
 from brain_runtime import apply_economic_gate_to_brain_decision, build_brain_decision, refresh_llm_layer_after_economic_gate
 
 
@@ -43,6 +43,23 @@ CORRELATION_GROUPS = {
     "crypto_major": {"BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT", "BCHUSDT", "BNBUSDT", "XRPUSDT"},
     "crypto_alt": {"KASUSDT", "PTUSDT"},
     "metals": {"PAXGUSDT"},
+}
+AGENT_DEFAULT_COLORS = {
+    "agent_bos_choch_color": "#2dd4bf",
+    "agent_box_color": "#22c55e",
+    "agent_support_resistance_color": "#60a5fa",
+    "agent_swing_labels_color": "#a78bfa",
+    "agent_hma_color": "#f59e0b",
+    "agent_sma_color": "#38bdf8",
+    "agent_triple_ema_color": "#facc15",
+    "agent_macd_color": "#fb7185",
+    "agent_mfi_color": "#c084fc",
+    "agent_rsi_color": "#818cf8",
+    "agent_vwap_color": "#14b8a6",
+    "agent_breakout_fakeout_color": "#f472b6",
+    "agent_volume_color": "#94a3b8",
+    "agent_volatility_regime_color": "#fb923c",
+    "agent_risk_color": "#f87171",
 }
 
 
@@ -434,6 +451,55 @@ class PaperBroker:
         pnl = (exit_price - setup.entry) if setup.side == "long" else (setup.entry - exit_price)
         return round(pnl / risk, 4)
 
+    def _trade_payload(self, trade: VirtualTrade) -> dict[str, Any]:
+        payload = asdict(trade)
+        payload["lifecycle"] = self._trade_lifecycle(trade)
+        return payload
+
+    def _trade_lifecycle(self, trade: VirtualTrade) -> dict[str, Any]:
+        closed_state = "waiting"
+        closed_label = "Exit offen"
+        closed_timestamp = None
+        if trade.status in ("tp", "sl", "expired"):
+            closed_state = "done"
+            closed_label = "Take Profit" if trade.status == "tp" else "Stop Loss" if trade.status == "sl" else "Expired"
+            closed_timestamp = trade.closed_at
+
+        steps = [
+            {"key": "created", "label": "Pending erstellt", "state": "done", "timestamp": trade.created_at},
+            {
+                "key": "filled",
+                "label": "Entry gefüllt" if trade.filled_at else "Wartet auf Entry",
+                "state": "done" if trade.filled_at else ("skipped" if trade.status == "expired" else "active"),
+                "timestamp": trade.filled_at,
+            },
+            {"key": "closed", "label": closed_label, "state": closed_state, "timestamp": closed_timestamp},
+        ]
+
+        stage_order = {"pending": 1, "open": 2, "tp": 3, "sl": 3, "expired": 3}
+        stage_label = {
+            "pending": "Pending → wartet auf Entry",
+            "open": "Open → TP/SL aktiv",
+            "tp": "Closed → Take Profit",
+            "sl": "Closed → Stop Loss",
+            "expired": "Closed → Expired",
+        }.get(trade.status, str(trade.status))
+        if trade.status == "pending":
+            detail = f"Entry {trade.setup.entry} bis Ablauf {trade.expires_at}"
+        elif trade.status == "open":
+            detail = f"Gefüllt {trade.filled_at} | TP {trade.setup.take_profit} | SL {trade.setup.stop_loss}"
+        elif trade.status in ("tp", "sl"):
+            detail = f"Exit {trade.exit_price} | R {trade.result_r}"
+        else:
+            detail = f"Ablauf {trade.closed_at or trade.expires_at}"
+        return {
+            "current_stage": trade.status,
+            "stage_label": stage_label,
+            "stage_detail": detail,
+            "stage_order": stage_order.get(trade.status, 0),
+            "steps": steps,
+        }
+
     def performance(self) -> dict[str, Any]:
         closed = [t for t in self.trades if t.result_r is not None]
         wins = [t for t in closed if t.result_r and t.result_r > 0]
@@ -473,7 +539,7 @@ class PaperBroker:
             stats["sum_r"] = round(stats["sum_r"], 3)
         return {
             "performance": self.performance(),
-            "trades": [asdict(trade) for trade in self.trades[-100:]],
+            "trades": [self._trade_payload(trade) for trade in self.trades[-100:]],
             "open_trades": sum(1 for trade in self.trades if trade.status == "open"),
             "pending_trades": sum(1 for trade in self.trades if trade.status == "pending"),
             "per_symbol": per_symbol,
@@ -502,12 +568,77 @@ class StatusStore:
             return json.loads(json.dumps(self.status))
 
 
+# --------------------------------------------------
+# ASSET LIST FILE
+# --------------------------------------------------
+def normalize_asset_symbol(value: Any) -> str:
+    text = str(value or "").strip().upper().replace(".P", "")
+    text = text.split(":", 1)[0]
+    return "".join(char for char in text if char.isalnum() or char in ("_", "-"))
+
+
+def default_asset_symbols(config: dict[str, Any] | None = None) -> list[str]:
+    result: list[str] = []
+    source_symbols = []
+    if isinstance(config, dict):
+        source_symbols.extend(config.get("symbols", []) or [])
+    source_symbols.extend(item.get("symbol") for item in WATCHLIST_ASSETS if isinstance(item, dict))
+    for item in source_symbols:
+        symbol = normalize_asset_symbol(item)
+        if symbol and symbol not in result:
+            result.append(symbol)
+    return result or ["BTCUSDT"]
+
+
+def asset_list_path(config: dict[str, Any], config_path: Path | None = None) -> Path:
+    raw_path = Path(str(config.get("asset_list_path", "assets.txt")))
+    if raw_path.is_absolute():
+        return raw_path
+    base_path = config_path.parent if config_path else Path(str(config.get("_config_path", "."))).parent
+    return base_path / raw_path
+
+
+def read_asset_list_file(path: Path, fallback_symbols: list[str]) -> list[str]:
+    if not path.exists():
+        path.write_text("\n".join(fallback_symbols) + "\n", encoding="utf-8")
+    result: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        clean = line.split("#", 1)[0].strip()
+        if not clean:
+            continue
+        symbol = normalize_asset_symbol(clean)
+        if symbol and symbol not in result:
+            result.append(symbol)
+    return result or fallback_symbols
+
+
+def apply_asset_file_to_config(config: dict[str, Any], config_path: Path | None = None) -> None:
+    config.setdefault("asset_list_path", "assets.txt")
+    path = asset_list_path(config, config_path)
+    fallback = default_asset_symbols(config)
+    assets = read_asset_list_file(path, fallback)
+    config["asset_list_path"] = str(config.get("asset_list_path", "assets.txt"))
+    config["asset_list"] = assets
+    config["watchlist_assets"] = [{"label": symbol, "symbol": symbol} for symbol in assets]
+    active_symbols: list[str] = []
+    for symbol in config.get("symbols", []) or []:
+        clean = normalize_asset_symbol(symbol)
+        if clean and clean not in active_symbols:
+            active_symbols.append(clean)
+    if not active_symbols:
+        active_symbols = assets[:1]
+    if config.get("observer_asset_mode") == "single":
+        active_symbols = active_symbols[:1]
+    config["symbols"] = active_symbols
+
+
 def load_config(path: Path) -> dict[str, Any]:
     config = json.loads(path.read_text(encoding="utf-8"))
     config["base_url"] = os.getenv("PHEMEX_BASE_URL", config.get("base_url", "https://api.phemex.com"))
     config["_config_path"] = str(path)
     config.setdefault("paper_trading_enabled", True)
     config.setdefault("observer_enabled", False)
+    config["observer_enabled"] = False
     config.setdefault("observer_asset_mode", "single")
     config.setdefault("max_open_trades_total", 3)
     config.setdefault("max_open_trades_per_asset", 1)
@@ -515,10 +646,13 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("stop_loss_mode", "structure")
     config.setdefault("stop_loss_percent", 0.25)
     config.setdefault("stop_loss_buffer_percent", 0.0)
+    config.setdefault("stop_loss_atr_period", 14)
+    config.setdefault("stop_loss_atr_multiplier", 1.5)
     config.setdefault("risk_unit", 1.0)
     config.setdefault("min_rr", 0.0)
     config.setdefault("min_tp_distance_fraction", 0.0)
     config.setdefault("max_sl_distance_fraction", 0.0)
+    config.setdefault("max_sl_distance_fraction_by_symbol", {})
     config.setdefault("estimated_taker_fee_rate", 0.0006)
     config.setdefault("min_net_profit_fraction", 0.001)
     config.setdefault("min_net_profit_fraction_by_symbol", {})
@@ -541,8 +675,8 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("swing_reaction_lookback_candles", 5)
     config.setdefault("dip_rejection_wick_ratio", 0.25)
     config.setdefault("dip_rejection_body_ratio", 0.2)
-    config.setdefault("take_profit_mode", "target_swing")
-    config.setdefault("allow_reward_risk_fallback_tp", False)
+    config.setdefault("take_profit_mode", "reward_risk")
+    config.setdefault("allow_reward_risk_fallback_tp", True)
     config.setdefault("sweep_rejection_mode", "close")
     config.setdefault("entry_search_confirmation_candles", 20)
     config.setdefault("supply_demand_max_base_candles", 6)
@@ -554,6 +688,7 @@ def load_config(path: Path) -> dict[str, Any]:
     if config.get("observer_asset_mode") == "single" and len(config.get("symbols", [])) > 1:
         config["symbols"] = config["symbols"][:1]
         path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    apply_asset_file_to_config(config, path)
     config.setdefault("trade_size_mode", "usd")
     config.setdefault("trade_size_usd", 100.0)
     config.setdefault("trade_size_asset", 0.001)
@@ -571,6 +706,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("indicator_show_sma", True)
     config.setdefault("indicator_show_triple_ema", False)
     config.setdefault("indicator_show_mfi", True)
+    config.setdefault("indicator_show_macd", True)
     config.setdefault("indicator_show_support_resistance", True)
     config.setdefault("indicator_swing_size", 5)
     config.setdefault("indicator_hhll_range", 50)
@@ -579,6 +715,9 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("indicator_triple_ema_period", 20)
     config.setdefault("indicator_triple_ema_slow_period", 50)
     config.setdefault("indicator_mfi_period", 14)
+    config.setdefault("indicator_macd_fast_period", 12)
+    config.setdefault("indicator_macd_slow_period", 26)
+    config.setdefault("indicator_macd_signal_period", 9)
     config.setdefault("indicator_sr_pivot_period", 10)
     config.setdefault("indicator_sr_source", "High/Low")
     config.setdefault("indicator_sr_max_pivots", 20)
@@ -594,11 +733,18 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("indicator_sma_lookback_days", 0)
     config.setdefault("indicator_triple_ema_lookback_days", 0)
     config.setdefault("indicator_mfi_lookback_days", 0)
+    config.setdefault("indicator_macd_lookback_days", 0)
     config.setdefault("indicator_lookback_days", legacy_indicator_lookback_days)
     config.setdefault("indicator_bos_confirmation", "Wicks")
     config.setdefault("chart_candle_up_color", "#047857")
     config.setdefault("chart_candle_down_color", "#b42318")
     config.setdefault("chart_candle_no_change_color", "#667085")
+    config.setdefault("chart_candle_wick_up_color", config.get("chart_candle_up_color", "#047857"))
+    config.setdefault("chart_candle_wick_down_color", config.get("chart_candle_down_color", "#b42318"))
+    config.setdefault("chart_candle_wick_no_change_color", config.get("chart_candle_no_change_color", "#667085"))
+    config.setdefault("chart_candle_border_up_color", config.get("chart_candle_up_color", "#047857"))
+    config.setdefault("chart_candle_border_down_color", config.get("chart_candle_down_color", "#b42318"))
+    config.setdefault("chart_candle_border_no_change_color", config.get("chart_candle_no_change_color", "#667085"))
     config.setdefault("chart_grid_color", "#d9e0ea")
     config.setdefault("chart_background_color", "#ffffff")
     config.setdefault("indicator_rising_color", "#047857")
@@ -614,6 +760,9 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("indicator_triple_ema_color", "#d97706")
     config.setdefault("indicator_triple_ema_slow_color", "#2563eb")
     config.setdefault("indicator_mfi_color", "#db2777")
+    config.setdefault("indicator_macd_color", "#0ea5e9")
+    config.setdefault("indicator_macd_signal_color", "#f97316")
+    config.setdefault("indicator_macd_histogram_color", "#64748b")
     config.setdefault("indicator_sr_support_color", "#22c55e")
     config.setdefault("indicator_sr_resistance_color", "#ef4444")
     config.setdefault("agent_view_enabled", True)
@@ -647,20 +796,47 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("agent_triple_ema_weight", 1.0)
     config.setdefault("agent_triple_ema_min_score", 0)
     config.setdefault("agent_triple_ema_blocking", False)
+    config.setdefault("agent_macd_enabled", True)
+    config.setdefault("agent_macd_weight", 1.0)
+    config.setdefault("agent_macd_min_score", 0)
+    config.setdefault("agent_macd_blocking", False)
     config.setdefault("agent_mfi_enabled", True)
     config.setdefault("agent_mfi_period", 14)
     config.setdefault("agent_mfi_weight", 1.0)
     config.setdefault("agent_mfi_min_score", 0)
     config.setdefault("agent_mfi_blocking", False)
+    config.setdefault("agent_rsi_enabled", True)
+    config.setdefault("agent_rsi_period", 14)
+    config.setdefault("agent_rsi_weight", 1.0)
+    config.setdefault("agent_rsi_min_score", 0)
+    config.setdefault("agent_rsi_blocking", False)
+    config.setdefault("agent_vwap_enabled", True)
+    config.setdefault("agent_vwap_lookback_candles", 96)
+    config.setdefault("agent_vwap_weight", 1.0)
+    config.setdefault("agent_vwap_min_score", 0)
+    config.setdefault("agent_vwap_blocking", False)
+    config.setdefault("agent_breakout_fakeout_enabled", True)
+    config.setdefault("agent_breakout_fakeout_lookback", 20)
+    config.setdefault("agent_breakout_fakeout_weight", 1.0)
+    config.setdefault("agent_breakout_fakeout_min_score", 0)
+    config.setdefault("agent_breakout_fakeout_blocking", False)
     config.setdefault("agent_volume_enabled", True)
     config.setdefault("agent_volume_period", 20)
     config.setdefault("agent_volume_weight", 1.0)
     config.setdefault("agent_volume_min_score", 0)
     config.setdefault("agent_volume_blocking", False)
+    config.setdefault("agent_volatility_regime_enabled", True)
+    config.setdefault("agent_volatility_atr_period", 14)
+    config.setdefault("agent_volatility_lookback", 50)
+    config.setdefault("agent_volatility_regime_weight", 1.0)
+    config.setdefault("agent_volatility_regime_min_score", 0)
+    config.setdefault("agent_volatility_regime_blocking", False)
     config.setdefault("agent_risk_enabled", True)
     config.setdefault("agent_risk_weight", 1.0)
     config.setdefault("agent_risk_min_score", 0)
     config.setdefault("agent_risk_blocking", False)
+    for key, color in AGENT_DEFAULT_COLORS.items():
+        config.setdefault(key, color)
     config.setdefault("trade_decision_mode", "brain")
     config.setdefault("brain_enabled", True)
     config.setdefault("brain_min_score", 58)
@@ -668,10 +844,12 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("brain_min_agent_alignment", 2)
     config.setdefault("brain_memory_min_count", 3)
     config.setdefault("brain_entry_box_offset", 0.35)
-    config.setdefault("brain_require_box_for_trade", True)
-    config.setdefault("brain_target_lookback_candles", 120)
+    config.setdefault("brain_require_box_for_trade", False)
+    config.setdefault("brain_target_lookback_candles", 36)
     config.setdefault("brain_stop_lookback_candles", 8)
     config.setdefault("brain_allow_rr_target_fallback", False)
+    config.setdefault("brain_cap_target_to_max_rr", True)
+    config.setdefault("brain_max_target_rr", float(config.get("reward_risk", 1.5)))
     config.setdefault("brain_llm_layer_enabled", True)
     config.setdefault("ollama_enabled", True)
     config.setdefault("ollama_base_url", "http://127.0.0.1:11434")
@@ -680,6 +858,20 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("ollama_max_prompt_chars", 4000)
     config.setdefault("ollama_temperature", 0.0)
     config.setdefault("ollama_block_hint_enabled", False)
+    config.setdefault("replay_rule_weight_enabled", False)
+    config.setdefault("replay_rule_weight_rules", [])
+    config.setdefault("replay_rule_scope", "asset")
+    config.setdefault("replay_rule_weight_min_count", 5)
+    config.setdefault("replay_rule_good_bonus", 6)
+    config.setdefault("replay_rule_bad_penalty", -10)
+    config.setdefault("replay_rule_max_abs_adjustment", 12)
+    config.setdefault("replay_pnl_enabled", True)
+    config.setdefault("replay_pnl_currency", str(config.get("account_balance_currency", "USDT")))
+    config.setdefault("replay_history_max_runs", 120)
+    config.setdefault("replay_max_steps", 750)
+    config.setdefault("replay_kline_limit_max", 1000)
+    config.setdefault("replay_frame_display_limit", 120)
+    config.setdefault("replay_response_frame_limit", 160)
     if config.get("live_trading_enabled", False):
         raise RuntimeError("Live trading is locked in this observer. Set live_trading_enabled=false.")
     return config
@@ -706,10 +898,13 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "stop_loss_mode",
         "stop_loss_percent",
         "stop_loss_buffer_percent",
+        "stop_loss_atr_period",
+        "stop_loss_atr_multiplier",
         "risk_unit",
         "min_rr",
         "min_tp_distance_fraction",
         "max_sl_distance_fraction",
+        "max_sl_distance_fraction_by_symbol",
         "estimated_taker_fee_rate",
         "min_net_profit_fraction",
         "min_net_profit_fraction_by_symbol",
@@ -753,6 +948,7 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "indicator_show_sma",
         "indicator_show_triple_ema",
         "indicator_show_mfi",
+        "indicator_show_macd",
         "indicator_show_support_resistance",
         "indicator_swing_size",
         "indicator_hhll_range",
@@ -761,6 +957,9 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "indicator_triple_ema_period",
         "indicator_triple_ema_slow_period",
         "indicator_mfi_period",
+        "indicator_macd_fast_period",
+        "indicator_macd_slow_period",
+        "indicator_macd_signal_period",
         "indicator_sr_pivot_period",
         "indicator_sr_max_pivots",
         "indicator_sr_channel_width_percent",
@@ -774,11 +973,18 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "indicator_sma_lookback_days",
         "indicator_triple_ema_lookback_days",
         "indicator_mfi_lookback_days",
+        "indicator_macd_lookback_days",
         "indicator_lookback_days",
         "indicator_bos_confirmation",
         "chart_candle_up_color",
         "chart_candle_down_color",
         "chart_candle_no_change_color",
+        "chart_candle_wick_up_color",
+        "chart_candle_wick_down_color",
+        "chart_candle_wick_no_change_color",
+        "chart_candle_border_up_color",
+        "chart_candle_border_down_color",
+        "chart_candle_border_no_change_color",
         "chart_grid_color",
         "chart_background_color",
         "indicator_rising_color",
@@ -794,6 +1000,9 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "indicator_triple_ema_color",
         "indicator_triple_ema_slow_color",
         "indicator_mfi_color",
+        "indicator_macd_color",
+        "indicator_macd_signal_color",
+        "indicator_macd_histogram_color",
         "indicator_sr_source",
         "indicator_sr_support_color",
         "indicator_sr_resistance_color",
@@ -828,20 +1037,60 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "agent_triple_ema_weight",
         "agent_triple_ema_min_score",
         "agent_triple_ema_blocking",
+        "agent_macd_enabled",
+        "agent_macd_weight",
+        "agent_macd_min_score",
+        "agent_macd_blocking",
         "agent_mfi_enabled",
         "agent_mfi_period",
         "agent_mfi_weight",
         "agent_mfi_min_score",
         "agent_mfi_blocking",
+        "agent_rsi_enabled",
+        "agent_rsi_period",
+        "agent_rsi_weight",
+        "agent_rsi_min_score",
+        "agent_rsi_blocking",
+        "agent_vwap_enabled",
+        "agent_vwap_lookback_candles",
+        "agent_vwap_weight",
+        "agent_vwap_min_score",
+        "agent_vwap_blocking",
+        "agent_breakout_fakeout_enabled",
+        "agent_breakout_fakeout_lookback",
+        "agent_breakout_fakeout_weight",
+        "agent_breakout_fakeout_min_score",
+        "agent_breakout_fakeout_blocking",
         "agent_volume_enabled",
         "agent_volume_period",
         "agent_volume_weight",
         "agent_volume_min_score",
         "agent_volume_blocking",
+        "agent_volatility_regime_enabled",
+        "agent_volatility_atr_period",
+        "agent_volatility_lookback",
+        "agent_volatility_regime_weight",
+        "agent_volatility_regime_min_score",
+        "agent_volatility_regime_blocking",
         "agent_risk_enabled",
         "agent_risk_weight",
         "agent_risk_min_score",
         "agent_risk_blocking",
+        "agent_bos_choch_color",
+        "agent_box_color",
+        "agent_support_resistance_color",
+        "agent_swing_labels_color",
+        "agent_hma_color",
+        "agent_sma_color",
+        "agent_triple_ema_color",
+        "agent_macd_color",
+        "agent_mfi_color",
+        "agent_rsi_color",
+        "agent_vwap_color",
+        "agent_breakout_fakeout_color",
+        "agent_volume_color",
+        "agent_volatility_regime_color",
+        "agent_risk_color",
         "trade_decision_mode",
         "brain_enabled",
         "brain_min_score",
@@ -853,6 +1102,8 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "brain_target_lookback_candles",
         "brain_stop_lookback_candles",
         "brain_allow_rr_target_fallback",
+        "brain_cap_target_to_max_rr",
+        "brain_max_target_rr",
         "brain_llm_layer_enabled",
         "ollama_enabled",
         "ollama_base_url",
@@ -861,9 +1112,25 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "ollama_max_prompt_chars",
         "ollama_temperature",
         "ollama_block_hint_enabled",
+        "replay_rule_weight_enabled",
+        "replay_rule_weight_rules",
+        "replay_rule_scope",
+        "replay_rule_weight_min_count",
+        "replay_rule_good_bonus",
+        "replay_rule_bad_penalty",
+        "replay_rule_max_abs_adjustment",
+        "replay_pnl_enabled",
+        "replay_pnl_currency",
+        "replay_history_max_runs",
+        "replay_max_steps",
+        "replay_kline_limit_max",
+        "replay_frame_display_limit",
+        "replay_response_frame_limit",
+        "asset_list_path",
+        "asset_list",
     ]
     result = {key: config.get(key) for key in keys}
-    result["watchlist_assets"] = WATCHLIST_ASSETS
+    result["watchlist_assets"] = config.get("watchlist_assets", WATCHLIST_ASSETS)
     return result
 
 
@@ -912,10 +1179,13 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "stop_loss_mode",
         "stop_loss_percent",
         "stop_loss_buffer_percent",
+        "stop_loss_atr_period",
+        "stop_loss_atr_multiplier",
         "risk_unit",
         "min_rr",
         "min_tp_distance_fraction",
         "max_sl_distance_fraction",
+        "max_sl_distance_fraction_by_symbol",
         "estimated_taker_fee_rate",
         "min_net_profit_fraction",
         "min_net_profit_fraction_by_symbol",
@@ -938,6 +1208,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "indicator_show_sma",
         "indicator_show_triple_ema",
         "indicator_show_mfi",
+        "indicator_show_macd",
         "indicator_show_support_resistance",
         "indicator_swing_size",
         "indicator_hhll_range",
@@ -946,6 +1217,9 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "indicator_triple_ema_period",
         "indicator_triple_ema_slow_period",
         "indicator_mfi_period",
+        "indicator_macd_fast_period",
+        "indicator_macd_slow_period",
+        "indicator_macd_signal_period",
         "indicator_sr_pivot_period",
         "indicator_sr_max_pivots",
         "indicator_sr_channel_width_percent",
@@ -959,11 +1233,18 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "indicator_sma_lookback_days",
         "indicator_triple_ema_lookback_days",
         "indicator_mfi_lookback_days",
+        "indicator_macd_lookback_days",
         "indicator_lookback_days",
         "indicator_bos_confirmation",
         "chart_candle_up_color",
         "chart_candle_down_color",
         "chart_candle_no_change_color",
+        "chart_candle_wick_up_color",
+        "chart_candle_wick_down_color",
+        "chart_candle_wick_no_change_color",
+        "chart_candle_border_up_color",
+        "chart_candle_border_down_color",
+        "chart_candle_border_no_change_color",
         "chart_grid_color",
         "chart_background_color",
         "indicator_rising_color",
@@ -979,6 +1260,9 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "indicator_triple_ema_color",
         "indicator_triple_ema_slow_color",
         "indicator_mfi_color",
+        "indicator_macd_color",
+        "indicator_macd_signal_color",
+        "indicator_macd_histogram_color",
         "indicator_sr_source",
         "indicator_sr_support_color",
         "indicator_sr_resistance_color",
@@ -1013,20 +1297,60 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "agent_triple_ema_weight",
         "agent_triple_ema_min_score",
         "agent_triple_ema_blocking",
+        "agent_macd_enabled",
+        "agent_macd_weight",
+        "agent_macd_min_score",
+        "agent_macd_blocking",
         "agent_mfi_enabled",
         "agent_mfi_period",
         "agent_mfi_weight",
         "agent_mfi_min_score",
         "agent_mfi_blocking",
+        "agent_rsi_enabled",
+        "agent_rsi_period",
+        "agent_rsi_weight",
+        "agent_rsi_min_score",
+        "agent_rsi_blocking",
+        "agent_vwap_enabled",
+        "agent_vwap_lookback_candles",
+        "agent_vwap_weight",
+        "agent_vwap_min_score",
+        "agent_vwap_blocking",
+        "agent_breakout_fakeout_enabled",
+        "agent_breakout_fakeout_lookback",
+        "agent_breakout_fakeout_weight",
+        "agent_breakout_fakeout_min_score",
+        "agent_breakout_fakeout_blocking",
         "agent_volume_enabled",
         "agent_volume_period",
         "agent_volume_weight",
         "agent_volume_min_score",
         "agent_volume_blocking",
+        "agent_volatility_regime_enabled",
+        "agent_volatility_atr_period",
+        "agent_volatility_lookback",
+        "agent_volatility_regime_weight",
+        "agent_volatility_regime_min_score",
+        "agent_volatility_regime_blocking",
         "agent_risk_enabled",
         "agent_risk_weight",
         "agent_risk_min_score",
         "agent_risk_blocking",
+        "agent_bos_choch_color",
+        "agent_box_color",
+        "agent_support_resistance_color",
+        "agent_swing_labels_color",
+        "agent_hma_color",
+        "agent_sma_color",
+        "agent_triple_ema_color",
+        "agent_macd_color",
+        "agent_mfi_color",
+        "agent_rsi_color",
+        "agent_vwap_color",
+        "agent_breakout_fakeout_color",
+        "agent_volume_color",
+        "agent_volatility_regime_color",
+        "agent_risk_color",
         "trade_decision_mode",
         "brain_enabled",
         "brain_min_score",
@@ -1038,6 +1362,8 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "brain_target_lookback_candles",
         "brain_stop_lookback_candles",
         "brain_allow_rr_target_fallback",
+        "brain_cap_target_to_max_rr",
+        "brain_max_target_rr",
         "brain_llm_layer_enabled",
         "ollama_enabled",
         "ollama_base_url",
@@ -1046,11 +1372,24 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "ollama_max_prompt_chars",
         "ollama_temperature",
         "ollama_block_hint_enabled",
+        "replay_rule_weight_enabled",
+        "replay_rule_weight_rules",
+        "replay_rule_scope",
+        "replay_rule_weight_min_count",
+        "replay_rule_good_bonus",
+        "replay_rule_bad_penalty",
+        "replay_rule_max_abs_adjustment",
     }
     color_keys = {
         "chart_candle_up_color",
         "chart_candle_down_color",
         "chart_candle_no_change_color",
+        "chart_candle_wick_up_color",
+        "chart_candle_wick_down_color",
+        "chart_candle_wick_no_change_color",
+        "chart_candle_border_up_color",
+        "chart_candle_border_down_color",
+        "chart_candle_border_no_change_color",
         "chart_grid_color",
         "chart_background_color",
         "indicator_rising_color",
@@ -1066,9 +1405,27 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "indicator_triple_ema_color",
         "indicator_triple_ema_slow_color",
         "indicator_mfi_color",
+        "indicator_macd_color",
+        "indicator_macd_signal_color",
+        "indicator_macd_histogram_color",
         "indicator_sr_source",
         "indicator_sr_support_color",
         "indicator_sr_resistance_color",
+        "agent_bos_choch_color",
+        "agent_box_color",
+        "agent_support_resistance_color",
+        "agent_swing_labels_color",
+        "agent_hma_color",
+        "agent_sma_color",
+        "agent_triple_ema_color",
+        "agent_macd_color",
+        "agent_mfi_color",
+        "agent_rsi_color",
+        "agent_vwap_color",
+        "agent_breakout_fakeout_color",
+        "agent_volume_color",
+        "agent_volatility_regime_color",
+        "agent_risk_color",
     }
 
     def clean_hex_color(name: str, raw: Any) -> str:
@@ -1132,7 +1489,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 if value not in ("target_swing", "reward_risk"):
                     raise ValueError("take_profit_mode must be target_swing or reward_risk")
                 clean[key] = value
-            elif key in ("use_trend_filter", "block_same_direction_correlated_trades", "single_timeframe_mode", "daily_bias_blocks_against_direction", "allow_reward_risk_fallback_tp", "indicator_enabled", "indicator_show_bos_choch", "indicator_show_boxes", "indicator_show_swing_labels", "indicator_show_hma", "indicator_show_sma", "indicator_show_triple_ema", "indicator_show_mfi", "indicator_show_support_resistance", "agent_show_offline_agents", "agent_bos_choch_enabled", "agent_bos_choch_blocking", "agent_box_enabled", "agent_box_blocking", "agent_support_resistance_enabled", "agent_support_resistance_blocking", "agent_swing_labels_enabled", "agent_swing_labels_blocking", "agent_hma_enabled", "agent_hma_blocking", "agent_sma_enabled", "agent_sma_blocking", "agent_triple_ema_enabled", "agent_triple_ema_blocking", "agent_mfi_enabled", "agent_mfi_blocking", "agent_volume_enabled", "agent_volume_blocking", "agent_risk_enabled", "agent_risk_blocking", "brain_enabled", "brain_require_box_for_trade", "brain_allow_rr_target_fallback", "brain_llm_layer_enabled", "ollama_enabled", "ollama_block_hint_enabled"):
+            elif key in ("use_trend_filter", "block_same_direction_correlated_trades", "single_timeframe_mode", "daily_bias_blocks_against_direction", "allow_reward_risk_fallback_tp", "indicator_enabled", "indicator_show_bos_choch", "indicator_show_boxes", "indicator_show_swing_labels", "indicator_show_hma", "indicator_show_sma", "indicator_show_triple_ema", "indicator_show_mfi", "indicator_show_macd", "indicator_show_support_resistance", "agent_show_offline_agents", "agent_bos_choch_enabled", "agent_bos_choch_blocking", "agent_box_enabled", "agent_box_blocking", "agent_support_resistance_enabled", "agent_support_resistance_blocking", "agent_swing_labels_enabled", "agent_swing_labels_blocking", "agent_hma_enabled", "agent_hma_blocking", "agent_sma_enabled", "agent_sma_blocking", "agent_triple_ema_enabled", "agent_triple_ema_blocking", "agent_macd_enabled", "agent_macd_blocking", "agent_mfi_enabled", "agent_mfi_blocking", "agent_rsi_enabled", "agent_rsi_blocking", "agent_vwap_enabled", "agent_vwap_blocking", "agent_breakout_fakeout_enabled", "agent_breakout_fakeout_blocking", "agent_volume_enabled", "agent_volume_blocking", "agent_volatility_regime_enabled", "agent_volatility_regime_blocking", "agent_risk_enabled", "agent_risk_blocking", "brain_enabled", "brain_require_box_for_trade", "brain_allow_rr_target_fallback", "brain_cap_target_to_max_rr", "brain_llm_layer_enabled", "ollama_enabled", "ollama_block_hint_enabled", "replay_rule_weight_enabled"):
                 clean[key] = bool(value)
             elif key == "trade_decision_mode":
                 value = str(value).lower()
@@ -1146,8 +1503,8 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 clean[key] = value
             elif key == "stop_loss_mode":
                 value = str(value).lower()
-                if value not in ("structure", "fixed_percent"):
-                    raise ValueError("stop_loss_mode must be structure or fixed_percent")
+                if value not in ("structure", "atr", "fixed_percent"):
+                    raise ValueError("stop_loss_mode must be structure, atr, or fixed_percent")
                 clean[key] = value
             elif key == "ollama_base_url":
                 value = str(value).strip().rstrip("/")
@@ -1171,24 +1528,49 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 clean[key] = value
             elif key in color_keys:
                 clean[key] = clean_hex_color(key, value)
-            elif key in ("indicator_lookback_days", "indicator_bos_choch_lookback_days", "indicator_boxes_lookback_days", "indicator_swing_labels_lookback_days", "indicator_hma_lookback_days", "indicator_sma_lookback_days", "indicator_triple_ema_lookback_days", "indicator_mfi_lookback_days"):
+            elif key in ("indicator_lookback_days", "indicator_bos_choch_lookback_days", "indicator_boxes_lookback_days", "indicator_swing_labels_lookback_days", "indicator_hma_lookback_days", "indicator_sma_lookback_days", "indicator_triple_ema_lookback_days", "indicator_mfi_lookback_days", "indicator_macd_lookback_days"):
                 value = int(value)
                 if value < 0:
                     raise ValueError(f"{key} must be non-negative")
                 clean[key] = value
-            elif key in ("signal_timeframe_seconds", "confirmation_timeframe_seconds", "poll_seconds", "phemex_poll_seconds", "system_loop_seconds", "kline_limit", "trend_ema_period", "max_open_trades_total", "max_open_trades_per_asset", "structure_lookback_candles", "structure_pivot_strength", "entry_search_confirmation_candles", "supply_demand_max_base_candles", "supply_demand_max_zone_retests", "swing_lookback_candles", "swing_pivot_strength", "swing_reaction_lookback_candles", "indicator_swing_size", "indicator_hhll_range", "indicator_hma_period", "indicator_sma_period", "indicator_triple_ema_period", "indicator_triple_ema_slow_period", "indicator_mfi_period", "indicator_sr_pivot_period", "indicator_sr_max_pivots", "indicator_sr_channel_width_percent", "indicator_sr_max_levels", "indicator_sr_min_strength", "indicator_box_extend_candles", "agent_bos_choch_min_score", "agent_box_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_period", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_mfi_period", "agent_mfi_min_score", "agent_volume_period", "agent_volume_min_score", "agent_risk_min_score", "brain_min_score", "brain_min_score_gap", "brain_min_agent_alignment", "brain_memory_min_count", "brain_target_lookback_candles", "brain_stop_lookback_candles", "ollama_timeout_seconds", "ollama_max_prompt_chars"):
+            elif key in ("signal_timeframe_seconds", "confirmation_timeframe_seconds", "poll_seconds", "phemex_poll_seconds", "system_loop_seconds", "kline_limit", "trend_ema_period", "max_open_trades_total", "max_open_trades_per_asset", "structure_lookback_candles", "structure_pivot_strength", "entry_search_confirmation_candles", "supply_demand_max_base_candles", "supply_demand_max_zone_retests", "swing_lookback_candles", "swing_pivot_strength", "swing_reaction_lookback_candles", "indicator_swing_size", "indicator_hhll_range", "indicator_hma_period", "indicator_sma_period", "indicator_triple_ema_period", "indicator_triple_ema_slow_period", "indicator_mfi_period", "indicator_macd_fast_period", "indicator_macd_slow_period", "indicator_macd_signal_period", "indicator_sr_pivot_period", "indicator_sr_max_pivots", "indicator_sr_channel_width_percent", "indicator_sr_max_levels", "indicator_sr_min_strength", "indicator_box_extend_candles", "agent_bos_choch_min_score", "agent_box_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_period", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_macd_min_score", "agent_mfi_period", "agent_mfi_min_score", "agent_rsi_period", "agent_rsi_min_score", "agent_vwap_lookback_candles", "agent_vwap_min_score", "agent_breakout_fakeout_lookback", "agent_breakout_fakeout_min_score", "agent_volume_period", "agent_volume_min_score", "agent_volatility_atr_period", "agent_volatility_lookback", "agent_volatility_regime_min_score", "agent_risk_min_score", "brain_min_score", "brain_min_score_gap", "brain_min_agent_alignment", "brain_memory_min_count", "brain_target_lookback_candles", "brain_stop_lookback_candles", "stop_loss_atr_period", "ollama_timeout_seconds", "ollama_max_prompt_chars", "replay_rule_weight_min_count", "replay_rule_good_bonus", "replay_rule_bad_penalty", "replay_rule_max_abs_adjustment", "replay_history_max_runs", "replay_max_steps", "replay_kline_limit_max", "replay_frame_display_limit", "replay_response_frame_limit"):
                 value = int(value)
-                if value < 0 or key not in ("agent_bos_choch_min_score", "agent_box_min_score", "agent_support_resistance_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_mfi_min_score", "agent_volume_min_score", "agent_risk_min_score") and value <= 0:
+                if key == "replay_rule_bad_penalty":
+                    if value > 0:
+                        raise ValueError("replay_rule_bad_penalty must be zero or negative")
+                elif value < 0 or key not in ("agent_bos_choch_min_score", "agent_box_min_score", "agent_support_resistance_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_macd_min_score", "agent_mfi_min_score", "agent_rsi_min_score", "agent_vwap_min_score", "agent_breakout_fakeout_min_score", "agent_volume_min_score", "agent_volatility_regime_min_score", "agent_risk_min_score") and value <= 0:
                     raise ValueError(f"{key} must be positive")
                 clean[key] = value
-            elif key in ("agent_bos_choch_weight", "agent_box_weight", "agent_support_resistance_weight", "agent_swing_labels_weight", "agent_hma_weight", "agent_sma_weight", "agent_triple_ema_weight", "agent_mfi_weight", "agent_volume_weight", "agent_risk_weight", "brain_entry_box_offset", "ollama_temperature"):
+            elif key in ("agent_bos_choch_weight", "agent_box_weight", "agent_support_resistance_weight", "agent_swing_labels_weight", "agent_hma_weight", "agent_sma_weight", "agent_triple_ema_weight", "agent_macd_weight", "agent_mfi_weight", "agent_rsi_weight", "agent_vwap_weight", "agent_breakout_fakeout_weight", "agent_volume_weight", "agent_volatility_regime_weight", "agent_risk_weight", "stop_loss_atr_multiplier", "brain_entry_box_offset", "brain_max_target_rr", "ollama_temperature"):
                 value = float(value)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"{key} must be a non-negative number")
                 clean[key] = value
-            elif key == "min_net_profit_fraction_by_symbol":
+            elif key == "replay_rule_weight_rules":
+                if not isinstance(value, list):
+                    raise ValueError("replay_rule_weight_rules must be a list")
+                clean_rules: list[dict[str, Any]] = []
+                for rule in value[:50]:
+                    if not isinstance(rule, dict):
+                        continue
+                    key_value = str(rule.get("key", "")).strip()
+                    if not key_value:
+                        continue
+                    quality = str(rule.get("quality", "WATCH")).upper()
+                    if quality not in ("GOOD", "BAD", "WATCH"):
+                        quality = "WATCH"
+                    clean_rules.append({
+                        "key": key_value,
+                        "quality": quality,
+                        "count": int(rule.get("count") or 0),
+                        "win_rate": rule.get("win_rate"),
+                        "avg_r": rule.get("avg_r"),
+                        "sum_r": rule.get("sum_r"),
+                    })
+                clean[key] = clean_rules
+            elif key in ("min_net_profit_fraction_by_symbol", "max_sl_distance_fraction_by_symbol"):
                 if not isinstance(value, dict):
-                    raise ValueError("min_net_profit_fraction_by_symbol must be an object")
+                    raise ValueError(f"{key} must be an object")
                 clean_values: dict[str, float] = {}
                 for raw_symbol, raw_fraction in value.items():
                     symbol = str(raw_symbol).replace(".P", "").split(":", 1)[0].strip().upper()
@@ -1196,7 +1578,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                         continue
                     fraction = float(raw_fraction)
                     if not math.isfinite(fraction) or fraction < 0:
-                        raise ValueError(f"min_net_profit_fraction for {symbol} must be a non-negative number")
+                        raise ValueError(f"{key} for {symbol} must be a non-negative number")
                     clean_values[symbol] = fraction
                 clean[key] = clean_values
             else:
@@ -1420,6 +1802,90 @@ def correlation_group(symbol: str) -> str | None:
             return group
     return None
 
+
+def build_risk_context(
+    setup: Setup | None,
+    broker: PaperBroker,
+    config: dict[str, Any],
+    value_result: dict[str, Any] | None = None,
+    broker_allowed: bool | None = None,
+    broker_reason: str | None = None,
+    paper_trade_created: bool | None = None,
+) -> dict[str, Any]:
+    active = [trade for trade in broker.trades if trade.status in ("pending", "open")]
+    symbol = setup.symbol if setup else None
+    side = setup.side if setup else None
+    group = correlation_group(symbol) if symbol else None
+    same_asset = [trade for trade in active if trade.setup.symbol == symbol] if symbol else []
+    correlated_same_direction = [
+        trade
+        for trade in active
+        if group and trade.setup.side == side and correlation_group(trade.setup.symbol) == group
+    ]
+    entry = float(setup.entry) if setup else 0.0
+    risk_fraction = abs(float(setup.entry) - float(setup.stop_loss)) / entry if setup and entry > 0 else None
+    max_sl_by_symbol = config.get("max_sl_distance_fraction_by_symbol", {}) or {}
+    max_sl_fraction = max_sl_by_symbol.get(symbol) if symbol and isinstance(max_sl_by_symbol, dict) else None
+    if max_sl_fraction is None:
+        max_sl_fraction = config.get("max_sl_distance_fraction", 0.0)
+    min_profit_by_symbol = config.get("min_net_profit_fraction_by_symbol", {}) or {}
+    min_profit_fraction = min_profit_by_symbol.get(symbol) if symbol and isinstance(min_profit_by_symbol, dict) else None
+    if min_profit_fraction is None:
+        min_profit_fraction = config.get("min_net_profit_fraction", 0.001)
+    return {
+        "candidate_present": setup is not None,
+        "symbol": symbol,
+        "side": side,
+        "economic_gate": value_result or {},
+        "broker": {
+            "allowed": broker_allowed,
+            "reason": broker_reason,
+            "paper_trade_created": paper_trade_created,
+        } if broker_allowed is not None else {},
+        "active_trades": {
+            "total": len(active),
+            "same_asset": len(same_asset),
+            "correlation_group": group,
+            "correlated_same_direction": len(correlated_same_direction),
+            "max_open_trades_total": int(config.get("max_open_trades_total", 3)),
+            "max_open_trades_per_asset": int(config.get("max_open_trades_per_asset", 1)),
+            "correlation_lock_enabled": bool(config.get("block_same_direction_correlated_trades", True)),
+        },
+        "sl_distance_fraction": risk_fraction,
+        "max_sl_distance_fraction": float(max_sl_fraction or 0.0),
+        "min_rr": float(config.get("min_rr", 0.0)),
+        "min_net_profit_fraction": float(min_profit_fraction or 0.0),
+    }
+
+
+def refresh_agent_board_risk_context(
+    agent_board: dict[str, Any],
+    scan: dict[str, Any],
+    setup: Setup | None,
+    broker: PaperBroker,
+    config: dict[str, Any],
+    value_result: dict[str, Any] | None = None,
+    broker_allowed: bool | None = None,
+    broker_reason: str | None = None,
+    paper_trade_created: bool | None = None,
+) -> dict[str, Any]:
+    risk_context = build_risk_context(
+        setup=setup,
+        broker=broker,
+        config=config,
+        value_result=value_result,
+        broker_allowed=broker_allowed,
+        broker_reason=broker_reason,
+        paper_trade_created=paper_trade_created,
+    )
+    refreshed = refresh_risk_agent_report(
+        board=agent_board,
+        scan=scan,
+        config=config,
+        risk_context=risk_context,
+    )
+    refreshed["risk_context"] = risk_context
+    return refreshed
 
 
 class MarketDataCache:
@@ -1654,6 +2120,1341 @@ def brain_gate_input_from_setup(setup: Setup) -> dict[str, Any]:
 
 
 # --------------------------------------------------
+# REPLAY PREVIEW ENGINE
+# --------------------------------------------------
+def replay_gate_input_from_candidate(candidate: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    setup = create_setup_from_brain_candidate(candidate, config)
+    return brain_gate_input_from_setup(setup)
+
+
+def replay_trade_id(candidate: dict[str, Any]) -> str:
+    return "-".join(
+        [
+            str(candidate.get("symbol", "SYMBOL")),
+            str(candidate.get("side", "side")),
+            str(candidate.get("signal_candle_time", 0)),
+            str(candidate.get("confirmation_candle_time", 0)),
+            str(candidate.get("pattern_key", "pattern"))[:24],
+        ]
+    )
+
+
+def replay_configured_trade_size(symbol: Any, config: dict[str, Any]) -> dict[str, Any]:
+    clean_symbol = normalize_asset_symbol(symbol)
+    sizes = config.get("trade_sizes_by_symbol", {}) or {}
+    symbol_size: dict[str, Any] = {}
+    if isinstance(sizes, dict):
+        for key, value in sizes.items():
+            if normalize_asset_symbol(key) == clean_symbol and isinstance(value, dict):
+                symbol_size = value
+                break
+    mode = str(symbol_size.get("mode", config.get("trade_size_mode", "usd"))).lower()
+    if mode not in ("asset", "usd"):
+        mode = str(config.get("trade_size_mode", "usd")).lower()
+    usd = float(symbol_size.get("usd", config.get("trade_size_usd", 0.0)) or 0.0)
+    asset = float(symbol_size.get("asset", config.get("trade_size_asset", 0.0)) or 0.0)
+    return {"symbol": clean_symbol, "mode": mode, "usd": usd, "asset": asset}
+
+
+def replay_trade_pnl_basis(candidate: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    symbol = normalize_asset_symbol(candidate.get("symbol", ""))
+    entry = float(candidate.get("entry_price", 0.0) or 0.0)
+    stop_loss = float(candidate.get("sl_price", 0.0) or 0.0)
+    configured_size = replay_configured_trade_size(symbol, config)
+    mode = str(configured_size.get("mode", "usd")).lower()
+    usd = float(configured_size.get("usd", 0.0) or 0.0)
+    asset = float(configured_size.get("asset", 0.0) or 0.0)
+    planned_notional = round(usd, 8) if mode == "usd" and usd > 0 else None
+    planned_quantity = round(asset, 8) if mode == "asset" and asset > 0 else None
+    if planned_quantity is None and planned_notional is not None and entry > 0:
+        planned_quantity = round(planned_notional / entry, 8)
+    if planned_notional is None and planned_quantity is not None and entry > 0:
+        planned_notional = round(planned_quantity * entry, 8)
+    risk_per_unit = abs(entry - stop_loss)
+    risk_usd = round(risk_per_unit * planned_quantity, 8) if planned_quantity is not None else None
+    return {
+        "trade_size_mode": mode,
+        "planned_notional_usd": planned_notional,
+        "planned_quantity_asset": planned_quantity,
+        "risk_usd": risk_usd,
+        "fee_rate": float(config.get("estimated_taker_fee_rate", 0.0006)),
+        "pnl_currency": str(config.get("replay_pnl_currency", config.get("account_balance_currency", "USDT"))),
+    }
+
+
+def replay_pnl_for_exit(
+    *,
+    side: str,
+    entry: float,
+    exit_price: float,
+    quantity: float | None,
+    notional: float | None,
+    fee_rate: float,
+    risk_usd: float | None = None,
+    result_r: float = 0.0,
+) -> dict[str, Any]:
+    quantity_number = float(quantity) if quantity is not None and float(quantity) > 0 else None
+    if quantity_number is None and notional is not None and float(notional) > 0 and entry > 0:
+        quantity_number = float(notional) / entry
+    if quantity_number is not None and quantity_number > 0:
+        gross_pnl = ((exit_price - entry) if side == "long" else (entry - exit_price)) * quantity_number
+        entry_notional = abs(entry * quantity_number)
+        exit_notional = abs(exit_price * quantity_number)
+        fees = (entry_notional + exit_notional) * float(fee_rate)
+    else:
+        gross_pnl = float(result_r) * float(risk_usd) if risk_usd is not None else 0.0
+        fees = 0.0
+    return {
+        "gross_pnl_usd": round(gross_pnl, 8),
+        "estimated_fees_usd": round(fees, 8),
+        "net_pnl_usd": round(gross_pnl - fees, 8),
+    }
+
+
+def replay_candidate_pnl_preview(candidate: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    basis = replay_trade_pnl_basis(candidate, config)
+    entry = float(candidate.get("entry_price", 0.0) or 0.0)
+    tp = float(candidate.get("tp_price", 0.0) or 0.0)
+    sl = float(candidate.get("sl_price", 0.0) or 0.0)
+    side = str(candidate.get("side", ""))
+    quantity = basis.get("planned_quantity_asset")
+    notional = basis.get("planned_notional_usd")
+    fee_rate = float(basis.get("fee_rate", 0.0) or 0.0)
+    risk_usd = basis.get("risk_usd")
+    tp_result = replay_pnl_for_exit(side=side, entry=entry, exit_price=tp, quantity=quantity, notional=notional, fee_rate=fee_rate, risk_usd=risk_usd, result_r=1.0)
+    sl_result = replay_pnl_for_exit(side=side, entry=entry, exit_price=sl, quantity=quantity, notional=notional, fee_rate=fee_rate, risk_usd=risk_usd, result_r=-1.0)
+    return {
+        "trade_size_mode": basis.get("trade_size_mode"),
+        "asset_quantity": quantity,
+        "notional_usd": notional,
+        "rr_factor": round(abs(tp - entry) / abs(entry - sl), 6) if entry != sl else None,
+        "tp_distance_usd": round(abs(tp - entry), 8),
+        "sl_distance_usd": round(abs(entry - sl), 8),
+        "tp_gross_usd": tp_result["gross_pnl_usd"],
+        "tp_fees_usd": tp_result["estimated_fees_usd"],
+        "tp_net_usd": tp_result["net_pnl_usd"],
+        "sl_gross_usd": sl_result["gross_pnl_usd"],
+        "sl_fees_usd": sl_result["estimated_fees_usd"],
+        "sl_net_usd": sl_result["net_pnl_usd"],
+        "fee_rate": fee_rate,
+        "pnl_formula": "price_distance * asset_quantity - fees",
+    }
+
+
+def apply_replay_trade_pnl(trade: dict[str, Any], exit_price: float) -> None:
+    entry = float(trade.get("entry", 0.0) or 0.0)
+    quantity = trade.get("planned_quantity_asset")
+    notional = trade.get("planned_notional_usd")
+    risk_usd = trade.get("risk_usd")
+    result_r = float(trade.get("result_r") or 0.0)
+    side = str(trade.get("side", ""))
+    pnl = replay_pnl_for_exit(
+        side=side,
+        entry=entry,
+        exit_price=float(exit_price),
+        quantity=float(quantity) if quantity is not None else None,
+        notional=float(notional) if notional is not None else None,
+        fee_rate=float(trade.get("fee_rate", 0.0006) or 0.0),
+        risk_usd=float(risk_usd) if risk_usd is not None else None,
+        result_r=result_r,
+    )
+    trade.update(pnl)
+
+
+def replay_trade_from_candidate(candidate: dict[str, Any], config: dict[str, Any], resolution: int) -> dict[str, Any]:
+    created_at = int(candidate.get("confirmation_candle_time") or candidate.get("signal_candle_time") or 0)
+    expiry_candles = max(1, int(config.get("order_expiry_confirmation_candles", 20)))
+    features = candidate.get("features", {}) if isinstance(candidate.get("features"), dict) else {}
+    memory_key = "|".join(
+        [
+            f"symbol={candidate.get('symbol', '')}",
+            f"side={candidate.get('side', '')}",
+            f"pattern={candidate.get('pattern_key', '')}",
+            f"entry={candidate.get('entry_method', '')}",
+            f"phase={features.get('market_phase', features.get('trend_alignment', 'na'))}",
+            f"volatility={features.get('volatility_bucket', features.get('volatility', 'na'))}",
+            f"session={features.get('session', 'na')}",
+        ]
+    )
+    pnl_basis = replay_trade_pnl_basis(candidate, config)
+    return {
+        "id": replay_trade_id(candidate),
+        "symbol": str(candidate.get("symbol", "")),
+        "side": str(candidate.get("side", "")),
+        "status": "pending",
+        "created_at": created_at,
+        "expires_at": created_at + expiry_candles * int(resolution),
+        "filled_at": None,
+        "closed_at": None,
+        "entry": float(candidate.get("entry_price", 0.0)),
+        "stop_loss": float(candidate.get("sl_price", 0.0)),
+        "take_profit": float(candidate.get("tp_price", 0.0)),
+        "exit_price": None,
+        "result_r": None,
+        "trade_size_mode": pnl_basis["trade_size_mode"],
+        "planned_notional_usd": pnl_basis["planned_notional_usd"],
+        "planned_quantity_asset": pnl_basis["planned_quantity_asset"],
+        "risk_usd": pnl_basis["risk_usd"],
+        "fee_rate": pnl_basis["fee_rate"],
+        "pnl_currency": pnl_basis["pnl_currency"],
+        "gross_pnl_usd": None,
+        "estimated_fees_usd": None,
+        "net_pnl_usd": None,
+        "pattern_key": str(candidate.get("pattern_key", "")),
+        "entry_method": str(candidate.get("entry_method", "")),
+        "memory_key": memory_key,
+        "memory_features": {
+            "market_phase": features.get("market_phase", features.get("trend_alignment", "na")),
+            "volatility": features.get("volatility_bucket", features.get("volatility", "na")),
+            "session": features.get("session", "na"),
+            "entry_method": str(candidate.get("entry_method", "")),
+            "pattern_key": str(candidate.get("pattern_key", "")),
+        },
+    }
+
+
+def replay_result_r(trade: dict[str, Any], exit_price: float) -> float:
+    entry = float(trade.get("entry", 0.0))
+    stop_loss = float(trade.get("stop_loss", 0.0))
+    risk = abs(entry - stop_loss)
+    if risk <= 0:
+        return 0.0
+    side = str(trade.get("side", ""))
+    pnl = (exit_price - entry) if side == "long" else (entry - exit_price)
+    return round(pnl / risk, 4)
+
+
+def compact_replay_frame_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+    return {
+        "symbol": candidate.get("symbol"),
+        "decision": candidate.get("decision"),
+        "side": candidate.get("side"),
+        "entry_price": candidate.get("entry_price"),
+        "sl_price": candidate.get("sl_price"),
+        "tp_price": candidate.get("tp_price"),
+        "entry_method": candidate.get("entry_method"),
+        "pattern_key": candidate.get("pattern_key"),
+        "reason": candidate.get("reason"),
+    }
+
+
+def lightweight_replay_trade_summary(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "created": len(trades),
+        "pending": sum(1 for trade in trades if trade.get("status") == "pending"),
+        "open": sum(1 for trade in trades if trade.get("status") == "open"),
+        "closed": sum(1 for trade in trades if trade.get("result_r") is not None),
+    }
+
+
+def close_replay_trade_at_price(trade: dict[str, Any], status: str, timestamp: int, exit_price: float, reason: str) -> dict[str, Any]:
+    trade["status"] = status
+    trade["closed_at"] = int(timestamp)
+    trade["exit_price"] = float(exit_price)
+    trade["result_r"] = replay_result_r(trade, float(exit_price)) if status != "expired" else float(trade.get("result_r", 0.0) or 0.0)
+    trade["replay_close_reason"] = reason
+    apply_replay_trade_pnl(trade, float(exit_price))
+    return {
+        "trade_id": trade.get("id"),
+        "status": status,
+        "time": int(timestamp),
+        "price": float(exit_price),
+        "result_r": trade.get("result_r"),
+        "net_pnl_usd": trade.get("net_pnl_usd"),
+        "reason": reason,
+    }
+
+
+def expire_replay_trade_flat(trade: dict[str, Any], timestamp: int, reason: str) -> dict[str, Any]:
+    trade["status"] = "expired"
+    trade["closed_at"] = int(timestamp)
+    trade["exit_price"] = None
+    trade["result_r"] = 0.0
+    trade["replay_close_reason"] = reason
+    trade["gross_pnl_usd"] = 0.0
+    trade["estimated_fees_usd"] = 0.0
+    trade["net_pnl_usd"] = 0.0
+    return {
+        "trade_id": trade.get("id"),
+        "status": "expired",
+        "time": int(timestamp),
+        "price": None,
+        "result_r": 0.0,
+        "net_pnl_usd": 0.0,
+        "reason": reason,
+    }
+
+
+def finalize_replay_trades(trades: list[dict[str, Any]], candle: Candle | None) -> list[dict[str, Any]]:
+    if candle is None:
+        return []
+    events: list[dict[str, Any]] = []
+    for trade in trades:
+        if trade.get("result_r") is not None or trade.get("status") in ("tp", "sl", "expired"):
+            continue
+        if trade.get("status") == "open":
+            exit_price = float(candle.close)
+            status = "tp" if replay_result_r(trade, exit_price) > 0 else "sl" if replay_result_r(trade, exit_price) < 0 else "expired"
+            events.append(close_replay_trade_at_price(trade, status, candle.timestamp, exit_price, "replay_end_mark_to_market"))
+        else:
+            events.append(expire_replay_trade_flat(trade, candle.timestamp, "replay_end_pending_not_filled"))
+    return events
+
+
+def replay_no_closed_reason(summary: dict[str, Any]) -> str:
+    if int(summary.get("frames", 0) or 0) <= 0:
+        return "Keine Replay-Frames: zu wenig Kerzendaten oder Warmup zu groß."
+    if int(summary.get("candidates", 0) or 0) <= 0:
+        return "Brain erzeugt keine Trade-Kandidaten."
+    if int(summary.get("gate_allowed", 0) or 0) <= 0:
+        return "Economic Gate blockiert alle Kandidaten."
+    if int(summary.get("replay_created", 0) or 0) <= 0:
+        return "Replay erstellt keine Trades trotz Gate-Freigabe."
+    if int(summary.get("replay_opened", 0) or 0) <= 0:
+        return "Replay-Trades erreichen den Entry nicht vor Ablauf."
+    return "Replay-Trades wurden nicht bis TP/SL geschlossen."
+
+
+def update_replay_trades(trades: list[dict[str, Any]], candle: Candle) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for trade in trades:
+        if trade.get("status") in ("tp", "sl", "expired"):
+            continue
+
+        if trade.get("status") == "pending":
+            if int(candle.timestamp) > int(trade.get("expires_at", 0)):
+                events.append(expire_replay_trade_flat(trade, candle.timestamp, "entry_not_filled_before_expiry"))
+                continue
+            entry = float(trade.get("entry", 0.0))
+            if candle.low <= entry <= candle.high:
+                trade["status"] = "open"
+                trade["filled_at"] = candle.timestamp
+                events.append({"trade_id": trade.get("id"), "status": "open", "time": candle.timestamp, "price": entry})
+                continue
+
+        if trade.get("status") == "open":
+            side = str(trade.get("side", ""))
+            stop_loss = float(trade.get("stop_loss", 0.0))
+            take_profit = float(trade.get("take_profit", 0.0))
+            exit_status: str | None = None
+            exit_price: float | None = None
+            if side == "long":
+                if candle.low <= stop_loss:
+                    exit_status, exit_price = "sl", stop_loss
+                elif candle.high >= take_profit:
+                    exit_status, exit_price = "tp", take_profit
+            else:
+                if candle.high >= stop_loss:
+                    exit_status, exit_price = "sl", stop_loss
+                elif candle.low <= take_profit:
+                    exit_status, exit_price = "tp", take_profit
+            if exit_status and exit_price is not None:
+                events.append(close_replay_trade_at_price(trade, exit_status, candle.timestamp, exit_price, "tp_sl_hit"))
+    return events
+
+
+def replay_trade_summary(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    closed = [trade for trade in trades if trade.get("result_r") is not None]
+    closed.sort(key=lambda trade: int(trade.get("closed_at") or trade.get("created_at") or 0))
+    wins = [trade for trade in closed if float(trade.get("result_r") or 0.0) > 0]
+    gross_win_r = sum(max(0.0, float(trade.get("result_r") or 0.0)) for trade in closed)
+    gross_loss_r = abs(sum(min(0.0, float(trade.get("result_r") or 0.0)) for trade in closed))
+    sum_r = sum(float(trade.get("result_r") or 0.0) for trade in closed)
+    gross_pnl_usd = sum(float(trade.get("gross_pnl_usd") or 0.0) for trade in closed)
+    estimated_fees_usd = sum(float(trade.get("estimated_fees_usd") or 0.0) for trade in closed)
+    net_pnl_values = [float(trade.get("net_pnl_usd") or 0.0) for trade in closed]
+    net_pnl_usd = sum(net_pnl_values)
+    pnl_wins = sum(1 for value in net_pnl_values if value > 0)
+    gross_pnl_profit_usd = sum(max(0.0, value) for value in net_pnl_values)
+    gross_pnl_loss_usd = abs(sum(min(0.0, value) for value in net_pnl_values))
+    avg_win_pnl_usd = gross_pnl_profit_usd / pnl_wins if pnl_wins else None
+    pnl_losses = len([value for value in net_pnl_values if value < 0])
+    avg_loss_pnl_usd = gross_pnl_loss_usd / pnl_losses if pnl_losses else None
+    break_even_win_rate = None
+    if avg_win_pnl_usd and avg_loss_pnl_usd and (avg_win_pnl_usd + avg_loss_pnl_usd) > 0:
+        break_even_win_rate = avg_loss_pnl_usd / (avg_win_pnl_usd + avg_loss_pnl_usd)
+
+    equity_r = 0.0
+    peak_r = 0.0
+    max_drawdown_r = 0.0
+    equity_usd = 0.0
+    peak_usd = 0.0
+    max_drawdown_usd = 0.0
+    best_pnl_series_usd = 0.0
+    worst_pnl_series_usd = 0.0
+    current_best_series = 0.0
+    current_worst_series = 0.0
+    for trade, net_value in zip(closed, net_pnl_values):
+        equity_r += float(trade.get("result_r") or 0.0)
+        peak_r = max(peak_r, equity_r)
+        max_drawdown_r = max(max_drawdown_r, peak_r - equity_r)
+
+        equity_usd += net_value
+        peak_usd = max(peak_usd, equity_usd)
+        max_drawdown_usd = max(max_drawdown_usd, peak_usd - equity_usd)
+        current_best_series = max(net_value, current_best_series + net_value)
+        current_worst_series = min(net_value, current_worst_series + net_value)
+        best_pnl_series_usd = max(best_pnl_series_usd, current_best_series)
+        worst_pnl_series_usd = min(worst_pnl_series_usd, current_worst_series)
+
+    return {
+        "created": len(trades),
+        "pending": sum(1 for trade in trades if trade.get("status") == "pending"),
+        "open": sum(1 for trade in trades if trade.get("status") == "open"),
+        "tp": sum(1 for trade in trades if trade.get("status") == "tp"),
+        "sl": sum(1 for trade in trades if trade.get("status") == "sl"),
+        "expired": sum(1 for trade in trades if trade.get("status") == "expired"),
+        "closed": len(closed),
+        "wins": len(wins),
+        "losses": len(closed) - len(wins),
+        "win_rate": round(len(wins) / len(closed), 3) if closed else None,
+        "sum_r": round(sum_r, 4),
+        "expectancy_r": round(sum_r / len(closed), 4) if closed else None,
+        "profit_factor": round(gross_win_r / gross_loss_r, 4) if gross_loss_r > 0 else (None if gross_win_r <= 0 else 999.0),
+        "max_drawdown_r": round(max_drawdown_r, 4),
+        "gross_pnl_usd": round(gross_pnl_usd, 4),
+        "estimated_fees_usd": round(estimated_fees_usd, 4),
+        "net_pnl_usd": round(net_pnl_usd, 4),
+        "pnl_win_rate": round(pnl_wins / len(closed), 4) if closed else None,
+        "net_profit_factor_usd": round(gross_pnl_profit_usd / gross_pnl_loss_usd, 4) if gross_pnl_loss_usd > 0 else (None if gross_pnl_profit_usd <= 0 else 999.0),
+        "max_drawdown_usd": round(max_drawdown_usd, 4),
+        "best_pnl_series_usd": round(best_pnl_series_usd, 4),
+        "worst_pnl_series_usd": round(worst_pnl_series_usd, 4),
+        "break_even_win_rate": round(break_even_win_rate, 4) if break_even_win_rate is not None else None,
+        "net_win_usd": round(gross_pnl_profit_usd, 4),
+        "net_loss_usd": round(gross_pnl_loss_usd, 4),
+        "avg_net_win_usd": round(avg_win_pnl_usd, 6) if avg_win_pnl_usd is not None else None,
+        "avg_net_loss_usd": round(avg_loss_pnl_usd, 6) if avg_loss_pnl_usd is not None else None,
+    }
+
+
+
+def replay_memory_test_summary(trades: list[dict[str, Any]], config: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = config or {}
+    rule_min_count = max(3, int(cfg.get("replay_rule_weight_min_count", 5)))
+    rule_good_bonus = int(cfg.get("replay_rule_good_bonus", 6))
+    rule_bad_penalty = int(cfg.get("replay_rule_bad_penalty", -10))
+    rule_max_abs = max(0, int(cfg.get("replay_rule_max_abs_adjustment", 12)))
+    rule_good_bonus = max(0, min(rule_max_abs, rule_good_bonus))
+    rule_bad_penalty = max(-rule_max_abs, min(0, rule_bad_penalty))
+    buckets: dict[str, dict[str, Any]] = {}
+    completed = [trade for trade in trades if trade.get("result_r") is not None]
+    for trade in completed:
+        key = str(trade.get("memory_key") or "unknown")
+        bucket = buckets.setdefault(
+            key,
+            {
+                "key": key,
+                "count": 0,
+                "wins": 0,
+                "losses": 0,
+                "sum_r": 0.0,
+                "entry_methods": {},
+                "market_phases": {},
+                "volatility": {},
+                "sessions": {},
+            },
+        )
+        result_r = float(trade.get("result_r") or 0.0)
+        features = trade.get("memory_features", {}) if isinstance(trade.get("memory_features"), dict) else {}
+        bucket["count"] += 1
+        bucket["wins"] += 1 if result_r > 0 else 0
+        bucket["losses"] += 1 if result_r <= 0 else 0
+        bucket["sum_r"] += result_r
+        for field, target in (
+            ("entry_method", "entry_methods"),
+            ("market_phase", "market_phases"),
+            ("volatility", "volatility"),
+            ("session", "sessions"),
+        ):
+            value = str(features.get(field, "na"))
+            bucket[target][value] = int(bucket[target].get(value, 0)) + 1
+
+    bucket_rows: list[dict[str, Any]] = []
+    for bucket in buckets.values():
+        count = int(bucket["count"])
+        bucket_rows.append(
+            {
+                "key": bucket["key"],
+                "count": count,
+                "wins": bucket["wins"],
+                "losses": bucket["losses"],
+                "win_rate": round(bucket["wins"] / count, 3) if count else None,
+                "avg_r": round(float(bucket["sum_r"]) / count, 4) if count else None,
+                "sum_r": round(float(bucket["sum_r"]), 4),
+                "entry_methods": bucket["entry_methods"],
+                "market_phases": bucket["market_phases"],
+                "volatility": bucket["volatility"],
+                "sessions": bucket["sessions"],
+            }
+        )
+    bucket_rows.sort(key=lambda item: (item["count"], item["avg_r"] or 0.0), reverse=True)
+    wins = sum(1 for trade in completed if float(trade.get("result_r") or 0.0) > 0)
+    memory_test = {
+        "mode": "replay_memory_test",
+        "isolated_from_live_memory": True,
+        "completed_trades": len(completed),
+        "bucket_count": len(bucket_rows),
+        "win_rate": round(wins / len(completed), 3) if completed else None,
+        "sum_r": round(sum(float(trade.get("result_r") or 0.0) for trade in completed), 4),
+        "top_buckets": bucket_rows[:20],
+        "rule_min_count": rule_min_count,
+        "rule_good_bonus": rule_good_bonus,
+        "rule_bad_penalty": rule_bad_penalty,
+        "rule_max_abs_adjustment": rule_max_abs,
+        "rule_small_sample": len(completed) < max(rule_min_count * 3, 20),
+    }
+    memory_test["preview_rules"] = replay_memory_preview_rules(memory_test)
+    return memory_test
+
+
+
+def parse_replay_memory_key(key: Any) -> dict[str, str]:
+    text = str(key or "")
+    result: dict[str, str] = {}
+    for name in ("symbol", "side", "entry", "phase", "volatility", "session"):
+        marker = f"{name}="
+        if marker not in text:
+            continue
+        start = text.find(marker) + len(marker)
+        end = text.find("|", start)
+        result[name] = text[start:] if end == -1 else text[start:end]
+    pattern_marker = "pattern="
+    entry_marker = "|entry="
+    if pattern_marker in text:
+        start = text.find(pattern_marker) + len(pattern_marker)
+        end = text.find(entry_marker, start)
+        result["pattern_key"] = text[start:] if end == -1 else text[start:end]
+    return result
+
+
+def replay_rule_action_label(quality: str, eligible: bool) -> str:
+    if not eligible:
+        return "WATCH"
+    value = str(quality or "WATCH").upper()
+    if value == "GOOD":
+        return "BONUS"
+    if value == "BAD":
+        return "MALUS"
+    return "WATCH"
+
+
+def replay_memory_preview_rules(memory_test: dict[str, Any]) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = []
+    rule_min_count = max(3, int(memory_test.get("rule_min_count") or 5))
+    good_bonus = int(memory_test.get("rule_good_bonus") or 0)
+    bad_penalty = int(memory_test.get("rule_bad_penalty") or 0)
+    for bucket in memory_test.get("top_buckets", []) or []:
+        count = int(bucket.get("count") or 0)
+        win_rate = bucket.get("win_rate")
+        avg_r = bucket.get("avg_r")
+        eligible = count >= rule_min_count and win_rate is not None and avg_r is not None
+        adjustment = 0
+        if not eligible:
+            quality = "WATCH"
+            action = f"Nicht aktivierbar: mindestens {rule_min_count} Trades pro Pattern nötig."
+            safety = "zu wenig Daten"
+            priority = 1
+        elif float(win_rate) >= 0.6 and float(avg_r) > 0:
+            quality = "GOOD"
+            adjustment = good_bonus
+            action = "Aktivierbar: Brain-Score bekommt einen begrenzten Bonus."
+            safety = "aktivierbar"
+            priority = 3
+        elif float(win_rate) <= 0.4 or float(avg_r) < 0:
+            quality = "BAD"
+            adjustment = bad_penalty
+            action = "Aktivierbar: Brain-Score bekommt einen begrenzten Malus."
+            safety = "aktivierbar"
+            priority = 3
+        else:
+            quality = "WATCH"
+            action = "Neutral beobachten; kein automatischer Eingriff."
+            safety = "neutral"
+            priority = 2
+
+        parsed_key = parse_replay_memory_key(bucket.get("key"))
+        clean_symbol = str(parsed_key.get("symbol", "")).upper()
+        action_label = replay_rule_action_label(quality, bool(eligible and quality in ("GOOD", "BAD")))
+        rules.append(
+            {
+                "quality": quality,
+                "priority": priority,
+                "key": bucket.get("key"),
+                "symbol": clean_symbol,
+                "pattern_key": parsed_key.get("pattern_key", ""),
+                "scope": "asset",
+                "action_label": action_label,
+                "count": count,
+                "min_count": rule_min_count,
+                "eligible": eligible and quality in ("GOOD", "BAD"),
+                "adjustment": adjustment,
+                "safety": safety,
+                "win_rate": win_rate,
+                "avg_r": avg_r,
+                "sum_r": bucket.get("sum_r"),
+                "entry_methods": bucket.get("entry_methods", {}),
+                "market_phases": bucket.get("market_phases", {}),
+                "volatility": bucket.get("volatility", {}),
+                "sessions": bucket.get("sessions", {}),
+                "action": action,
+            }
+        )
+    rules.sort(key=lambda item: (item["priority"], bool(item.get("eligible")), item["count"], abs(float(item.get("avg_r") or 0.0))), reverse=True)
+    return rules[:20]
+
+
+# --------------------------------------------------
+# REPLAY HISTORY STORAGE
+# --------------------------------------------------
+def replay_history_path(config: dict[str, Any]) -> Path:
+    return Path(str(config.get("replay_history_path", "data/replay_history.json")))
+
+
+def load_replay_history(config: dict[str, Any]) -> dict[str, Any]:
+    path = replay_history_path(config)
+    if not path.exists():
+        return {"version": 1, "runs": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "runs": []}
+    if not isinstance(payload, dict):
+        return {"version": 1, "runs": []}
+    if not isinstance(payload.get("runs"), list):
+        payload["runs"] = []
+    payload.setdefault("version", 1)
+    return payload
+
+
+def replay_history_trade_results(replay_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for trade in replay_payload.get("replay_trades", []) or []:
+        if not isinstance(trade, dict):
+            continue
+        result_r = trade.get("result_r")
+        if result_r is None:
+            continue
+        try:
+            result_number = float(result_r)
+        except (TypeError, ValueError):
+            continue
+        results.append(
+            {
+                "trade_id": trade.get("id"),
+                "status": str(trade.get("status", "")).lower(),
+                "side": trade.get("side"),
+                "created_at": trade.get("created_at"),
+                "filled_at": trade.get("filled_at"),
+                "closed_at": trade.get("closed_at"),
+                "result_r": round(result_number, 6),
+                "entry": trade.get("entry"),
+                "stop_loss": trade.get("stop_loss"),
+                "take_profit": trade.get("take_profit"),
+                "trade_size_mode": trade.get("trade_size_mode"),
+                "planned_quantity_asset": trade.get("planned_quantity_asset"),
+                "planned_notional_usd": trade.get("planned_notional_usd"),
+                "risk_usd": trade.get("risk_usd"),
+                "gross_pnl_usd": trade.get("gross_pnl_usd"),
+                "estimated_fees_usd": trade.get("estimated_fees_usd"),
+                "net_pnl_usd": trade.get("net_pnl_usd"),
+                "pnl_currency": trade.get("pnl_currency"),
+                "pattern_key": trade.get("pattern_key"),
+                "entry_method": trade.get("entry_method"),
+                "memory_key": trade.get("memory_key"),
+                "memory_features": trade.get("memory_features") if isinstance(trade.get("memory_features"), dict) else {},
+            }
+        )
+    return results
+
+
+def compact_replay_history_run(replay_payload: dict[str, Any]) -> dict[str, Any]:
+    summary = replay_payload.get("summary", {}) or {}
+    symbol = str(replay_payload.get("symbol", "UNKNOWN")).upper()
+    resolution = int(replay_payload.get("resolution", 0) or 0)
+    timestamp = int(time.time())
+    return {
+        "id": f"{symbol}-{resolution}-{timestamp}",
+        "created_at": timestamp,
+        "created_at_utc": format_time(timestamp),
+        "symbol": symbol,
+        "resolution": resolution,
+        "limit": replay_payload.get("limit"),
+        "warmup": replay_payload.get("warmup"),
+        "summary": {
+            "frames": summary.get("frames", 0),
+            "candidates": summary.get("candidates", 0),
+            "gate_allowed": summary.get("gate_allowed", 0),
+            "gate_blocked": summary.get("gate_blocked", 0),
+            "replay_created": summary.get("replay_created", 0),
+            "replay_open": summary.get("replay_open", 0),
+            "replay_pending": summary.get("replay_pending", 0),
+            "replay_closed": summary.get("replay_closed", 0),
+            "replay_tp": summary.get("replay_tp", 0),
+            "replay_sl": summary.get("replay_sl", 0),
+            "replay_expired": summary.get("replay_expired", 0),
+            "replay_win_rate": summary.get("replay_win_rate"),
+            "replay_sum_r": summary.get("replay_sum_r"),
+            "replay_expectancy_r": summary.get("replay_expectancy_r"),
+            "replay_profit_factor": summary.get("replay_profit_factor"),
+            "replay_max_drawdown_r": summary.get("replay_max_drawdown_r"),
+            "replay_gross_pnl_usd": summary.get("replay_gross_pnl_usd"),
+            "replay_estimated_fees_usd": summary.get("replay_estimated_fees_usd"),
+            "replay_net_pnl_usd": summary.get("replay_net_pnl_usd"),
+            "replay_pnl_win_rate": summary.get("replay_pnl_win_rate"),
+            "replay_net_profit_factor_usd": summary.get("replay_net_profit_factor_usd"),
+            "replay_max_drawdown_usd": summary.get("replay_max_drawdown_usd"),
+            "replay_best_pnl_series_usd": summary.get("replay_best_pnl_series_usd"),
+            "replay_worst_pnl_series_usd": summary.get("replay_worst_pnl_series_usd"),
+            "replay_break_even_win_rate": summary.get("replay_break_even_win_rate"),
+        },
+        "trade_results": replay_history_trade_results(replay_payload),
+    }
+
+
+def replay_history_asset_stats(runs: list[dict[str, Any]], config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        symbol = str(run.get("symbol", "UNKNOWN")).upper()
+        item = grouped.setdefault(
+            symbol,
+            {
+                "symbol": symbol,
+                "runs": 0,
+                "frames": 0,
+                "created": 0,
+                "closed": 0,
+                "tp": 0,
+                "sl": 0,
+                "expired": 0,
+                "pending": 0,
+                "open": 0,
+                "sum_r": 0.0,
+                "wins": 0,
+                "losses": 0,
+                "gross_profit_r": 0.0,
+                "gross_loss_r": 0.0,
+                "gross_pnl_usd": 0.0,
+                "estimated_fees_usd": 0.0,
+                "net_pnl_usd": 0.0,
+                "gross_pnl_profit_usd": 0.0,
+                "gross_pnl_loss_usd": 0.0,
+                "gross_win_usd": 0.0,
+                "gross_loss_usd": 0.0,
+                "net_win_usd": 0.0,
+                "net_loss_usd": 0.0,
+                "quantity_sum": 0.0,
+                "quantity_count": 0,
+                "notional_sum_usd": 0.0,
+                "notional_count": 0,
+                "rr_sum": 0.0,
+                "rr_count": 0,
+                "max_drawdown_usd": 0.0,
+                "best_pnl_series_usd": 0.0,
+                "worst_pnl_series_usd": 0.0,
+                "break_even_win_rate": None,
+                "last_run_utc": None,
+                "configured_asset_quantity": None,
+                "configured_notional_usd": None,
+                "configured_trade_size_mode": None,
+                "display_tp_price": None,
+                "display_sl_price": None,
+                "display_trade_value_usd": None,
+                "latest_trade_timestamp": 0,
+            },
+        )
+        if isinstance(config, dict):
+            configured_size = replay_configured_trade_size(symbol, config)
+            item["configured_trade_size_mode"] = configured_size.get("mode")
+            if configured_size.get("mode") == "asset":
+                item["configured_asset_quantity"] = round(float(configured_size.get("asset") or 0.0), 8)
+                item["configured_notional_usd"] = None
+            else:
+                item["configured_asset_quantity"] = None
+                item["configured_notional_usd"] = round(float(configured_size.get("usd") or 0.0), 4)
+        summary = run.get("summary", {}) if isinstance(run.get("summary"), dict) else {}
+        item["runs"] += 1
+        item["frames"] += int(summary.get("frames") or 0)
+        item["created"] += int(summary.get("replay_created") or 0)
+        item["tp"] += int(summary.get("replay_tp") or 0)
+        item["sl"] += int(summary.get("replay_sl") or 0)
+        item["expired"] += int(summary.get("replay_expired") or 0)
+        item["pending"] += int(summary.get("replay_pending") or 0)
+        item["open"] += int(summary.get("replay_open") or 0)
+        item["closed"] += int(summary.get("replay_closed") or 0)
+        item["last_run_utc"] = run.get("created_at_utc") or item["last_run_utc"]
+        item["max_drawdown_usd"] = max(float(item.get("max_drawdown_usd") or 0.0), float(summary.get("replay_max_drawdown_usd") or 0.0))
+        item["best_pnl_series_usd"] = max(float(item.get("best_pnl_series_usd") or 0.0), float(summary.get("replay_best_pnl_series_usd") or 0.0))
+        item["worst_pnl_series_usd"] = min(float(item.get("worst_pnl_series_usd") or 0.0), float(summary.get("replay_worst_pnl_series_usd") or 0.0))
+        for trade in run.get("trade_results", []) or []:
+            if not isinstance(trade, dict):
+                continue
+            try:
+                result_r = float(trade.get("result_r"))
+            except (TypeError, ValueError):
+                continue
+            item["sum_r"] += result_r
+            if result_r > 0:
+                item["wins"] += 1
+                item["gross_profit_r"] += result_r
+            elif result_r < 0:
+                item["losses"] += 1
+                item["gross_loss_r"] += abs(result_r)
+            gross_pnl = float(trade.get("gross_pnl_usd") or 0.0)
+            fees = float(trade.get("estimated_fees_usd") or 0.0)
+            net_pnl = float(trade.get("net_pnl_usd") or 0.0)
+            quantity_value = trade.get("planned_quantity_asset")
+            try:
+                quantity_number = float(quantity_value) if quantity_value is not None else None
+            except (TypeError, ValueError):
+                quantity_number = None
+            if quantity_number is not None and quantity_number > 0:
+                item["quantity_sum"] += quantity_number
+                item["quantity_count"] += 1
+            notional_value = trade.get("planned_notional_usd")
+            try:
+                notional_number = float(notional_value) if notional_value is not None else None
+            except (TypeError, ValueError):
+                notional_number = None
+            if notional_number is None:
+                entry_value = trade.get("entry")
+                try:
+                    entry_number = float(entry_value) if entry_value is not None else None
+                except (TypeError, ValueError):
+                    entry_number = None
+                if entry_number is not None and quantity_number is not None and entry_number > 0 and quantity_number > 0:
+                    notional_number = entry_number * quantity_number
+            if notional_number is not None and notional_number > 0:
+                item["notional_sum_usd"] += notional_number
+                item["notional_count"] += 1
+            try:
+                entry_number = float(trade.get("entry"))
+                sl_number = float(trade.get("stop_loss"))
+                tp_number = float(trade.get("take_profit"))
+                risk_distance = abs(entry_number - sl_number)
+                reward_distance = abs(tp_number - entry_number)
+                if risk_distance > 0 and reward_distance > 0:
+                    item["rr_sum"] += reward_distance / risk_distance
+                    item["rr_count"] += 1
+                trade_timestamp = int(trade.get("closed_at") or trade.get("filled_at") or trade.get("created_at") or 0)
+                if trade_timestamp >= int(item.get("latest_trade_timestamp") or 0):
+                    item["latest_trade_timestamp"] = trade_timestamp
+                    item["display_tp_price"] = round(tp_number, 2)
+                    item["display_sl_price"] = round(sl_number, 2)
+                    if notional_number is not None and notional_number > 0:
+                        item["display_trade_value_usd"] = round(notional_number, 2)
+                    elif entry_number > 0 and quantity_number is not None and quantity_number > 0:
+                        item["display_trade_value_usd"] = round(entry_number * quantity_number, 2)
+            except (TypeError, ValueError):
+                pass
+            item["gross_pnl_usd"] += gross_pnl
+            item["estimated_fees_usd"] += fees
+            item["net_pnl_usd"] += net_pnl
+            if gross_pnl > 0:
+                item["gross_win_usd"] += gross_pnl
+            elif gross_pnl < 0:
+                item["gross_loss_usd"] += abs(gross_pnl)
+            if net_pnl > 0:
+                item["gross_pnl_profit_usd"] += net_pnl
+                item["net_win_usd"] += net_pnl
+            elif net_pnl < 0:
+                item["gross_pnl_loss_usd"] += abs(net_pnl)
+                item["net_loss_usd"] += abs(net_pnl)
+    result: list[dict[str, Any]] = []
+    for item in grouped.values():
+        closed = max(0, int(item["wins"]) + int(item["losses"]))
+        item["closed"] = max(int(item["closed"]), closed)
+        item["win_rate"] = round(item["wins"] / closed, 4) if closed else None
+        item["expectancy_r"] = round(item["sum_r"] / closed, 6) if closed else None
+        item["profit_factor"] = round(item["gross_profit_r"] / item["gross_loss_r"], 6) if item["gross_loss_r"] > 0 else None
+        item["net_profit_factor_usd"] = round(item["gross_pnl_profit_usd"] / item["gross_pnl_loss_usd"], 6) if item["gross_pnl_loss_usd"] > 0 else None
+        avg_win_pnl = item["net_win_usd"] / item["wins"] if item["wins"] else None
+        avg_loss_pnl = item["net_loss_usd"] / item["losses"] if item["losses"] else None
+        item["avg_net_win_usd"] = round(avg_win_pnl, 6) if avg_win_pnl is not None else None
+        item["avg_net_loss_usd"] = round(avg_loss_pnl, 6) if avg_loss_pnl is not None else None
+        item["avg_asset_quantity"] = round(item["quantity_sum"] / item["quantity_count"], 8) if item["quantity_count"] else None
+        item["avg_notional_usd"] = round(item["notional_sum_usd"] / item["notional_count"], 4) if item["notional_count"] else None
+        item["display_asset_quantity"] = item.get("configured_asset_quantity") if item.get("configured_asset_quantity") is not None else item.get("avg_asset_quantity")
+        item["display_notional_usd"] = item.get("configured_notional_usd") if item.get("configured_notional_usd") is not None else item.get("avg_notional_usd")
+        item["avg_rr_factor"] = round(item["rr_sum"] / item["rr_count"], 4) if item["rr_count"] else None
+        item["fee_per_trade_usd"] = round(item["estimated_fees_usd"] / closed, 6) if closed else None
+        item["display_fee_or_trade_value_usd"] = item.get("display_trade_value_usd") if item.get("display_trade_value_usd") is not None else item.get("avg_notional_usd")
+        item["net_sl_usd"] = round(item["net_loss_usd"], 4) if item["net_loss_usd"] else 0.0
+        item["avg_net_sl_usd"] = round(avg_loss_pnl, 6) if avg_loss_pnl is not None else None
+        item["avg_gross_win_usd"] = round(item["gross_win_usd"] / item["wins"], 6) if item["wins"] else None
+        item["avg_gross_loss_usd"] = round(item["gross_loss_usd"] / item["losses"], 6) if item["losses"] else None
+        item["win_usd"] = round(item["net_win_usd"], 4)
+        item["loss_usd"] = round(item["net_loss_usd"], 4)
+        item["pnl_formula"] = "Netto PnL = Gewinn - Verlust"
+        item["pnl_check_usd"] = round(item["net_win_usd"] - item["net_loss_usd"], 4)
+        item["fee_drag_usd"] = round(float(item.get("estimated_fees_usd") or 0.0), 6)
+        item["fee_drag_fraction"] = round(float(item.get("estimated_fees_usd") or 0.0) / max(1e-12, abs(float(item.get("gross_pnl_usd") or 0.0))), 6) if float(item.get("gross_pnl_usd") or 0.0) != 0 else None
+        item["break_even_win_rate"] = round(avg_loss_pnl / (avg_win_pnl + avg_loss_pnl), 6) if avg_win_pnl and avg_loss_pnl and (avg_win_pnl + avg_loss_pnl) > 0 else None
+        be_gap = None
+        if item.get("win_rate") is not None and item.get("break_even_win_rate") is not None:
+            be_gap = float(item["win_rate"]) - float(item["break_even_win_rate"])
+        pf_value = float(item["profit_factor"]) if item.get("profit_factor") is not None else 0.0
+        net_pnl_value = float(item.get("net_pnl_usd") or 0.0)
+        drawdown_value = float(item.get("max_drawdown_usd") or 0.0)
+        closed_bonus = min(10.0, float(item.get("closed") or 0) / 5.0)
+        pnl_component = max(-80.0, min(120.0, net_pnl_value))
+        pf_component = max(-30.0, min(45.0, (pf_value - 1.0) * 35.0)) if pf_value > 0 else -20.0
+        be_component = max(-35.0, min(35.0, (be_gap or 0.0) * 100.0))
+        dd_component = min(60.0, drawdown_value * 0.6)
+        ranking_score = pnl_component + pf_component + be_component + closed_bonus - dd_component
+        item["ranking_score"] = round(ranking_score, 3)
+        item["ranking_grade"] = "A" if ranking_score >= 80 else "B" if ranking_score >= 35 else "C" if ranking_score >= 0 else "D"
+        if closed < 5:
+            item["action"] = "WAIT"
+            item["action_label"] = "mehr Daten sammeln"
+            item["action_reason"] = "zu wenige abgeschlossene Replay-Trades"
+        elif ranking_score >= 35 and net_pnl_value > 0 and (be_gap is None or be_gap >= 0):
+            item["action"] = "PRIORITY"
+            item["action_label"] = "bevorzugt testen"
+            item["action_reason"] = "positiver Score, Net PnL und Break-even-Abstand"
+        elif net_pnl_value < 0 and float(item.get("sum_r") or 0.0) > 0 and pf_value > 1.0:
+            item["action"] = "FEE_DRAG"
+            item["action_label"] = "Gebühren / Größe prüfen"
+            item["action_reason"] = "R-Ergebnis positiv, aber Netto nach Gebühren negativ"
+        elif ranking_score < 0 or net_pnl_value < 0:
+            item["action"] = "AVOID"
+            item["action_label"] = "vorsichtig / meiden"
+            item["action_reason"] = "negativer Score oder Net PnL"
+        else:
+            item["action"] = "WATCH"
+            item["action_label"] = "beobachten"
+            item["action_reason"] = "noch kein klarer Vorteil"
+        item["ranking_reason"] = {
+            "net_pnl_component": round(pnl_component, 3),
+            "profit_factor_component": round(pf_component, 3),
+            "break_even_gap_component": round(be_component, 3),
+            "closed_bonus": round(closed_bonus, 3),
+            "drawdown_penalty": round(dd_component, 3),
+            "break_even_gap": round(be_gap, 6) if be_gap is not None else None,
+        }
+        item["sum_r"] = round(item["sum_r"], 6)
+        item["gross_profit_r"] = round(item["gross_profit_r"], 6)
+        item["gross_loss_r"] = round(item["gross_loss_r"], 6)
+        item["gross_pnl_usd"] = round(item["gross_pnl_usd"], 4)
+        item["estimated_fees_usd"] = round(item["estimated_fees_usd"], 4)
+        item["net_pnl_usd"] = round(item["net_pnl_usd"], 4)
+        item["gross_pnl_profit_usd"] = round(item["gross_pnl_profit_usd"], 4)
+        item["gross_pnl_loss_usd"] = round(item["gross_pnl_loss_usd"], 4)
+        item["gross_win_usd"] = round(item["gross_win_usd"], 4)
+        item["gross_loss_usd"] = round(item["gross_loss_usd"], 4)
+        item["net_win_usd"] = round(item["net_win_usd"], 4)
+        item["net_loss_usd"] = round(item["net_loss_usd"], 4)
+        item["max_drawdown_usd"] = round(item["max_drawdown_usd"], 4)
+        item["best_pnl_series_usd"] = round(item["best_pnl_series_usd"], 4)
+        item["worst_pnl_series_usd"] = round(item["worst_pnl_series_usd"], 4)
+        result.append(item)
+    result.sort(
+        key=lambda item: (
+            float(item.get("ranking_score") or 0.0),
+            float(item.get("net_pnl_usd") or 0.0),
+            float(item["profit_factor"]) if item.get("profit_factor") is not None else -1.0,
+            -float(item.get("max_drawdown_usd") or 0.0),
+        ),
+        reverse=True,
+    )
+    for index, item in enumerate(result, start=1):
+        item["rank"] = index
+    return result
+
+
+def save_replay_history(config: dict[str, Any], replay_payload: dict[str, Any]) -> dict[str, Any]:
+    path = replay_history_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    history = load_replay_history(config)
+    runs = history.setdefault("runs", [])
+    runs.append(compact_replay_history_run(replay_payload))
+    max_runs = max(10, int(config.get("replay_history_max_runs", 120)))
+    history["runs"] = runs[-max_runs:]
+    history["asset_stats"] = replay_history_asset_stats(history["runs"], config)
+    path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    return history
+
+
+def replay_history_memory_test(config: dict[str, Any], symbol: str | None = None) -> dict[str, Any]:
+    history = load_replay_history(config)
+    runs = history.get("runs", []) if isinstance(history.get("runs"), list) else []
+    clean_symbol = normalize_asset_symbol(symbol) if symbol else ""
+    trades: list[dict[str, Any]] = []
+    run_count = 0
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        run_symbol = normalize_asset_symbol(run.get("symbol"))
+        if clean_symbol and run_symbol != clean_symbol:
+            continue
+        run_count += 1
+        for trade in run.get("trade_results", []) or []:
+            if not isinstance(trade, dict):
+                continue
+            item = dict(trade)
+            if not item.get("memory_key"):
+                pattern = str(item.get("pattern_key") or "unknown")
+                entry = str(item.get("entry_method") or "history")
+                side = str(item.get("side") or "na")
+                item["memory_key"] = "|".join(
+                    [
+                        f"symbol={run_symbol}",
+                        f"side={side}",
+                        f"pattern={pattern}",
+                        f"entry={entry}",
+                        "phase=history",
+                        "volatility=history",
+                        "session=history",
+                    ]
+                )
+                item["memory_features"] = {"market_phase": "history", "volatility": "history", "session": "history", "entry_method": entry, "pattern_key": pattern}
+            trades.append(item)
+    memory_test = replay_memory_test_summary(trades, config)
+    memory_test["source"] = "replay_history"
+    memory_test["history_runs"] = run_count
+    memory_test["symbol"] = clean_symbol or "__ALL__"
+    return memory_test
+
+
+def replay_history_memory_by_symbol(config: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
+    symbols = sorted({normalize_asset_symbol(run.get("symbol")) for run in runs if isinstance(run, dict) and normalize_asset_symbol(run.get("symbol"))})
+    return {symbol: replay_history_memory_test(config, symbol) for symbol in symbols}
+
+
+def public_replay_history(config: dict[str, Any]) -> dict[str, Any]:
+    history = load_replay_history(config)
+    runs = history.get("runs", []) if isinstance(history.get("runs"), list) else []
+    public_runs = runs[-80:]
+    return {
+        "version": int(history.get("version", 1)),
+        "path": str(replay_history_path(config)),
+        "runs": public_runs,
+        "asset_stats": replay_history_asset_stats(runs, config),
+        "memory_test": replay_history_memory_test(config),
+        "memory_test_by_symbol": replay_history_memory_by_symbol(config, public_runs),
+    }
+
+
+def clear_replay_history(config: dict[str, Any], symbol: str | None = None) -> dict[str, Any]:
+    path = replay_history_path(config)
+    history = load_replay_history(config)
+    runs = history.get("runs", []) if isinstance(history.get("runs"), list) else []
+    clean_symbol = str(symbol or "").replace(".P", "").split(":", 1)[0].strip().upper()
+    if clean_symbol:
+        kept_runs = [run for run in runs if str(run.get("symbol", "")).upper() != clean_symbol]
+    else:
+        kept_runs = []
+    result = {
+        "version": int(history.get("version", 1)),
+        "runs": kept_runs,
+        "asset_stats": replay_history_asset_stats(kept_runs, config),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return {
+        "cleared_symbol": clean_symbol or None,
+        "removed": len(runs) - len(kept_runs),
+        "history": public_replay_history(config),
+    }
+
+
+def build_replay_preview(
+    client: PhemexClient,
+    memory: MemoryAgent,
+    config: dict[str, Any],
+    symbol: str,
+    resolution: int,
+    limit: int,
+    steps: int,
+) -> dict[str, Any]:
+    clean_symbol = symbol.replace(".P", "").split(":", 1)[0].strip().upper() or str(config.get("symbols", ["BTCUSDT"])[0])
+    safe_resolution = max(60, int(resolution))
+    max_kline_limit = max(250, min(int(config.get("replay_kline_limit_max", 1000)), 1000))
+    max_replay_steps = max(250, min(int(config.get("replay_max_steps", 750)), max_kline_limit))
+    requested_steps = max(5, int(steps))
+    safe_steps = max(5, min(requested_steps, max_replay_steps))
+    warmup = max(
+        40,
+        int(config.get("indicator_hhll_range", 50)),
+        int(config.get("indicator_sma_period", 50)),
+        int(config.get("indicator_triple_ema_slow_period", 50)),
+        int(config.get("brain_target_lookback_candles", 36)),
+    )
+    requested_limit = max(80, int(limit))
+    needed_limit = safe_steps + warmup + 10
+    safe_limit = max(80, min(max(requested_limit, needed_limit), max_kline_limit))
+    kline_limit_fallback = False
+    try:
+        candles = client.get_klines(clean_symbol, safe_resolution, safe_limit)
+    except Exception:
+        if safe_limit <= 500:
+            raise
+        safe_limit = 500
+        kline_limit_fallback = True
+        candles = client.get_klines(clean_symbol, safe_resolution, safe_limit)
+    available_replay_steps = max(0, len(candles) - warmup)
+    effective_steps = max(0, min(safe_steps, available_replay_steps))
+    start_index = max(warmup, len(candles) - effective_steps)
+    value_gate = TradeValueGate(config)
+    frames: list[dict[str, Any]] = []
+    replay_trades: list[dict[str, Any]] = []
+    response_frame_limit = max(40, min(int(config.get("replay_response_frame_limit", 160)), 300))
+    summary: dict[str, Any] = {
+        "frames": 0,
+        "brain_long": 0,
+        "brain_short": 0,
+        "brain_wait": 0,
+        "brain_blocked": 0,
+        "ceo_long": 0,
+        "ceo_short": 0,
+        "ceo_wait": 0,
+        "ceo_blocked": 0,
+        "long_bias": 0,
+        "short_bias": 0,
+        "wait": 0,
+        "blocked": 0,
+        "candidates": 0,
+        "gate_allowed": 0,
+        "gate_blocked": 0,
+        "replay_created": 0,
+        "replay_opened": 0,
+        "replay_tp": 0,
+        "replay_sl": 0,
+        "replay_expired": 0,
+        "requested_steps": requested_steps,
+        "safe_steps": safe_steps,
+        "effective_steps": effective_steps,
+        "available_candles": len(candles),
+        "kline_limit": safe_limit,
+        "kline_limit_fallback": kline_limit_fallback,
+        "max_replay_steps": max_replay_steps,
+        "warmup": warmup,
+    }
+
+    for end_index in range(start_index, len(candles)):
+        window = candles[: end_index + 1]
+        current = window[-1]
+        replay_events = update_replay_trades(replay_trades, current)
+        for event in replay_events:
+            status = str(event.get("status", ""))
+            if status == "open":
+                summary["replay_opened"] += 1
+            elif status == "tp":
+                summary["replay_tp"] += 1
+            elif status == "sl":
+                summary["replay_sl"] += 1
+            elif status == "expired":
+                summary["replay_expired"] += 1
+        scan = build_brain_scan_context(clean_symbol, window, window, None, config)
+        indicator_context = build_indicator_response(
+            symbol=clean_symbol,
+            resolution=safe_resolution,
+            candles=window,
+            swing_size=int(config.get("indicator_swing_size", 5)),
+            hhll_range=int(config.get("indicator_hhll_range", 50)),
+            bos_confirmation=str(config.get("indicator_bos_confirmation", "Wicks")),
+            bos_choch_lookback_days=int(config.get("indicator_bos_choch_lookback_days", config.get("indicator_lookback_days", 3))),
+            boxes_lookback_days=int(config.get("indicator_boxes_lookback_days", config.get("indicator_lookback_days", 3))),
+            swing_labels_lookback_days=int(config.get("indicator_swing_labels_lookback_days", config.get("indicator_lookback_days", 3))),
+            hma_lookback_days=int(config.get("indicator_hma_lookback_days", 0)),
+            sma_lookback_days=int(config.get("indicator_sma_lookback_days", 0)),
+            triple_ema_lookback_days=int(config.get("indicator_triple_ema_lookback_days", 0)),
+            mfi_lookback_days=int(config.get("indicator_mfi_lookback_days", 0)),
+            macd_lookback_days=int(config.get("indicator_macd_lookback_days", 0)),
+            show_swing_labels=bool(config.get("indicator_show_swing_labels", True)),
+            show_bos_choch=bool(config.get("indicator_show_bos_choch", True)),
+            show_boxes=bool(config.get("indicator_show_boxes", True)),
+            show_hma=bool(config.get("indicator_show_hma", False)),
+            show_sma=bool(config.get("indicator_show_sma", True)),
+            show_triple_ema=bool(config.get("indicator_show_triple_ema", False)),
+            show_mfi=bool(config.get("indicator_show_mfi", True)),
+            show_macd=bool(config.get("indicator_show_macd", True)),
+            show_support_resistance=bool(config.get("indicator_show_support_resistance", True)),
+            hma_period=int(config.get("indicator_hma_period", 20)),
+            sma_period=int(config.get("indicator_sma_period", 50)),
+            triple_ema_period=int(config.get("indicator_triple_ema_period", 20)),
+            triple_ema_slow_period=int(config.get("indicator_triple_ema_slow_period", 50)),
+            mfi_period=int(config.get("indicator_mfi_period", 14)),
+            macd_fast_period=int(config.get("indicator_macd_fast_period", 12)),
+            macd_slow_period=int(config.get("indicator_macd_slow_period", 26)),
+            macd_signal_period=int(config.get("indicator_macd_signal_period", 9)),
+            sr_pivot_period=int(config.get("indicator_sr_pivot_period", 10)),
+            sr_source=str(config.get("indicator_sr_source", "High/Low")),
+            sr_max_pivots=int(config.get("indicator_sr_max_pivots", 20)),
+            sr_channel_width_percent=int(config.get("indicator_sr_channel_width_percent", 10)),
+            sr_max_levels=int(config.get("indicator_sr_max_levels", 5)),
+            sr_min_strength=int(config.get("indicator_sr_min_strength", 2)),
+            box_extend_candles=int(config.get("indicator_box_extend_candles", 4)),
+            hma_color=str(config.get("indicator_hma_color", "#7c3aed")),
+            sma_color=str(config.get("indicator_sma_color", "#06b6d4")),
+            triple_ema_color=str(config.get("indicator_triple_ema_color", "#d97706")),
+            triple_ema_slow_color=str(config.get("indicator_triple_ema_slow_color", "#2563eb")),
+            mfi_color=str(config.get("indicator_mfi_color", "#db2777")),
+            macd_color=str(config.get("indicator_macd_color", "#0ea5e9")),
+            macd_signal_color=str(config.get("indicator_macd_signal_color", "#f97316")),
+            macd_histogram_color=str(config.get("indicator_macd_histogram_color", "#64748b")),
+            sr_support_color=str(config.get("indicator_sr_support_color", "#22c55e")),
+            sr_resistance_color=str(config.get("indicator_sr_resistance_color", "#ef4444")),
+        )
+        agent_board = build_agent_board(
+            symbol=clean_symbol,
+            timeframe_seconds=safe_resolution,
+            candles=window,
+            indicator_data=indicator_context,
+            scan=scan,
+            config=config,
+        )
+        brain_decision = build_brain_decision(
+            symbol=clean_symbol,
+            timeframe_seconds=safe_resolution,
+            candles=window,
+            agent_board=agent_board,
+            indicator_data=indicator_context,
+            scan=scan,
+            memory_state=memory.memory,
+            config=config,
+        )
+        candidate = brain_decision.get("candidate") or None
+        gate_result = None
+        pnl_preview = replay_candidate_pnl_preview(candidate, config) if isinstance(candidate, dict) else None
+        replay_created_trade = None
+        if candidate:
+            summary["candidates"] += 1
+            gate_result = value_gate.evaluate(replay_gate_input_from_candidate(candidate, config))
+            if gate_result.get("trade_allowed"):
+                summary["gate_allowed"] += 1
+                replay_created_trade = replay_trade_from_candidate(candidate, config, safe_resolution)
+                if not any(trade.get("id") == replay_created_trade.get("id") for trade in replay_trades):
+                    replay_trades.append(replay_created_trade)
+                    summary["replay_created"] += 1
+                    replay_events.append(
+                        {
+                            "trade_id": replay_created_trade.get("id"),
+                            "status": "pending",
+                            "time": replay_created_trade.get("created_at"),
+                            "price": replay_created_trade.get("entry"),
+                        }
+                    )
+            else:
+                summary["gate_blocked"] += 1
+        decision = str(brain_decision.get("decision", "WAIT")).upper()
+        ceo = brain_decision.get("ceo") or {}
+        ceo_signal = str(ceo.get("signal", "NEUTRAL")).upper()
+        if decision == "LONG":
+            summary["brain_long"] += 1
+            summary["long_bias"] += 1
+        elif decision == "SHORT":
+            summary["brain_short"] += 1
+            summary["short_bias"] += 1
+        elif decision == "BLOCKED":
+            summary["brain_blocked"] += 1
+            summary["blocked"] += 1
+        else:
+            summary["brain_wait"] += 1
+            summary["wait"] += 1
+
+        if ceo_signal == "LONG":
+            summary["ceo_long"] += 1
+        elif ceo_signal == "SHORT":
+            summary["ceo_short"] += 1
+        elif ceo_signal == "BLOCKED":
+            summary["ceo_blocked"] += 1
+        else:
+            summary["ceo_wait"] += 1
+
+        summary["frames"] += 1
+        frames.append(
+            {
+                "index": end_index,
+                "timestamp": current.timestamp,
+                "time_utc": format_time(current.timestamp),
+                "open": current.open,
+                "high": current.high,
+                "low": current.low,
+                "close": current.close,
+                "ceo_signal": ceo_signal,
+                "ceo_score": ceo.get("score"),
+                "decision": decision,
+                "brain_score": (brain_decision.get("brain") or {}).get("score"),
+                "brain_message": (brain_decision.get("brain") or {}).get("message"),
+                "candidate": compact_replay_frame_candidate(candidate),
+                "candidate_pnl": pnl_preview,
+                "gate": gate_result,
+                "memory_match": brain_decision.get("memory_match"),
+                "replay_events": replay_events,
+                "replay_trade_created": compact_replay_frame_candidate(replay_created_trade),
+                "replay_trade_summary": lightweight_replay_trade_summary(replay_trades),
+            }
+        )
+        if len(frames) > response_frame_limit:
+            del frames[0 : len(frames) - response_frame_limit]
+
+    final_events = finalize_replay_trades(replay_trades, candles[-1] if candles else None)
+    for event in final_events:
+        status = str(event.get("status", ""))
+        if status == "tp":
+            summary["replay_tp"] += 1
+        elif status == "sl":
+            summary["replay_sl"] += 1
+        elif status == "expired":
+            summary["replay_expired"] += 1
+    if frames and final_events:
+        frames[-1].setdefault("replay_events", []).extend(final_events)
+        frames[-1]["replay_trade_summary"] = lightweight_replay_trade_summary(replay_trades)
+
+    final_replay_summary = replay_trade_summary(replay_trades)
+    memory_test = replay_memory_test_summary(replay_trades, config)
+    summary.update(
+        {
+            "replay_pending": final_replay_summary["pending"],
+            "replay_open": final_replay_summary["open"],
+            "replay_closed": final_replay_summary["closed"],
+            "replay_win_rate": final_replay_summary["win_rate"],
+            "replay_sum_r": final_replay_summary["sum_r"],
+            "replay_expectancy_r": final_replay_summary["expectancy_r"],
+            "replay_profit_factor": final_replay_summary["profit_factor"],
+            "replay_max_drawdown_r": final_replay_summary["max_drawdown_r"],
+            "replay_gross_pnl_usd": final_replay_summary["gross_pnl_usd"],
+            "replay_estimated_fees_usd": final_replay_summary["estimated_fees_usd"],
+            "replay_net_pnl_usd": final_replay_summary["net_pnl_usd"],
+            "replay_pnl_win_rate": final_replay_summary["pnl_win_rate"],
+            "replay_net_profit_factor_usd": final_replay_summary["net_profit_factor_usd"],
+            "replay_max_drawdown_usd": final_replay_summary["max_drawdown_usd"],
+            "replay_best_pnl_series_usd": final_replay_summary["best_pnl_series_usd"],
+            "replay_worst_pnl_series_usd": final_replay_summary["worst_pnl_series_usd"],
+            "replay_break_even_win_rate": final_replay_summary["break_even_win_rate"],
+            "memory_test_buckets": memory_test["bucket_count"],
+            "memory_test_completed": memory_test["completed_trades"],
+            "memory_test_win_rate": memory_test["win_rate"],
+            "memory_test_sum_r": memory_test["sum_r"],
+            "replay_no_closed_reason": replay_no_closed_reason(summary) if int(final_replay_summary.get("closed", 0) or 0) <= 0 else None,
+            "finalized_at_replay_end": len(final_events),
+            "frames_returned": len(frames),
+            "frames_truncated": summary["frames"] > len(frames),
+            "response_frame_limit": response_frame_limit,
+        }
+    )
+
+    replay_payload = {
+        "mode": "replay_preview",
+        "symbol": clean_symbol,
+        "resolution": safe_resolution,
+        "limit": safe_limit,
+        "warmup": warmup,
+        "summary": summary,
+        "frames": frames,
+        "replay_trades": replay_trades,
+        "memory_test": memory_test,
+    }
+    replay_payload["history"] = save_replay_history(config, replay_payload)
+    return replay_payload
+
+
+# --------------------------------------------------
 # BRAIN SETUP FACTORY
 # --------------------------------------------------
 def create_setup_from_brain_candidate(candidate: dict[str, Any], config: dict[str, Any]) -> Setup:
@@ -1803,6 +3604,7 @@ def process_cached_once(
             sma_lookback_days=int(config.get("indicator_sma_lookback_days", 0)),
             triple_ema_lookback_days=int(config.get("indicator_triple_ema_lookback_days", 0)),
             mfi_lookback_days=int(config.get("indicator_mfi_lookback_days", 0)),
+            macd_lookback_days=int(config.get("indicator_macd_lookback_days", 0)),
             show_swing_labels=bool(config.get("indicator_show_swing_labels", True)),
             show_bos_choch=bool(config.get("indicator_show_bos_choch", True)),
             show_boxes=bool(config.get("indicator_show_boxes", True)),
@@ -1810,12 +3612,16 @@ def process_cached_once(
             show_sma=bool(config.get("indicator_show_sma", True)),
             show_triple_ema=bool(config.get("indicator_show_triple_ema", False)),
             show_mfi=bool(config.get("indicator_show_mfi", True)),
+            show_macd=bool(config.get("indicator_show_macd", True)),
             show_support_resistance=bool(config.get("indicator_show_support_resistance", True)),
             hma_period=int(config.get("indicator_hma_period", 20)),
             sma_period=int(config.get("indicator_sma_period", 50)),
             triple_ema_period=int(config.get("indicator_triple_ema_period", 20)),
             triple_ema_slow_period=int(config.get("indicator_triple_ema_slow_period", 50)),
             mfi_period=int(config.get("indicator_mfi_period", 14)),
+            macd_fast_period=int(config.get("indicator_macd_fast_period", 12)),
+            macd_slow_period=int(config.get("indicator_macd_slow_period", 26)),
+            macd_signal_period=int(config.get("indicator_macd_signal_period", 9)),
             sr_pivot_period=int(config.get("indicator_sr_pivot_period", 10)),
             sr_source=str(config.get("indicator_sr_source", "High/Low")),
             sr_max_pivots=int(config.get("indicator_sr_max_pivots", 20)),
@@ -1828,6 +3634,9 @@ def process_cached_once(
             triple_ema_color=str(config.get("indicator_triple_ema_color", "#d97706")),
             triple_ema_slow_color=str(config.get("indicator_triple_ema_slow_color", "#2563eb")),
             mfi_color=str(config.get("indicator_mfi_color", "#db2777")),
+            macd_color=str(config.get("indicator_macd_color", "#0ea5e9")),
+            macd_signal_color=str(config.get("indicator_macd_signal_color", "#f97316")),
+            macd_histogram_color=str(config.get("indicator_macd_histogram_color", "#64748b")),
             sr_support_color=str(config.get("indicator_sr_support_color", "#22c55e")),
             sr_resistance_color=str(config.get("indicator_sr_resistance_color", "#ef4444")),
         )
@@ -1867,29 +3676,42 @@ def process_cached_once(
             setup = memory.score_setup(setup)
 
         if setup:
+            agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config)
+            cycle["symbols"][symbol]["agents"] = agent_board
+            cycle["agents"][symbol] = agent_board
             value_result = value_gate.evaluate(brain_gate_input_from_setup(setup))
             brain_decision = apply_economic_gate_to_brain_decision(brain_decision, value_result)
             brain_decision["llm_layer"] = refresh_llm_layer_after_economic_gate(agent_board, scan_explanation, brain_decision, config)
             agent_board["ceo"] = brain_decision.get("ceo", agent_board.get("ceo"))
             agent_board["economic_gate"] = value_result
             agent_board["llm_layer"] = brain_decision.get("llm_layer")
+            agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result)
             cycle["symbols"][symbol]["agents"] = agent_board
             cycle["agents"][symbol] = agent_board
             cycle["symbols"][symbol]["brain"] = brain_decision
             cycle["brains"][symbol] = brain_decision
             if not value_result.get("trade_allowed", False):
+                agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=False, broker_reason="value_gate")
+                cycle["symbols"][symbol]["agents"] = agent_board
+                cycle["agents"][symbol] = agent_board
                 cycle["events"].append({"type": "blocked", "reason": "value_gate", "value_result": value_result, "setup": asdict(setup), "brain": brain_decision})
             else:
                 setup.features["value_gate"] = value_result
                 setup.features["ceo_decision"] = brain_decision.get("ceo")
                 if config.get("paper_trading_enabled", True):
                     allowed, block_reason = broker.can_accept_setup(setup)
+                    agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=allowed, broker_reason=block_reason)
+                    cycle["symbols"][symbol]["agents"] = agent_board
+                    cycle["agents"][symbol] = agent_board
                     if not allowed:
                         event = {"type": "blocked", "reason": block_reason, "setup": asdict(setup), "brain": brain_decision}
                         cycle["events"].append(event)
                     else:
                         trade = broker.add_setup(setup)
                         if trade:
+                            agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=True, broker_reason=None, paper_trade_created=True)
+                            cycle["symbols"][symbol]["agents"] = agent_board
+                            cycle["agents"][symbol] = agent_board
                             print_signal(trade)
                             cycle["signals"].append(asdict(trade))
                 else:
@@ -1971,6 +3793,52 @@ def load_dashboard_html() -> str:
 
 
 
+
+
+def save_replay_rule_weights(config: dict[str, Any], rules: list[dict[str, Any]], enabled: bool) -> dict[str, Any]:
+    if not isinstance(rules, list):
+        raise ValueError("rules must be a list")
+    min_count = max(3, int(config.get("replay_rule_weight_min_count", 5)))
+    max_abs = max(0, int(config.get("replay_rule_max_abs_adjustment", 12)))
+    good_bonus = max(0, min(max_abs, int(config.get("replay_rule_good_bonus", 6))))
+    bad_penalty = max(-max_abs, min(0, int(config.get("replay_rule_bad_penalty", -10))))
+    clean_rules: list[dict[str, Any]] = []
+    for rule in rules[:50]:
+        if not isinstance(rule, dict):
+            continue
+        key = str(rule.get("key", "")).strip()
+        if not key:
+            continue
+        count = int(rule.get("count") or 0)
+        quality = str(rule.get("quality", "WATCH")).upper()
+        if quality not in ("GOOD", "BAD"):
+            continue
+        if count < min_count:
+            continue
+        adjustment = good_bonus if quality == "GOOD" else bad_penalty
+        parsed_key = parse_replay_memory_key(key)
+        symbol = str(rule.get("symbol") or parsed_key.get("symbol") or "").upper()
+        pattern_key = str(rule.get("pattern_key") or parsed_key.get("pattern_key") or key)
+        scope = str(rule.get("scope") or config.get("replay_rule_scope", "asset")).lower()
+        if scope not in ("asset", "global"):
+            scope = "asset"
+        clean_rules.append(
+            {
+                "key": key,
+                "pattern_key": pattern_key,
+                "symbol": symbol,
+                "scope": scope,
+                "quality": quality,
+                "count": count,
+                "min_count": min_count,
+                "adjustment": adjustment,
+                "win_rate": rule.get("win_rate"),
+                "avg_r": rule.get("avg_r"),
+                "sum_r": rule.get("sum_r"),
+            }
+        )
+    return update_config_file(config, {"replay_rule_weight_enabled": bool(enabled) and bool(clean_rules), "replay_rule_weight_rules": clean_rules, "replay_rule_scope": str(config.get("replay_rule_scope", "asset"))})
+
 def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: PhemexClient, memory: MemoryAgent, broker: PaperBroker, host: str, port: int) -> ThreadingHTTPServer:
     class DashboardHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
@@ -1995,11 +3863,10 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
             if request_path == "/api/chart-data":
                 try:
                     active_symbols = [str(symbol).replace(".P", "").split(":", 1)[0].strip().upper() for symbol in config.get("symbols", []) if str(symbol).strip()]
+                    watchlist_symbols = [str(item.get("symbol", "")).replace(".P", "").split(":", 1)[0].strip().upper() for item in WATCHLIST_ASSETS if str(item.get("symbol", "")).strip()]
                     requested_symbol = str(query.get("symbol", [active_symbols[0] if active_symbols else "BTCUSDT"])[0]).replace(".P", "").split(":", 1)[0].strip().upper()
-                    if config.get("observer_asset_mode", "single") == "single":
-                        symbol = active_symbols[0] if active_symbols else requested_symbol
-                    else:
-                        symbol = requested_symbol if requested_symbol in active_symbols else (active_symbols[0] if active_symbols else requested_symbol)
+                    allowed_symbols = set(active_symbols) | set(watchlist_symbols)
+                    symbol = requested_symbol if requested_symbol in allowed_symbols else (active_symbols[0] if active_symbols else requested_symbol)
                     resolution = int(query.get("resolution", [config.get("confirmation_timeframe_seconds", 60)])[0])
                     config_limit = int(config.get("kline_limit", 500))
                     limit = max(50, min(int(query.get("limit", [config_limit])[0]), 1000))
@@ -2042,6 +3909,9 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     triple_ema_period = max(1, min(int(query.get("triple_ema_period", [config.get("indicator_triple_ema_period", 20)])[0]), 500))
                     triple_ema_slow_period = max(1, min(int(query.get("triple_ema_slow_period", [config.get("indicator_triple_ema_slow_period", 50)])[0]), 500))
                     mfi_period = max(1, min(int(query.get("mfi_period", [config.get("indicator_mfi_period", 14)])[0]), 500))
+                    macd_fast_period = max(1, min(int(query.get("macd_fast_period", [config.get("indicator_macd_fast_period", 12)])[0]), 500))
+                    macd_slow_period = max(macd_fast_period + 1, min(int(query.get("macd_slow_period", [config.get("indicator_macd_slow_period", 26)])[0]), 500))
+                    macd_signal_period = max(1, min(int(query.get("macd_signal_period", [config.get("indicator_macd_signal_period", 9)])[0]), 500))
                     box_extend_candles = max(2, min(int(query.get("box_extend_candles", [config.get("indicator_box_extend_candles", 4)])[0]), 100))
                     legacy_lookback_days = int(config.get("indicator_lookback_days", 3))
                     bos_choch_lookback_days = max(0, min(int(query.get("bos_choch_lookback_days", [config.get("indicator_bos_choch_lookback_days", legacy_lookback_days)])[0]), 365))
@@ -2051,6 +3921,7 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     sma_lookback_days = max(0, min(int(query.get("sma_lookback_days", [config.get("indicator_sma_lookback_days", 0)])[0]), 365))
                     triple_ema_lookback_days = max(0, min(int(query.get("triple_ema_lookback_days", [config.get("indicator_triple_ema_lookback_days", 0)])[0]), 365))
                     mfi_lookback_days = max(0, min(int(query.get("mfi_lookback_days", [config.get("indicator_mfi_lookback_days", 0)])[0]), 365))
+                    macd_lookback_days = max(0, min(int(query.get("macd_lookback_days", [config.get("indicator_macd_lookback_days", 0)])[0]), 365))
                     sr_pivot_period = max(4, min(int(query.get("sr_pivot_period", [config.get("indicator_sr_pivot_period", 10)])[0]), 30))
                     sr_source = str(query.get("sr_source", [config.get("indicator_sr_source", "High/Low")])[0])
                     if sr_source not in ("High/Low", "Close/Open"):
@@ -2069,12 +3940,16 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     show_sma = indicator_query_bool("show_sma", bool(config.get("indicator_show_sma", True)))
                     show_triple_ema = indicator_query_bool("show_triple_ema", bool(config.get("indicator_show_triple_ema", False)))
                     show_mfi = indicator_query_bool("show_mfi", bool(config.get("indicator_show_mfi", True)))
+                    show_macd = indicator_query_bool("show_macd", bool(config.get("indicator_show_macd", True)))
                     show_support_resistance = indicator_query_bool("show_support_resistance", bool(config.get("indicator_show_support_resistance", True)))
                     hma_color = str(query.get("hma_color", [config.get("indicator_hma_color", "#7c3aed")])[0])
                     sma_color = str(query.get("sma_color", [config.get("indicator_sma_color", "#06b6d4")])[0])
                     triple_ema_color = str(query.get("triple_ema_color", [config.get("indicator_triple_ema_color", "#d97706")])[0])
                     triple_ema_slow_color = str(query.get("triple_ema_slow_color", [config.get("indicator_triple_ema_slow_color", "#2563eb")])[0])
                     mfi_color = str(query.get("mfi_color", [config.get("indicator_mfi_color", "#db2777")])[0])
+                    macd_color = str(query.get("macd_color", [config.get("indicator_macd_color", "#0ea5e9")])[0])
+                    macd_signal_color = str(query.get("macd_signal_color", [config.get("indicator_macd_signal_color", "#f97316")])[0])
+                    macd_histogram_color = str(query.get("macd_histogram_color", [config.get("indicator_macd_histogram_color", "#64748b")])[0])
                     sr_support_color = str(query.get("sr_support_color", [config.get("indicator_sr_support_color", "#22c55e")])[0])
                     sr_resistance_color = str(query.get("sr_resistance_color", [config.get("indicator_sr_resistance_color", "#ef4444")])[0])
                     try:
@@ -2096,6 +3971,7 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                         sma_lookback_days=sma_lookback_days,
                         triple_ema_lookback_days=triple_ema_lookback_days,
                         mfi_lookback_days=mfi_lookback_days,
+                        macd_lookback_days=macd_lookback_days,
                         show_swing_labels=show_swing_labels,
                         show_bos_choch=show_bos_choch,
                         show_boxes=show_boxes,
@@ -2103,12 +3979,16 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                         show_sma=show_sma,
                         show_triple_ema=show_triple_ema,
                         show_mfi=show_mfi,
+                        show_macd=show_macd,
                         show_support_resistance=show_support_resistance,
                         hma_period=hma_period,
                         sma_period=sma_period,
                         triple_ema_period=triple_ema_period,
                         triple_ema_slow_period=triple_ema_slow_period,
                         mfi_period=mfi_period,
+                        macd_fast_period=macd_fast_period,
+                        macd_slow_period=macd_slow_period,
+                        macd_signal_period=macd_signal_period,
                         sr_pivot_period=sr_pivot_period,
                         sr_source=sr_source,
                         sr_max_pivots=sr_max_pivots,
@@ -2121,6 +4001,9 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                         triple_ema_color=triple_ema_color,
                         triple_ema_slow_color=triple_ema_slow_color,
                         mfi_color=mfi_color,
+                        macd_color=macd_color,
+                        macd_signal_color=macd_signal_color,
+                        macd_histogram_color=macd_histogram_color,
                         sr_support_color=sr_support_color,
                         sr_resistance_color=sr_resistance_color,
                     )
@@ -2129,6 +4012,40 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                 except Exception as exc:
                     body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
                     self._send(500, "application/json; charset=utf-8", body)
+                return
+            if request_path == "/api/replay-preview":
+                try:
+                    replay_symbols: list[str] = []
+                    for source_symbol in config.get("asset_list", []) or []:
+                        clean = normalize_asset_symbol(source_symbol)
+                        if clean and clean not in replay_symbols:
+                            replay_symbols.append(clean)
+                    for asset in config.get("watchlist_assets", []) or []:
+                        clean = normalize_asset_symbol(asset.get("symbol") if isinstance(asset, dict) else asset)
+                        if clean and clean not in replay_symbols:
+                            replay_symbols.append(clean)
+                    for source_symbol in config.get("symbols", []) or []:
+                        clean = normalize_asset_symbol(source_symbol)
+                        if clean and clean not in replay_symbols:
+                            replay_symbols.append(clean)
+                    if not replay_symbols:
+                        replay_symbols = default_asset_symbols(config)
+                    requested_symbol = str(query.get("symbol", [replay_symbols[0] if replay_symbols else "BTCUSDT"])[0])
+                    symbol = normalize_asset_symbol(requested_symbol) or (replay_symbols[0] if replay_symbols else "BTCUSDT")
+                    if replay_symbols and symbol not in replay_symbols:
+                        raise ValueError(f"Replay Asset nicht in Asset-Liste: {symbol}")
+                    resolution = int(query.get("resolution", [config.get("signal_timeframe_seconds", 300)])[0])
+                    limit = int(query.get("limit", [config.get("kline_limit", 500)])[0])
+                    steps = int(query.get("steps", [80])[0])
+                    body = build_replay_preview(client, memory, config, symbol, resolution, limit, steps)
+                    self._send(200, "application/json; charset=utf-8", json.dumps(body).encode("utf-8"))
+                except Exception as exc:
+                    body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
+                    self._send(500, "application/json; charset=utf-8", body)
+                return
+            if request_path == "/api/replay-history":
+                payload = json.dumps(public_replay_history(config)).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", payload)
                 return
             if request_path == "/api/status":
                 payload = json.dumps(status_store.snapshot()).encode("utf-8")
@@ -2195,6 +4112,22 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     self._send(400, "application/json; charset=utf-8", body)
                 return
 
+            if request_path == "/api/replay-history/clear":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = self.rfile.read(length).decode("utf-8")
+                    payload = json.loads(body or "{}")
+                    raw_symbol = payload.get("symbol")
+                    symbol = str(raw_symbol).strip().upper() if raw_symbol is not None else None
+                    if symbol in ("", "__ALL__", "ALL", "GESAMT"):
+                        symbol = None
+                    result = clear_replay_history(config, symbol)
+                    self._send(200, "application/json; charset=utf-8", json.dumps(result).encode("utf-8"))
+                except Exception as exc:
+                    body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
+                    self._send(400, "application/json; charset=utf-8", body)
+                return
+
             if request_path == "/api/env-settings":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
@@ -2225,6 +4158,25 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     current["config"] = public_config(config)
                     status_store.update(current)
                     self._send(200, "application/json; charset=utf-8", json.dumps(existing).encode("utf-8"))
+                except Exception as exc:
+                    body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
+                    self._send(400, "application/json; charset=utf-8", body)
+                return
+
+            if request_path == "/api/replay-rule-weights":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = self.rfile.read(length).decode("utf-8")
+                    payload = json.loads(body or "{}")
+                    result = save_replay_rule_weights(
+                        config,
+                        payload.get("rules", []),
+                        bool(payload.get("enabled", True)),
+                    )
+                    current = status_store.snapshot()
+                    current["config"] = result
+                    status_store.update(current)
+                    self._send(200, "application/json; charset=utf-8", json.dumps(result).encode("utf-8"))
                 except Exception as exc:
                     body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
                     self._send(400, "application/json; charset=utf-8", body)

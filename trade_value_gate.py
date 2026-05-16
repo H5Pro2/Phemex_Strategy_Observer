@@ -74,7 +74,14 @@ class TradeValueGate:
         # --------------------------------------------------
         # MAX SL DISTANZ
         # --------------------------------------------------
-        max_sl_fraction = float(self.config.get("max_sl_distance_fraction", 0.0))
+        symbol = entry_result.get("symbol")
+        max_sl_by_symbol = self.config.get("max_sl_distance_fraction_by_symbol", {}) or {}
+        symbol_max_sl = max_sl_by_symbol.get(symbol) if symbol and isinstance(max_sl_by_symbol, dict) else None
+        max_sl_fraction = float(
+            symbol_max_sl
+            if symbol_max_sl is not None
+            else self.config.get("max_sl_distance_fraction", 0.0)
+        )
         max_sl_distance = entry * max_sl_fraction
 
         if max_sl_fraction > 0 and risk > max_sl_distance:
@@ -108,7 +115,6 @@ class TradeValueGate:
             quantity = float(notional) / entry
         if quantity is not None and quantity > 0:
             fee_rate = float(self.config.get("estimated_taker_fee_rate", 0.0006))
-            symbol = entry_result.get("symbol")
             min_profit_by_symbol = self.config.get("min_net_profit_fraction_by_symbol", {}) or {}
             symbol_min_profit = min_profit_by_symbol.get(symbol) if symbol and isinstance(min_profit_by_symbol, dict) else None
             min_net_profit_fraction = float(

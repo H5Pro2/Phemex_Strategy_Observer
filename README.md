@@ -49,6 +49,10 @@ Standard ist:
 
 Die Strategie arbeitet technisch in einem Timeframe. Bei `single_timeframe_mode=true` wird die Bestaetigungs-Zeiteinheit automatisch auf die Signal-Zeiteinheit gesetzt.
 
+## Trading-Agentensystem
+
+Die aktuelle Zielrichtung ist ein Trading-Agentensystem. Jeder Agent bewertet seine eigene Datenquelle eigenstaendig. Der CEO Trader bewertet alle Agentenberichte zusammen. Das Brain lernt aus Paper-Trades, Entry-Logik, Pattern-Kombinationen und Ergebnissen. Eine LL / HH Box ist nur bevorzugte Entry-Zone und keine Pflichtbedingung. Das Economic Gate bleibt die harte Sperre fuer Wirtschaftlichkeit.
+
 ## Loops
 
 Der Bot nutzt zwei getrennte Schleifen:
@@ -65,10 +69,12 @@ Die aktuelle Runtime nutzt kein Legacy-StrategyEngine-Setup mehr.
 Der Ablauf ist:
 
 ```text
-Agenten → Brain / Lernschicht → CEO Trader → Economic Gate → Paper Trade
+Agenten → CEO Trader → Brain / Lernschicht → Economic Gate → Paper Trade
 ```
 
-Die Agenten lesen Indikator- und Kerzendaten. Brain erstellt daraus einen Trade-Kandidaten. CEO kontrolliert Konflikte und Freigabe. Economic Gate bleibt die harte ökonomische Sperre fuer RR, TP/SL-Geometrie, Gebühren und Mindestgewinn.
+Die Agenten lesen Indikator-, Kerzen- und Kontextdaten und liefern eigenstaendige Bewertungen. CEO kontrolliert die Gesamtlage aller Agenten, Konflikte und Blocking-Signale. Brain erzeugt und optimiert daraus den Trade-Kandidaten mit Entry-Logik und Memory. Economic Gate bleibt die harte ökonomische Sperre fuer RR, TP/SL-Geometrie, Gebühren und Mindestgewinn.
+
+Stop-Loss wird wahlweise strukturell oder per ATR berechnet. Der Take-Profit entsteht immer aus dem echten SL-Risiko und dem eingestellten RR. Das Economic Gate kann zusaetzlich eine maximale SL-Entfernung vom Entry in Prozent blockieren.
 
 ## Lernschicht
 

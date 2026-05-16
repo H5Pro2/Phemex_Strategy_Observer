@@ -83,6 +83,9 @@ class IndicatorResult:
     hma_period: int
     sma_period: int
     mfi_period: int
+    macd_fast_period: int
+    macd_slow_period: int
+    macd_signal_period: int
     triple_ema_period: int
     sr_pivot_period: int
     sr_max_levels: int
@@ -102,6 +105,9 @@ class IndicatorResult:
             "hma_period": self.hma_period,
             "sma_period": self.sma_period,
             "mfi_period": self.mfi_period,
+            "macd_fast_period": self.macd_fast_period,
+            "macd_slow_period": self.macd_slow_period,
+            "macd_signal_period": self.macd_signal_period,
             "triple_ema_period": self.triple_ema_period,
             "sr_pivot_period": self.sr_pivot_period,
             "sr_max_levels": self.sr_max_levels,
@@ -246,6 +252,64 @@ def _triple_ema(values: list[float], period: int) -> list[float | None]:
         else:
             result.append((3.0 * one) - (3.0 * two) + three)
     return result
+
+
+def _ema_optional_series(values: list[float | None], period: int) -> list[float | None]:
+    safe_period = max(1, int(period))
+    alpha = 2.0 / (safe_period + 1.0)
+    result: list[float | None] = []
+    ema: float | None = None
+    valid_count = 0
+    for value in values:
+        if value is None:
+            result.append(None)
+            continue
+        valid_count += 1
+        if ema is None:
+            ema = float(value)
+        else:
+            ema = (float(value) * alpha) + (ema * (1.0 - alpha))
+        result.append(ema if valid_count >= safe_period else None)
+    return result
+
+
+def _macd(values: list[float], fast_period: int, slow_period: int, signal_period: int) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    safe_fast = max(1, int(fast_period))
+    safe_slow = max(safe_fast + 1, int(slow_period))
+    safe_signal = max(1, int(signal_period))
+    fast_ema = _ema_series(values, safe_fast)
+    slow_ema = _ema_series(values, safe_slow)
+    macd_values: list[float | None] = []
+    for fast, slow in zip(fast_ema, slow_ema):
+        if fast is None or slow is None:
+            macd_values.append(None)
+        else:
+            macd_values.append(float(fast) - float(slow))
+    signal_values = _ema_optional_series(macd_values, safe_signal)
+    histogram_values: list[float | None] = []
+    for macd_value, signal_value in zip(macd_values, signal_values):
+        if macd_value is None or signal_value is None:
+            histogram_values.append(None)
+        else:
+            histogram_values.append(float(macd_value) - float(signal_value))
+    return macd_values, signal_values, histogram_values
+
+
+def _oscillator_line_from_values(
+    candles: list[Any],
+    values: list[float | None],
+    name: str,
+    label: str,
+    color: str,
+    lookback_start: int = 0,
+) -> IndicatorLine:
+    series: list[SeriesPoint] = []
+    for candle, value in zip(candles, values):
+        timestamp = _timestamp(candle)
+        if value is None or not _in_lookback(timestamp, lookback_start):
+            continue
+        series.append(SeriesPoint(timestamp=timestamp, value=round(float(value), 8)))
+    return IndicatorLine(name=name, label=label, color=color, series=series, pane="oscillator")
 
 
 def _line_from_values(
@@ -473,6 +537,7 @@ def calculate_market_structure_indicator(
     sma_lookback_days: int = 0,
     triple_ema_lookback_days: int = 0,
     mfi_lookback_days: int = 0,
+    macd_lookback_days: int = 0,
     show_swing_labels: bool = True,
     show_bos_choch: bool = True,
     show_boxes: bool = True,
@@ -480,12 +545,16 @@ def calculate_market_structure_indicator(
     show_sma: bool = False,
     show_triple_ema: bool = False,
     show_mfi: bool = False,
+    show_macd: bool = False,
     show_support_resistance: bool = False,
     hma_period: int = 20,
     sma_period: int = 50,
     triple_ema_period: int = 20,
     triple_ema_slow_period: int = 50,
     mfi_period: int = 14,
+    macd_fast_period: int = 12,
+    macd_slow_period: int = 26,
+    macd_signal_period: int = 9,
     sr_pivot_period: int = 10,
     sr_source: str = "High/Low",
     sr_max_pivots: int = 20,
@@ -498,6 +567,9 @@ def calculate_market_structure_indicator(
     triple_ema_color: str = "#d97706",
     triple_ema_slow_color: str = "#2563eb",
     mfi_color: str = "#db2777",
+    macd_color: str = "#0ea5e9",
+    macd_signal_color: str = "#f97316",
+    macd_histogram_color: str = "#64748b",
     sr_support_color: str = "#22c55e",
     sr_resistance_color: str = "#ef4444",
 ) -> IndicatorResult:
@@ -508,6 +580,9 @@ def calculate_market_structure_indicator(
     safe_triple_ema_period = max(1, int(triple_ema_period))
     safe_triple_ema_slow_period = max(1, int(triple_ema_slow_period))
     safe_mfi_period = max(1, int(mfi_period))
+    safe_macd_fast_period = max(1, int(macd_fast_period))
+    safe_macd_slow_period = max(safe_macd_fast_period + 1, int(macd_slow_period))
+    safe_macd_signal_period = max(1, int(macd_signal_period))
     safe_sr_pivot_period = max(4, min(30, int(sr_pivot_period)))
     safe_sr_max_pivots = max(5, min(100, int(sr_max_pivots)))
     safe_sr_channel_width_percent = max(1, int(sr_channel_width_percent))
@@ -534,6 +609,7 @@ def calculate_market_structure_indicator(
     sma_lookback_start = _lookback_start(candles, sma_lookback_days)
     triple_ema_lookback_start = _lookback_start(candles, triple_ema_lookback_days)
     mfi_lookback_start = _lookback_start(candles, mfi_lookback_days)
+    macd_lookback_start = _lookback_start(candles, macd_lookback_days)
 
     for index, candle in enumerate(candles):
         pivot_index = index - safe_swing_size
@@ -677,6 +753,43 @@ def calculate_market_structure_indicator(
                 triple_ema_lookback_start,
             )
         )
+    if show_macd and close_values:
+        macd_values, macd_signal_values, macd_histogram_values = _macd(
+            close_values,
+            safe_macd_fast_period,
+            safe_macd_slow_period,
+            safe_macd_signal_period,
+        )
+        lines.append(
+            _oscillator_line_from_values(
+                candles,
+                macd_values,
+                "MACD",
+                f"MACD {safe_macd_fast_period}/{safe_macd_slow_period}",
+                macd_color,
+                macd_lookback_start,
+            )
+        )
+        lines.append(
+            _oscillator_line_from_values(
+                candles,
+                macd_signal_values,
+                "MACD_SIGNAL",
+                f"MACD Signal {safe_macd_signal_period}",
+                macd_signal_color,
+                macd_lookback_start,
+            )
+        )
+        lines.append(
+            _oscillator_line_from_values(
+                candles,
+                macd_histogram_values,
+                "MACD_HISTOGRAM",
+                "MACD Histogram",
+                macd_histogram_color,
+                macd_lookback_start,
+            )
+        )
     if show_mfi and candles:
         lines.append(
             IndicatorLine(
@@ -713,6 +826,9 @@ def calculate_market_structure_indicator(
         hma_period=safe_hma_period,
         sma_period=safe_sma_period,
         mfi_period=safe_mfi_period,
+        macd_fast_period=safe_macd_fast_period,
+        macd_slow_period=safe_macd_slow_period,
+        macd_signal_period=safe_macd_signal_period,
         triple_ema_period=safe_triple_ema_period,
         sr_pivot_period=safe_sr_pivot_period,
         sr_max_levels=safe_sr_max_levels,
@@ -741,6 +857,7 @@ def build_indicator_response(
     sma_lookback_days: int = 0,
     triple_ema_lookback_days: int = 0,
     mfi_lookback_days: int = 0,
+    macd_lookback_days: int = 0,
     show_swing_labels: bool = True,
     show_bos_choch: bool = True,
     show_boxes: bool = True,
@@ -748,12 +865,16 @@ def build_indicator_response(
     show_sma: bool = False,
     show_triple_ema: bool = False,
     show_mfi: bool = False,
+    show_macd: bool = False,
     show_support_resistance: bool = False,
     hma_period: int = 20,
     sma_period: int = 50,
     triple_ema_period: int = 20,
     triple_ema_slow_period: int = 50,
     mfi_period: int = 14,
+    macd_fast_period: int = 12,
+    macd_slow_period: int = 26,
+    macd_signal_period: int = 9,
     sr_pivot_period: int = 10,
     sr_source: str = "High/Low",
     sr_max_pivots: int = 20,
@@ -766,6 +887,9 @@ def build_indicator_response(
     triple_ema_color: str = "#d97706",
     triple_ema_slow_color: str = "#2563eb",
     mfi_color: str = "#db2777",
+    macd_color: str = "#0ea5e9",
+    macd_signal_color: str = "#f97316",
+    macd_histogram_color: str = "#64748b",
     sr_support_color: str = "#22c55e",
     sr_resistance_color: str = "#ef4444",
 ) -> dict[str, Any]:
@@ -781,6 +905,7 @@ def build_indicator_response(
         sma_lookback_days=sma_lookback_days,
         triple_ema_lookback_days=triple_ema_lookback_days,
         mfi_lookback_days=mfi_lookback_days,
+        macd_lookback_days=macd_lookback_days,
         show_swing_labels=show_swing_labels,
         show_bos_choch=show_bos_choch,
         show_boxes=show_boxes,
@@ -788,12 +913,16 @@ def build_indicator_response(
         show_sma=show_sma,
         show_triple_ema=show_triple_ema,
         show_mfi=show_mfi,
+        show_macd=show_macd,
         show_support_resistance=show_support_resistance,
         hma_period=hma_period,
         sma_period=sma_period,
         triple_ema_period=triple_ema_period,
         triple_ema_slow_period=triple_ema_slow_period,
         mfi_period=mfi_period,
+        macd_fast_period=macd_fast_period,
+        macd_slow_period=macd_slow_period,
+        macd_signal_period=macd_signal_period,
         sr_pivot_period=sr_pivot_period,
         sr_source=sr_source,
         sr_max_pivots=sr_max_pivots,
@@ -806,6 +935,9 @@ def build_indicator_response(
         triple_ema_color=triple_ema_color,
         triple_ema_slow_color=triple_ema_slow_color,
         mfi_color=mfi_color,
+        macd_color=macd_color,
+        macd_signal_color=macd_signal_color,
+        macd_histogram_color=macd_histogram_color,
         sr_support_color=sr_support_color,
         sr_resistance_color=sr_resistance_color,
     )
@@ -820,6 +952,7 @@ def build_indicator_response(
             "show_sma": bool(show_sma),
             "show_triple_ema": bool(show_triple_ema),
             "show_mfi": bool(show_mfi),
+            "show_macd": bool(show_macd),
             "show_support_resistance": bool(show_support_resistance),
             "bos_confirmation": bos_confirmation,
             "bos_choch_lookback_days": max(0, int(bos_choch_lookback_days)),
@@ -829,10 +962,14 @@ def build_indicator_response(
             "sma_lookback_days": max(0, int(sma_lookback_days)),
             "triple_ema_lookback_days": max(0, int(triple_ema_lookback_days)),
             "mfi_lookback_days": max(0, int(mfi_lookback_days)),
+            "macd_lookback_days": max(0, int(macd_lookback_days)),
             "box_extend_candles": max(2, int(box_extend_candles)),
             "sma_period": max(1, int(sma_period)),
             "triple_ema_slow_period": max(1, int(triple_ema_slow_period)),
             "mfi_period": max(1, int(mfi_period)),
+            "macd_fast_period": max(1, int(macd_fast_period)),
+            "macd_slow_period": max(max(1, int(macd_fast_period)) + 1, int(macd_slow_period)),
+            "macd_signal_period": max(1, int(macd_signal_period)),
             "sr_pivot_period": max(4, min(30, int(sr_pivot_period))),
             "sr_source": sr_source if sr_source in ("High/Low", "Close/Open") else "High/Low",
             "sr_max_pivots": max(5, min(100, int(sr_max_pivots))),
@@ -843,6 +980,9 @@ def build_indicator_response(
             "sma_color": sma_color,
             "triple_ema_color": triple_ema_color,
             "mfi_color": mfi_color,
+            "macd_color": macd_color,
+            "macd_signal_color": macd_signal_color,
+            "macd_histogram_color": macd_histogram_color,
             "sr_support_color": sr_support_color,
             "sr_resistance_color": sr_resistance_color,
         },
