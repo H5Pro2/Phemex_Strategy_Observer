@@ -156,6 +156,8 @@ API-Daten gehoeren nur in `.env`.
 
 Fuer Public-Klines werden keine privaten Orderrechte benoetigt.
 
+`config.json` ist absichtlich nicht versioniert. Sie muss lokal aus `config.example.json` erstellt werden.
+
 # --------------------------------------------------
 # Start
 # --------------------------------------------------
@@ -178,6 +180,18 @@ Einmaliger Scan:
 python .\phemex_strategy_observer.py --config .\config.json --once
 ```
 
+Wenn `config.json` fehlt:
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+Wenn `.env` fehlt:
+
+```powershell
+Copy-Item .env.example .env
+```
+
 # --------------------------------------------------
 # Konfiguration
 # --------------------------------------------------
@@ -185,10 +199,10 @@ python .\phemex_strategy_observer.py --config .\config.json --once
 Wichtige Dateien:
 
 - `config.example.json` Vorlage fuer Konfiguration
-- `config.json` lokale Arbeitskonfiguration
+- `config.json` lokale Arbeitskonfiguration, nicht versioniert
 - `assets.txt` editierbare Asset-Liste
 - `.env.example` Vorlage fuer API-Werte
-- `.env` lokale private API-Werte
+- `.env` lokale private API-Werte, nicht versioniert
 
 # --------------------------------------------------
 # Laufzeitdaten
@@ -201,6 +215,27 @@ Wichtige Dateien:
 - `data/learning_memory.json`
 - `data/observer_state.json`
 - `data/runtime_status.json`
+
+Diese Dateien sind Laufzeitdaten und werden nicht versioniert.
+
+# --------------------------------------------------
+# Repository-Regeln
+# --------------------------------------------------
+
+Versioniert werden:
+
+- Quellcode
+- Vorlagen
+- Dokumentation
+- statische Assets
+
+Nicht versioniert werden:
+
+- `.env`
+- `config.json`
+- `data/*.json`
+- lokale Exporte
+- Logs
 
 # --------------------------------------------------
 # Projekt-Dokumentation
