@@ -75,6 +75,99 @@ Blocking ist bewusst zu setzen.
 Ein deaktivierter oder fehlender Indikator darf nicht automatisch die komplette Trading-Logik neutralisieren.
 
 # --------------------------------------------------
+# Agenten-Rollen
+# --------------------------------------------------
+
+Agenten werden nach Funktion gruppiert.
+
+## Struktur
+
+Struktur-Agenten lesen Marktstruktur, Zonen und Preisreaktionen.
+
+Dazu gehoeren:
+
+- BOS / CHoCH Agent
+- LL / HH Box Agent
+- Support / Resistance Agent
+- HH / LH / HL / LL Agent
+- Breakout / Fakeout Agent
+
+## Momentum
+
+Momentum-Agenten lesen Trendfolge, Indikatorrichtung und Richtungsbestaetigung.
+
+Dazu gehoeren:
+
+- HMA Agent
+- SMA Agent
+- Triple EMA Agent
+- MACD Agent
+- MFI Agent
+- RSI Agent
+- VWAP Agent
+
+## Kontext
+
+Kontext-Agenten lesen Zusatzumgebung, aber entscheiden nicht hart.
+
+Dazu gehoeren:
+
+- Volume Agent
+
+Kontext darf Bias verstaerken oder abschwaechen, aber nicht allein einen Trade erzeugen.
+
+## Risiko
+
+Risiko-Agenten lesen harte Sperren, aktive Trades, Korrelationen und Value-Gate-Kontext.
+
+Dazu gehoeren:
+
+- Volatility Regime Agent
+- Risk Agent
+
+Risiko-Agenten duerfen blockieren, wenn eine harte Regel verletzt ist.
+
+## Entscheidung
+
+Entscheidungs-Agenten bewerten keine Kerzen direkt.
+
+Dazu gehoeren:
+
+- CEO Agent
+- Brain / Lernschicht
+- optionale lokale Audit-Schicht
+
+Entscheidungs-Agenten duerfen keine Preislogik ersetzen.
+
+# --------------------------------------------------
+# Agenten-Qualitaet
+# --------------------------------------------------
+
+Jeder Agent bekommt eine Qualitaetsstufe.
+
+Erlaubte Stufen:
+
+- `STRONG`
+- `OK`
+- `WEAK`
+- `OFFLINE`
+- `BLOCK`
+
+Bedeutung:
+
+- `STRONG`: Signal ist richtungsrelevant und gut nutzbar.
+- `OK`: Signal ist nutzbar, aber nicht stark genug als alleiniger Treiber.
+- `WEAK`: Signal ist schwach und darf nur gering gewichtet werden.
+- `OFFLINE`: Agent ist deaktiviert oder hat keine Daten.
+- `BLOCK`: Agent meldet eine harte Blockade.
+
+Offline-Agenten duerfen den CEO nicht neutralisieren.
+
+Weak-Agenten duerfen den CEO nicht dominieren.
+
+Blocking-Agenten muessen im CEO sichtbar bleiben.
+
+# --------------------------------------------------
 # CEO Trader
 # --------------------------------------------------
 
@@ -84,6 +177,7 @@ CEO prueft:
 - Agenten-Konflikte
 - Blocking-Agenten
 - Richtungskonsens
+- Rollen-Konsens
 - Mindestscore
 - Mindest-Alignment
 - Trade-Plan vorhanden ja/nein
@@ -91,6 +185,10 @@ CEO prueft:
 CEO erzeugt keine eigene Preislogik.
 
 CEO darf einen LONG- oder SHORT-Bias anzeigen, auch wenn noch kein Trade-Kandidat freigegeben ist.
+
+CEO soll Struktur und Momentum staerker gewichten als Kontext.
+
+CEO soll Risiko separat ausweisen und nicht mit Momentum vermischen.
 
 # --------------------------------------------------
 # Brain / Lernschicht
@@ -142,7 +240,7 @@ Es prueft:
 - Gebuehren
 - Positionsgroesse
 
-Kein Agent, kein CEO und kein LLM darf das Economic Gate umgehen.
+Kein Agent, kein CEO und keine Audit-Schicht darf das Economic Gate umgehen.
 
 # --------------------------------------------------
 # Live Trading
