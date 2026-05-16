@@ -20,6 +20,14 @@ if not exist "requirements.txt" (
   exit /b 1
 )
 
+where python >nul 2>nul
+if errorlevel 1 (
+  echo FEHLER: Python wurde nicht gefunden.
+  echo Bitte Python installieren und erneut starten.
+  pause
+  exit /b 1
+)
+
 if not exist "config.json" (
   if exist "config.example.json" (
     echo HINWEIS: config.json fehlt. Erstelle lokale config.json aus config.example.json.
@@ -47,7 +55,7 @@ if not exist "data" (
 )
 
 echo --------------------------------------------------
-echo Installiere/prüfe Python-Abhaengigkeiten
+echo Installiere/pruefe Python-Abhaengigkeiten
 echo --------------------------------------------------
 python -m pip install -r requirements.txt
 if errorlevel 1 (
@@ -60,5 +68,10 @@ echo --------------------------------------------------
 echo Starte Dashboard
 echo --------------------------------------------------
 python phemex_strategy_observer.py --config config.json --web
+if errorlevel 1 (
+  echo FEHLER: Bot wurde mit Fehler beendet.
+  pause
+  exit /b 1
+)
 
 pause
