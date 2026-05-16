@@ -48,6 +48,46 @@ Bedeutung:
 - Economic Gate bleibt harte wirtschaftliche Sperre.
 - PaperBroker fuehrt nur Paper-Trades aus.
 
+## 1.3 Repository-Stand
+
+Repository-Regeln wurden bereinigt.
+
+Versioniert werden:
+
+- Quellcode
+- Vorlagen
+- Dokumentation
+- statische Assets
+- `data/.gitkeep`
+
+Nicht versioniert werden:
+
+- `.env`
+- `config.json`
+- `data/*.json`
+- lokale Exporte
+- Logs
+
+Lokale Arbeitsdateien werden aus Vorlagen erzeugt.
+
+## 1.4 Start-Stand
+
+Vorhandene Startwege:
+
+- `start_bot.ps1`
+- `start_bot.bat`
+- manueller Python-Start
+
+Die Startdateien pruefen:
+
+- Python vorhanden
+- `requirements.txt` vorhanden
+- `config.json` vorhanden oder aus Vorlage erstellbar
+- `.env` vorhanden oder aus Vorlage erstellbar
+- `data`-Ordner vorhanden oder erstellbar
+- Python-Abhaengigkeiten installierbar
+- Bot-Start ohne Fehler
+
 # --------------------------------------------------
 # 2. Zielbild
 # --------------------------------------------------
@@ -301,12 +341,20 @@ Status:
 
 - umgesetzt
 
-Ziel:
+Umgesetzt:
 
-- README auf Agentensystem ausrichten
-- Bauplan provider-neutral machen
-- Ollama-Fokus entfernen
-- Sicherheitsdateien absichern
+- README auf Agentensystem ausgerichtet
+- Bauplan provider-neutral gemacht
+- Ollama-Fokus entfernt
+- `BAUPLAN_LLM_OLLAMA.md` durch `BAUPLAN.md` ersetzt
+- `.env` aus Repository entfernt
+- `.gitignore` ergaenzt
+- `config.json` aus Repository entfernt
+- generierte `data/*.json` aus Repository entfernt
+- `data/.gitkeep` hinzugefuegt
+- `start_bot.bat` erweitert
+- `start_bot.ps1` hinzugefuegt
+- README um Startdateien erweitert
 
 ## Abschnitt 2: Agentenrollen schaerfen
 
@@ -357,9 +405,9 @@ Ziel:
 # 7. Offene Punkte
 # --------------------------------------------------
 
+- direkte Python-Startpruefung bei fehlender `config.json` verbessern
 - Agenten-Gewichtung weiter vereinheitlichen
 - CEO-Entscheidung besser visualisieren
 - Replay-Regeln robuster auswerten
 - Dashboard-Design weiter komprimieren
 - Chart-Settings getrennt nach Kerzenkoerper und Docht pruefen
-- Laufzeitdaten aus Repository fernhalten
