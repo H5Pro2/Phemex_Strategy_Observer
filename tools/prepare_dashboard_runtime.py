@@ -79,6 +79,7 @@ def prepare_dashboard_patches() -> list[str]:
         (root / "ui" / "patches" / "dashboard_chart_pane_patch.js", "dashboard_chart_pane_patch.js"),
         (root / "ui" / "patches" / "dashboard_kline_native_indicators_patch.js", "dashboard_kline_native_indicators_patch.js"),
         (root / "ui" / "patches" / "dashboard_all_agent_indicators_patch.js", "dashboard_all_agent_indicators_patch.js"),
+        (root / "ui" / "patches" / "dashboard_direct_agent_chart_view_fix_patch.js", "dashboard_direct_agent_chart_view_fix_patch.js"),
         (root / "ui" / "patches" / "dashboard_agent_setup_cleanup_patch.js", "dashboard_agent_setup_cleanup_patch.js"),
         (root / "ui" / "patches" / "dashboard_settings_layout_patch.js", "dashboard_settings_layout_patch.js"),
         (root / "ui" / "patches" / "dashboard_settings_tabs_patch.js", "dashboard_settings_tabs_patch.js"),
