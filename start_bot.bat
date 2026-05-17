@@ -90,6 +90,18 @@ if exist "check_brain_replay_enhancements.py" (
   )
 )
 
+if exist "check_brain_dashboard_enhancements.py" (
+  echo --------------------------------------------------
+  echo Pruefe Brain Dashboard Enhancements
+  echo --------------------------------------------------
+  python check_brain_dashboard_enhancements.py
+  if errorlevel 1 (
+    echo FEHLER: Brain Dashboard Enhancements sind ungueltig.
+    pause
+    exit /b 1
+  )
+)
+
 echo --------------------------------------------------
 echo Installiere/pruefe Python-Abhaengigkeiten
 echo --------------------------------------------------
