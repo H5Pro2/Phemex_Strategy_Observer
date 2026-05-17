@@ -5,10 +5,11 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-agent-setup-stable-v3';
+  const PATCH_VERSION = '2026-05-17-agent-setup-stable-v4-chart-capable-direct';
 
   function installStyles() {
-    if (document.getElementById('agent-setup-cleanup-style')) return;
+    const oldStyle = document.getElementById('agent-setup-cleanup-style');
+    if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
     const style = document.createElement('style');
     style.id = 'agent-setup-cleanup-style';
     style.textContent = `
@@ -52,7 +53,7 @@
       #agentSetupView .agentDirectGroup[data-agent-section="rsi"] .label.fullWidth::after,
       #agentSetupView .agentDirectGroup[data-agent-section="vwap"] .label.fullWidth::after,
       #agentSetupView .agentDirectGroup[data-agent-section="volume"] .label.fullWidth::after {
-        content:' · Chart-Darstellung aktiv';
+        content:' · wird im Chart View angezeigt';
         color:#67e8f9;
       }
       #agentSetupView .agentDirectGroup[data-agent-section="breakout_fakeout"] .label.fullWidth::after {
@@ -69,17 +70,17 @@
   }
 
   function renameDirectHeading() {
-    const container = document.getElementById('agentSettingsGroups');
-    if (!container) return;
-    container.querySelectorAll(':scope > .settingsGroup').forEach(block => {
+    const view = document.getElementById('agentSetupView');
+    if (!view) return;
+    view.querySelectorAll('.settingsGroup').forEach(block => {
       const title = block.querySelector(':scope > h3');
       const label = block.querySelector(':scope > .label');
       if (!title) return;
       const text = String(title.textContent || '').trim();
-      if (text !== 'Direkte Agenten ohne Chart-Indikator') return;
-      title.textContent = 'Agenten ohne eigene Hauptchart-Linie';
+      if (text !== 'Direkte Agenten ohne Chart-Indikator' && text !== 'Agenten ohne eigene Hauptchart-Linie') return;
+      title.textContent = 'Direkte Agenten / Chart View';
       if (label) {
-        label.textContent = 'Chart-Indikatoren bleiben sichtbar markiert. Risk und Regime bleiben reine Bewertungsagenten.';
+        label.textContent = 'RSI, VWAP und Volume werden im Chart View angezeigt. Breakout/Fakeout, Volatility und Risk bleiben reine Bewertungsagenten.';
       }
     });
   }
