@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v1';
+  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v2-layout-stable';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
 
@@ -141,6 +141,42 @@
     return points;
   }
 
+  function directPaneCount() {
+    let count = 0;
+    if (boolConfig('agent_rsi_enabled', false) || boolConfig('indicator_show_rsi', false)) count += 1;
+    if (boolConfig('agent_volume_enabled', false) || boolConfig('indicator_show_volume', false)) count += 1;
+    return count;
+  }
+
+  function nativePaneCount() {
+    let count = 0;
+    if (boolConfig('agent_macd_enabled', false) || boolConfig('indicator_show_macd', false)) count += 1;
+    if (boolConfig('agent_mfi_enabled', false) || boolConfig('indicator_show_mfi', false)) count += 1;
+    return count;
+  }
+
+  function applyChartHeight() {
+    const chartEl = document.getElementById('klineChart');
+    const wrap = chartEl?.closest('.chartCanvasWrap');
+    if (!chartEl || !wrap) return;
+    const paneCount = directPaneCount() + nativePaneCount();
+    const height = Math.max(760, Math.min(1220, 620 + paneCount * 145));
+    wrap.style.height = `${height}px`;
+    wrap.style.minHeight = `${height}px`;
+    chartEl.style.height = `${height}px`;
+    chartEl.style.minHeight = `${height}px`;
+    document.body.dataset.directAgentChartHeight = String(height);
+    window.setTimeout(() => {
+      try {
+        if (typeof window.resizeKlineChart === 'function') window.resizeKlineChart();
+      } catch (_) {}
+      try {
+        const chart = chartInstance();
+        if (chart && typeof chart.resize === 'function') chart.resize();
+      } catch (_) {}
+    }, 80);
+  }
+
   function ensureDirectAgentChartView(candles) {
     const chart = chartInstance();
     if (!chart) return;
@@ -162,6 +198,8 @@
       }
     }
 
+    applyChartHeight();
+
     const status = document.getElementById('chartPluginStatus');
     if (status) {
       const base = Object.keys(window.__botNativeIndicators || {}).filter(key => window.__botNativeIndicators[key]);
@@ -181,48 +219,76 @@
       if (!title || !/Direkte Agenten|Agenten ohne eigene Hauptchart-Linie/i.test(titleText)) return;
       title.textContent = 'Direkte Agenten / Chart View';
       if (label) {
-        label.textContent = 'RSI, VWAP und Volume besitzen jetzt Chart-View-Funktion. Breakout/Fakeout, Volatility und Risk bleiben Bewertungsagenten ohne eigene Preislinie.';
+        label.textContent = 'RSI, VWAP und Volume besitzen Chart-View-Funktion. Breakout/Fakeout, Volatility und Risk bleiben reine Bewertungsagenten ohne eigenes Chart-Pane.';
       }
     });
   }
 
+  function injectLayoutStyles() {
+    const oldStyle = document.getElementById('direct-agent-chart-view-layout-style');
+    if (oldStyle) oldStyle.remove();
+    const style = document.createElement('style');
+    style.id = 'direct-agent-chart-view-layout-style';
+    style.textContent = `
+      #chartView .chartCanvasWrap {
+        min-height:760px !important;
+        height:760px;
+        overflow:hidden !important;
+      }
+      #chartView #klineChart {
+        min-height:760px !important;
+        height:760px;
+      }
+      #agentSetupView .configModalBody {
+        align-items:start !important;
+        grid-auto-flow:row dense !important;
+      }
+      #agentSetupView .settingsGroup,
+      #agentSetupView .agentIndicatorGroup,
+      #agentSetupView .agentDirectGroup,
+      #agentSetupView .agentUtilityGroup {
+        align-content:start !important;
+        contain:layout style !important;
+      }
+      #agentSetupView .settingsGroupGrid {
+        align-items:start !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   function patchDrawChart() {
-    if (window.drawChart?.__directAgentChartViewFixPatched) return;
+    if (window.drawChart?.__directAgentChartViewFixPatchedV2) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedDirectAgentChartViewDrawChart(candles, overlay, indicatorData) {
+      clearDirectAgentChartView();
       const result = originalDrawChart.apply(this, arguments);
       ensureDirectAgentChartView(candles || []);
       renameDirectAgentSetupText();
       return result;
     };
-    window.drawChart.__directAgentChartViewFixPatched = true;
+    window.drawChart.__directAgentChartViewFixPatchedV2 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__directAgentChartViewFixClearPatched) return;
+    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV2) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedDirectAgentChartViewClearChart() {
       clearDirectAgentChartView();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__directAgentChartViewFixClearPatched = true;
-  }
-
-  function installObserver() {
-    const body = document.body;
-    if (!body || body.dataset.directAgentChartViewObserver === '1') return;
-    const observer = new MutationObserver(renameDirectAgentSetupText);
-    observer.observe(body, { childList: true, subtree: true });
-    body.dataset.directAgentChartViewObserver = '1';
+    window.clearKlineChart.__directAgentChartViewFixClearPatchedV2 = true;
   }
 
   function install() {
+    injectLayoutStyles();
     patchDrawChart();
     patchClearChart();
     renameDirectAgentSetupText();
-    installObserver();
+    window.setTimeout(renameDirectAgentSetupText, 250);
+    window.setTimeout(renameDirectAgentSetupText, 1000);
     document.body.dataset.directAgentChartViewFixPatch = PATCH_VERSION;
   }
 
