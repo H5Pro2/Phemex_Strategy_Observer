@@ -86,6 +86,7 @@ Die Startdateien pruefen:
 - `.env` vorhanden oder aus Vorlage erstellbar
 - `data`-Ordner vorhanden oder erstellbar
 - Dashboard Runtime vorbereitet
+- Dashboard-Patch-Version verifiziert
 - Agenten-Rollenvertrag gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
@@ -109,6 +110,26 @@ Technische Rollen:
 - Weitere
 
 Die Rollenpruefung laeuft vor dem Start ueber `start_bot.ps1` und `start_bot.bat`.
+
+## 1.6 Dashboard-Optik-Stand
+
+Aktuelle Dashboard-Patch-Version:
+
+- `role-ui-v3-tech`
+
+Umgesetzt:
+
+- professionelle technische Darstellung
+- kompaktere Agentenkarten
+- kleinere Schriftgroessen
+- Monospace-Werte fuer technische Kennzahlen
+- weniger Rundungen
+- reduzierte Badge-Optik
+- klare Statuskanten fuer LONG / SHORT / NEUTRAL / Konflikt
+- kompaktere CEO-, Prioritaets- und Konfliktbereiche
+- mobile Darstellung erhalten
+
+`prepare_dashboard_runtime.py` ersetzt vorhandene Patch-Bloecke und prueft, ob die aktuelle Patch-Version eingebettet wurde.
 
 # --------------------------------------------------
 # 2. Zielbild
@@ -392,11 +413,12 @@ Umgesetzt:
 - Risk/Volatility getrennt von Momentum bewertet
 - lokale Rollenpruefung ergaenzt
 - Dashboard-Rollenpatch vorbereitet
+- technische Dashboard-Rollenoptik umgesetzt
 
 Offen:
 
-- Dashboard-Agentenkarten weiter komprimieren
-- Rollenanzeige visuell verbessern
+- Dashboard-Agentenkarten nach echtem Test weiter feinjustieren
+- Rollenanzeige in bestehende Haupt-HTML dauerhaft integrieren
 
 ## Abschnitt 3: CEO-Bewertung verbessern
 
@@ -411,11 +433,12 @@ Umgesetzt:
 - Kontext niedriger gewichtet
 - Risk separat ausgewiesen
 - BLOCKED-Verhalten pruefbar gemacht
+- CEO-Darstellung technisch kompakter vorbereitet
 
 Offen:
 
-- CEO-Entscheidung im Dashboard klarer visualisieren
-- WAIT / BLOCKED / BIAS optisch besser trennen
+- CEO-Entscheidung im Dashboard nach Live-Test weiter schaerfen
+- WAIT / BLOCKED / BIAS optisch final trennen
 
 ## Abschnitt 4: Brain verbessern
 
@@ -437,21 +460,32 @@ Ziel:
 
 ## Abschnitt 6: Dashboard verbessern
 
-Ziel:
+Status:
 
-- Layout konsolidieren
-- Bedienung vereinfachen
+- teilweise umgesetzt
+
+Umgesetzt:
+
+- technische Agentenoptik vorbereitet
+- kompaktere Agentenkarten
+- kompaktere CEO-/Prioritaetsbereiche
+- kompaktere Konfliktmatrix
+- mobile Darstellung beruecksichtigt
+
+Offen:
+
+- Hauptlayout weiter konsolidieren
+- Einstellungen uebersichtlicher gruppieren
 - Popups reduzieren
-- wichtige Entscheidungen nach oben holen
-- mobile/kleine Ansicht verbessern
+- wichtige Entscheidungen noch staerker nach oben holen
 
 # --------------------------------------------------
 # 7. Offene Punkte
 # --------------------------------------------------
 
 - direkte Python-Startpruefung bei fehlender `config.json` verbessern
-- Dashboard-Agentenkarten weiter komprimieren
+- Dashboard-Agentenkarten nach echtem Test feinjustieren
 - CEO-Entscheidung besser visualisieren
 - Replay-Regeln robuster auswerten
-- Dashboard-Design weiter komprimieren
+- Dashboard-Design weiter konsolidieren
 - Chart-Settings getrennt nach Kerzenkoerper und Docht pruefen
