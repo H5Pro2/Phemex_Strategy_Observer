@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v3-setup-grid';
+  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v4-sticky-chart-scroll';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
 
@@ -160,11 +160,14 @@
     const wrap = chartEl?.closest('.chartCanvasWrap');
     if (!chartEl || !wrap) return;
     const paneCount = directPaneCount() + nativePaneCount();
-    const height = Math.max(860, Math.min(1320, 700 + paneCount * 150));
+    const height = Math.max(980, Math.min(1680, 760 + paneCount * 185));
     wrap.style.height = `${height}px`;
     wrap.style.minHeight = `${height}px`;
+    wrap.style.maxHeight = 'none';
+    wrap.style.overflow = 'visible';
     chartEl.style.height = `${height}px`;
     chartEl.style.minHeight = `${height}px`;
+    chartEl.style.maxHeight = 'none';
     document.body.dataset.directAgentChartHeight = String(height);
     window.setTimeout(() => {
       try {
@@ -256,9 +259,10 @@
       main { max-width:none !important; width:100% !important; }
       #chartView, #agentSetupView { width:100% !important; max-width:none !important; }
       #chartView > .card, #agentSetupView > .card { width:100% !important; max-width:none !important; overflow:visible !important; }
-      #chartView .chartCanvasWrap { width:100% !important; min-height:860px !important; height:860px; overflow:hidden !important; }
-      #chartView #klineChart { width:100% !important; min-height:860px !important; height:860px; }
-      #agentSetupView .configModalBody { display:grid !important; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) !important; gap:16px !important; align-items:start !important; grid-auto-flow:row dense !important; overflow:visible !important; padding:16px 14px !important; }
+      #chartView .chartCanvasWrap { width:100% !important; min-height:980px !important; height:980px; max-height:none !important; overflow:visible !important; }
+      #chartView #klineChart { width:100% !important; min-height:980px !important; height:980px; max-height:none !important; }
+      #chartView #chartMeta { clear:both !important; margin-top:14px !important; }
+      #agentSetupView .configModalBody { display:grid !important; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) !important; gap:16px !important; align-items:start !important; grid-auto-flow:row dense !important; overflow:visible !important; padding:16px 14px 84px !important; }
       #agentSetupView .settingsTabsBar { grid-column:1 / -1 !important; width:100% !important; display:flex !important; flex-wrap:wrap !important; align-items:center !important; gap:8px !important; margin:0 0 10px !important; padding:0 0 14px !important; border-bottom:1px solid var(--line) !important; }
       #agentSetupView .settingsTabButton { min-width:128px !important; justify-content:center !important; }
       #agentSetupView .settingsGroup:not([data-agent-section]), #agentSetupView .agentSetupDirectHeader { grid-column:1 / -1 !important; }
@@ -270,13 +274,15 @@
       #agentSetupView .agentDirectGroup[data-chart-view="false"] .agentChartModeBadge { color:#fdba74 !important; border-color:#c2410c !important; background:rgba(194,65,12,.14) !important; }
       #agentSetupView .settingsGroup, #agentSetupView .agentIndicatorGroup, #agentSetupView .agentDirectGroup, #agentSetupView .agentUtilityGroup { min-height:0 !important; height:auto !important; align-content:start !important; contain:layout style !important; }
       #agentSetupView .settingsGroupGrid { align-items:start !important; }
-      @media (max-width:900px) { main { padding:16px 12px 32px !important; } #agentSetupView .configModalBody { grid-template-columns:1fr !important; padding:12px 0 !important; } #agentSetupView .settingsTabButton { flex:1 1 140px !important; } }
+      #agentSetupView .modalActions { position:sticky !important; bottom:0 !important; z-index:50 !important; display:flex !important; justify-content:flex-end !important; gap:10px !important; margin:0 -16px -16px !important; padding:16px 24px !important; border-top:1px solid var(--line) !important; background:linear-gradient(180deg, rgba(17,24,39,.90), rgba(17,24,39,.98)) !important; backdrop-filter:blur(8px) !important; }
+      #agentSetupView .modalActions #saveAgentSettings { min-width:230px !important; box-shadow:0 -6px 20px rgba(0,0,0,.18) !important; }
+      @media (max-width:900px) { main { padding:16px 12px 32px !important; } #agentSetupView .configModalBody { grid-template-columns:1fr !important; padding:12px 0 90px !important; } #agentSetupView .settingsTabButton { flex:1 1 140px !important; } #agentSetupView .modalActions { margin:0 -16px -16px !important; padding:12px 14px !important; } #agentSetupView .modalActions #saveAgentSettings { width:100% !important; } }
     `;
     document.head.appendChild(style);
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__directAgentChartViewFixPatchedV3) return;
+    if (window.drawChart?.__directAgentChartViewFixPatchedV4) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedDirectAgentChartViewDrawChart(candles, overlay, indicatorData) {
@@ -286,18 +292,18 @@
       renameDirectAgentSetupText();
       return result;
     };
-    window.drawChart.__directAgentChartViewFixPatchedV3 = true;
+    window.drawChart.__directAgentChartViewFixPatchedV4 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV3) return;
+    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV4) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedDirectAgentChartViewClearChart() {
       clearDirectAgentChartView();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__directAgentChartViewFixClearPatchedV3 = true;
+    window.clearKlineChart.__directAgentChartViewFixClearPatchedV4 = true;
   }
 
   function install() {
