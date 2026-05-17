@@ -13,3 +13,10 @@ try:
     apply_brain_replay_enhancement_patch()
 except Exception:
     pass
+
+try:
+    import brain_dashboard_enhancements
+
+    brain_dashboard_enhancements.install()
+except Exception:
+    pass
