@@ -5,9 +5,10 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v4-sticky-chart-scroll';
+  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v5-separate-volume-pane';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
+  let directVolumeRegistered = false;
 
   function runtimeConfig() {
     try {
@@ -53,6 +54,10 @@
     return null;
   }
 
+  function apiInstance() {
+    return window.klinecharts || window.KLineCharts || window.KLineChart || null;
+  }
+
   function candleNumber(candle, key) {
     const number = Number(candle?.[key]);
     return Number.isFinite(number) ? number : 0;
@@ -62,6 +67,26 @@
     const number = Number(candle?.timestamp ?? candle?.time ?? candle?.openTime);
     if (!Number.isFinite(number)) return null;
     return number > 1000000000000 ? Math.floor(number / 1000) : number;
+  }
+
+  function registerDirectVolumeIndicator() {
+    if (directVolumeRegistered) return;
+    const api = apiInstance();
+    if (!api || typeof api.registerIndicator !== 'function') return;
+    try {
+      api.registerIndicator({
+        name: 'BOT_VOLUME_DIRECT',
+        shortName: 'Volume',
+        series: 'volume',
+        precision: 0,
+        calcParams: [],
+        figures: [{ key: 'volume', title: 'VOLUME: ', type: 'bar' }],
+        calc: dataList => dataList.map(k => ({ volume: Number(k.volume || 0) }))
+      });
+      directVolumeRegistered = true;
+    } catch (_) {
+      directVolumeRegistered = true;
+    }
   }
 
   function createIndicatorSafe(storageKey, indicator, paneId, order, height) {
@@ -113,6 +138,15 @@
     if (typeof chart.removeIndicator === 'function') {
       try { chart.removeIndicator(value); } catch (_) {}
     }
+  }
+
+  function removeNativeDirectAgentItems() {
+    const nativeItems = window.__botNativeIndicators || {};
+    ['rsi', 'volume', 'vwap'].forEach(key => {
+      if (!nativeItems[key]) return;
+      removeChartItem(nativeItems[key]);
+      delete nativeItems[key];
+    });
   }
 
   function clearDirectAgentChartView() {
@@ -183,6 +217,7 @@
   function ensureDirectAgentChartView(candles) {
     const chart = chartInstance();
     if (!chart) return;
+    removeNativeDirectAgentItems();
     window.__botDirectAgentChartView = window.__botDirectAgentChartView || {};
 
     if (boolConfig('agent_rsi_enabled', false) || boolConfig('indicator_show_rsi', false)) {
@@ -191,7 +226,8 @@
     }
 
     if (boolConfig('agent_volume_enabled', false) || boolConfig('indicator_show_volume', false)) {
-      createIndicatorSafe('volume', 'VOL', 'bot_direct_volume_pane', 100, 120);
+      registerDirectVolumeIndicator();
+      createIndicatorSafe('volume', { name: 'BOT_VOLUME_DIRECT', id: 'BOT_VOLUME_DIRECT_MAIN' }, 'bot_direct_volume_pane', 100, 130);
     }
 
     if (boolConfig('agent_vwap_enabled', false) || boolConfig('indicator_show_vwap', false)) {
@@ -282,7 +318,7 @@
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__directAgentChartViewFixPatchedV4) return;
+    if (window.drawChart?.__directAgentChartViewFixPatchedV5) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedDirectAgentChartViewDrawChart(candles, overlay, indicatorData) {
@@ -292,18 +328,18 @@
       renameDirectAgentSetupText();
       return result;
     };
-    window.drawChart.__directAgentChartViewFixPatchedV4 = true;
+    window.drawChart.__directAgentChartViewFixPatchedV5 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV4) return;
+    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV5) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedDirectAgentChartViewClearChart() {
       clearDirectAgentChartView();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__directAgentChartViewFixClearPatchedV4 = true;
+    window.clearKlineChart.__directAgentChartViewFixClearPatchedV5 = true;
   }
 
   function install() {
