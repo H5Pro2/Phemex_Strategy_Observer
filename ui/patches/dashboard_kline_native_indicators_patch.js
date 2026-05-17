@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v3-full';
+  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v4-direct-agent-display';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
   let mfiRegistered = false;
@@ -22,6 +22,30 @@
     return window.klinecharts || window.KLineCharts || window.KLineChart || null;
   }
 
+  function configValue(key, fallback = undefined) {
+    if (window.latestConfig && Object.prototype.hasOwnProperty.call(window.latestConfig, key)) return window.latestConfig[key];
+    if (window.latestStatusData?.config && Object.prototype.hasOwnProperty.call(window.latestStatusData.config, key)) return window.latestStatusData.config[key];
+    return fallback;
+  }
+
+  function boolConfig(key, fallback = false) {
+    const value = configValue(key, fallback);
+    if (typeof value === 'boolean') return value;
+    const text = String(value ?? '').trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on', 'aktiv', 'active'].includes(text)) return true;
+    if (['0', 'false', 'no', 'off', 'aus', 'inactive'].includes(text)) return false;
+    return !!fallback;
+  }
+
+  function numberConfig(key, fallback) {
+    const value = Number(configValue(key, fallback));
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function colorConfig(primaryKey, fallbackKey, fallback) {
+    return String(configValue(primaryKey, configValue(fallbackKey, fallback)) || fallback);
+  }
+
   function indicatorNames(indicatorData) {
     return (indicatorData?.lines || []).map(line => String(line?.name || line?.label || '').toUpperCase());
   }
@@ -29,6 +53,26 @@
   function hasIndicatorLine(indicatorData, needle) {
     const text = String(needle || '').toUpperCase();
     return indicatorNames(indicatorData).some(name => name.includes(text));
+  }
+
+  function shouldShowDirectIndicator(indicatorData, lineName, indicatorKey, agentKey, defaultValue = false) {
+    if (hasIndicatorLine(indicatorData, lineName)) return true;
+    const explicitIndicatorValue = configValue(indicatorKey, undefined);
+    if (explicitIndicatorValue !== undefined) return boolConfig(indicatorKey, defaultValue);
+    return boolConfig(agentKey, defaultValue);
+  }
+
+  function candleNumber(candle, key) {
+    const value = candle?.[key];
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function candleTime(candle) {
+    const value = candle?.timestamp ?? candle?.time ?? candle?.openTime;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    return number > 1000000000000 ? Math.floor(number / 1000) : number;
   }
 
   function registerMfiIndicator() {
@@ -108,54 +152,123 @@
     }
   }
 
+  function removeTrackedChartItem(chart, value) {
+    if (!value || value === 'attempted') return;
+    if (typeof value === 'object' && value.type === 'overlay') {
+      if (typeof chart?.removeOverlay === 'function') {
+        try { chart.removeOverlay({ id: value.id }); return; } catch (_) {}
+        try { chart.removeOverlay(value.id); return; } catch (_) {}
+      }
+      return;
+    }
+    if (typeof chart?.removeIndicator === 'function') {
+      try { chart.removeIndicator(value); } catch (_) {}
+    }
+  }
+
   function clearBotIndicators() {
     const chart = chartInstance();
     const active = window.__botNativeIndicators || {};
-    if (!chart || typeof chart.removeIndicator !== 'function') {
+    if (!chart) {
       window.__botNativeIndicators = {};
       return;
     }
-    Object.values(active).forEach(value => {
-      if (!value || value === 'attempted') return;
-      try { chart.removeIndicator(value); } catch (_) {}
-    });
+    Object.values(active).forEach(value => removeTrackedChartItem(chart, value));
     window.__botNativeIndicators = {};
+  }
+
+  function createOverlaySafe(chart, id, points, color) {
+    if (!chart || typeof chart.createOverlay !== 'function' || !points.length) return null;
+    try {
+      chart.createOverlay({
+        name: 'segment',
+        id,
+        points,
+        styles: { line: { color: color || '#94a3b8', size: 1 } }
+      });
+      return { type: 'overlay', id };
+    } catch (_) {
+      return null;
+    }
   }
 
   function addPriceLineFromData(indicatorData, names) {
     const chart = chartInstance();
     if (!chart || typeof chart.createOverlay !== 'function') return 'attempted';
     const lines = (indicatorData?.lines || []).filter(line => names.some(name => String(line?.name || '').toUpperCase().includes(name)));
+    let created = null;
     lines.forEach(line => {
       const points = (line.series || []).map(point => ({ timestamp: point.timestamp, value: point.value })).filter(point => Number.isFinite(Number(point.value)));
       if (!points.length) return;
-      try {
-        chart.createOverlay({ name: 'segment', id: `bot_${String(line.name).toLowerCase()}_line`, points, styles: { line: { color: line.color || '#94a3b8', size: 1 } } });
-      } catch (_) {}
+      const id = `bot_${String(line.name).toLowerCase()}_line`;
+      created = createOverlaySafe(chart, id, points, line.color || '#94a3b8') || created;
     });
-    return lines.length ? 'overlay' : null;
+    return created || null;
   }
 
-  function ensureNativeIndicators(indicatorData) {
+  function vwapPointsFromCandles(candles) {
+    const lookback = Math.max(1, Math.floor(numberConfig('agent_vwap_lookback_candles', numberConfig('indicator_vwap_lookback_candles', 96))));
+    const result = [];
+    const typed = Array.isArray(candles) ? candles : [];
+    for (let index = 0; index < typed.length; index += 1) {
+      const start = Math.max(0, index - lookback + 1);
+      let volumeSum = 0;
+      let weightedSum = 0;
+      for (let pos = start; pos <= index; pos += 1) {
+        const candle = typed[pos];
+        const high = candleNumber(candle, 'high');
+        const low = candleNumber(candle, 'low');
+        const close = candleNumber(candle, 'close');
+        const volume = candleNumber(candle, 'volume');
+        if (volume <= 0) continue;
+        weightedSum += ((high + low + close) / 3) * volume;
+        volumeSum += volume;
+      }
+      const timestamp = candleTime(typed[index]);
+      if (timestamp !== null && volumeSum > 0) {
+        result.push({ timestamp, value: weightedSum / volumeSum });
+      }
+    }
+    return result;
+  }
+
+  function addVwapOverlay(candles, indicatorData) {
+    const fromData = addPriceLineFromData(indicatorData, ['VWAP']);
+    if (fromData) return fromData;
+    const chart = chartInstance();
+    const color = colorConfig('indicator_vwap_color', 'agent_vwap_color', '#14b8a6');
+    const points = vwapPointsFromCandles(candles);
+    return createOverlaySafe(chart, 'bot_vwap_agent_line', points, color) || 'attempted';
+  }
+
+  function ensureNativeIndicators(candles, indicatorData) {
     const chart = chartInstance();
     if (!chart || typeof chart.createIndicator !== 'function') return;
     window.__botNativeIndicators = window.__botNativeIndicators || {};
 
-    if (hasIndicatorLine(indicatorData, 'MACD') && !window.__botNativeIndicators.macd) {
+    const showMacd = hasIndicatorLine(indicatorData, 'MACD');
+    const showMfi = hasIndicatorLine(indicatorData, 'MFI');
+    const showRsi = shouldShowDirectIndicator(indicatorData, 'RSI', 'indicator_show_rsi', 'agent_rsi_enabled', false);
+    const showVolume = shouldShowDirectIndicator(indicatorData, 'VOLUME', 'indicator_show_volume', 'agent_volume_enabled', false);
+    const showVwap = shouldShowDirectIndicator(indicatorData, 'VWAP', 'indicator_show_vwap', 'agent_vwap_enabled', false);
+
+    if (showMacd && !window.__botNativeIndicators.macd) {
       window.__botNativeIndicators.macd = createIndicatorSafe(chart, 'MACD', 'bot_macd_pane', 50, 150) || 'attempted';
     }
-    if (hasIndicatorLine(indicatorData, 'RSI') && !window.__botNativeIndicators.rsi) {
-      window.__botNativeIndicators.rsi = createIndicatorSafe(chart, 'RSI', 'bot_rsi_pane', 60, 130) || 'attempted';
+    if (showRsi && !window.__botNativeIndicators.rsi) {
+      const period = Math.max(1, Math.floor(numberConfig('agent_rsi_period', numberConfig('indicator_rsi_period', 14))));
+      window.__botNativeIndicators.rsi = createIndicatorSafe(chart, { name: 'RSI', calcParams: [period] }, 'bot_rsi_pane', 60, 130) || 'attempted';
     }
-    if (hasIndicatorLine(indicatorData, 'MFI') && !window.__botNativeIndicators.mfi) {
+    if (showMfi && !window.__botNativeIndicators.mfi) {
       registerMfiIndicator();
-      window.__botNativeIndicators.mfi = createIndicatorSafe(chart, { name: 'BOT_MFI', id: 'BOT_MFI_MAIN', calcParams: [14] }, 'bot_mfi_pane', 70, 130) || 'attempted';
+      const period = Math.max(1, Math.floor(numberConfig('agent_mfi_period', numberConfig('indicator_mfi_period', 14))));
+      window.__botNativeIndicators.mfi = createIndicatorSafe(chart, { name: 'BOT_MFI', id: 'BOT_MFI_MAIN', calcParams: [period] }, 'bot_mfi_pane', 70, 130) || 'attempted';
     }
-    if (hasIndicatorLine(indicatorData, 'VOLUME') && !window.__botNativeIndicators.volume) {
+    if (showVolume && !window.__botNativeIndicators.volume) {
       window.__botNativeIndicators.volume = createIndicatorSafe(chart, 'VOL', 'bot_volume_pane', 80, 120) || 'attempted';
     }
-    if (hasIndicatorLine(indicatorData, 'VWAP') && !window.__botNativeIndicators.vwap) {
-      window.__botNativeIndicators.vwap = addPriceLineFromData(indicatorData, ['VWAP']) || 'attempted';
+    if (showVwap && !window.__botNativeIndicators.vwap) {
+      window.__botNativeIndicators.vwap = addVwapOverlay(candles, indicatorData) || 'attempted';
     }
 
     const status = document.getElementById('chartPluginStatus');
@@ -166,27 +279,27 @@
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__nativeIndicatorPatchedV3) return;
+    if (window.drawChart?.__nativeIndicatorPatchedV4) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedNativeIndicatorDrawChart(candles, overlay, indicatorData) {
       clearBotIndicators();
       const result = originalDrawChart.apply(this, arguments);
-      ensureNativeIndicators(indicatorData);
+      ensureNativeIndicators(candles, indicatorData);
       return result;
     };
-    window.drawChart.__nativeIndicatorPatchedV3 = true;
+    window.drawChart.__nativeIndicatorPatchedV4 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__nativeIndicatorClearPatched) return;
+    if (window.clearKlineChart?.__nativeIndicatorClearPatchedV4) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedClearKlineChart() {
       clearBotIndicators();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__nativeIndicatorClearPatched = true;
+    window.clearKlineChart.__nativeIndicatorClearPatchedV4 = true;
   }
 
   function install() {
