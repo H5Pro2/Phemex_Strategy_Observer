@@ -54,11 +54,11 @@ if not exist "data" (
   mkdir "data"
 )
 
-if exist "prepare_dashboard_runtime.py" (
+if exist "tools\prepare_dashboard_runtime.py" (
   echo --------------------------------------------------
   echo Bereite Dashboard Runtime vor
   echo --------------------------------------------------
-  python prepare_dashboard_runtime.py
+  python tools\prepare_dashboard_runtime.py
   if errorlevel 1 (
     echo FEHLER: Dashboard Runtime konnte nicht vorbereitet werden.
     pause
