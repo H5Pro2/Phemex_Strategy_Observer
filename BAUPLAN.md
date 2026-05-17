@@ -88,6 +88,7 @@ Die Startdateien pruefen:
 - Dashboard Runtime vorbereitet
 - Dashboard-Patch-Version verifiziert
 - Agenten-Rollenvertrag gueltig
+- Brain-/Replay-Erweiterung gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
 
@@ -130,6 +131,27 @@ Umgesetzt:
 - mobile Darstellung erhalten
 
 `prepare_dashboard_runtime.py` ersetzt vorhandene Patch-Bloecke und prueft, ob die aktuelle Patch-Version eingebettet wurde.
+
+## 1.7 Brain-/Replay-Stand
+
+Umgesetzt:
+
+- `brain_replay_enhancements.py`
+- `check_brain_replay_enhancements.py`
+- automatische Einbindung ueber `sitecustomize.py`
+- Startpruefung ueber `start_bot.ps1`
+- Startpruefung ueber `start_bot.bat`
+
+Verbessert:
+
+- stabilerer Pattern-Key `v2`
+- rollenbasierter Pattern-Key
+- Memory-Matching auf stabile Pattern-Keys vorbereitet
+- robustere Replay-Regelgewichtung
+- Asset-spezifische Replay-Regeln bevorzugt
+- Edge-Score aus Winrate, AvgR und Profit-Factor
+- Mindestdatenmenge wird staerker abgesichert
+- GOOD/BAD-Regeln werden nicht blind uebernommen
 
 # --------------------------------------------------
 # 2. Zielbild
@@ -442,21 +464,40 @@ Offen:
 
 ## Abschnitt 4: Brain verbessern
 
-Ziel:
+Status:
 
-- Pattern-Key stabilisieren
-- Memory-Matches asset-spezifisch nutzbarer machen
-- Entry-Fallbacks sichtbarer machen
-- Confidence nachvollziehbarer berechnen
+- teilweise umgesetzt
+
+Umgesetzt:
+
+- stabilerer Pattern-Key `v2`
+- rollenbasierter Pattern-Key
+- Memory-Matching auf stabilen Pattern-Key vorbereitet
+- lokale Brain-/Replay-Pruefung ergaenzt
+
+Offen:
+
+- Entry-Fallbacks im Dashboard sichtbarer machen
+- Confidence noch nachvollziehbarer darstellen
 
 ## Abschnitt 5: Replay-Regeln verbessern
 
-Ziel:
+Status:
 
-- Regeln aus Replay-History robuster gewichten
-- Mindestdatenmenge beruecksichtigen
-- Overfitting-Schutz einbauen
-- Asset- und Timeframe-Kontext einbeziehen
+- teilweise umgesetzt
+
+Umgesetzt:
+
+- robustere Replay-Regelgewichtung
+- Asset-Regeln bevorzugt
+- Mindestdatenmenge abgesichert
+- Edge-Score aus Winrate, AvgR und Profit-Factor
+- GOOD/BAD-Regeln werden nicht blind uebernommen
+
+Offen:
+
+- Replay-Regel-Auswertung im Dashboard sichtbarer machen
+- Asset- und Timeframe-Kontext weiter ausbauen
 
 ## Abschnitt 6: Dashboard verbessern
 
@@ -486,6 +527,6 @@ Offen:
 - direkte Python-Startpruefung bei fehlender `config.json` verbessern
 - Dashboard-Agentenkarten nach echtem Test feinjustieren
 - CEO-Entscheidung besser visualisieren
-- Replay-Regeln robuster auswerten
+- Replay-Regeln im Dashboard sichtbarer machen
 - Dashboard-Design weiter konsolidieren
 - Chart-Settings getrennt nach Kerzenkoerper und Docht pruefen
