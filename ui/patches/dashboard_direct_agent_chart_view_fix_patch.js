@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v2-layout-stable';
+  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v3-setup-grid';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
 
@@ -160,7 +160,7 @@
     const wrap = chartEl?.closest('.chartCanvasWrap');
     if (!chartEl || !wrap) return;
     const paneCount = directPaneCount() + nativePaneCount();
-    const height = Math.max(760, Math.min(1220, 620 + paneCount * 145));
+    const height = Math.max(860, Math.min(1320, 700 + paneCount * 150));
     wrap.style.height = `${height}px`;
     wrap.style.minHeight = `${height}px`;
     chartEl.style.height = `${height}px`;
@@ -209,6 +209,27 @@
     }
   }
 
+  function markDirectAgentGroups() {
+    const view = document.getElementById('agentSetupView');
+    const body = view?.querySelector('.configModalBody');
+    if (!view || !body) return;
+    const chartSections = ['rsi', 'vwap', 'volume'];
+    const pureSections = ['breakout_fakeout', 'volatility_regime', 'risk'];
+    chartSections.concat(pureSections).forEach(section => {
+      const group = body.querySelector(`.agentDirectGroup[data-agent-section="${section}"]`);
+      if (!group) return;
+      const isChart = chartSections.includes(section);
+      group.dataset.chartView = isChart ? 'true' : 'false';
+      const grid = group.querySelector('.settingsGroupGrid');
+      if (grid && !grid.querySelector('.agentChartModeBadge')) {
+        const badge = document.createElement('div');
+        badge.className = 'agentChartModeBadge fullWidth';
+        badge.textContent = isChart ? 'Chart View aktivierbar' : 'Nur Bewertung / Risiko';
+        grid.insertBefore(badge, grid.firstChild);
+      }
+    });
+  }
+
   function renameDirectAgentSetupText() {
     const view = document.getElementById('agentSetupView');
     if (!view) return;
@@ -217,11 +238,13 @@
       const label = block.querySelector(':scope > .label');
       const titleText = String(title?.textContent || '').trim();
       if (!title || !/Direkte Agenten|Agenten ohne eigene Hauptchart-Linie/i.test(titleText)) return;
-      title.textContent = 'Direkte Agenten / Chart View';
+      title.textContent = 'Direkte Agenten';
+      block.classList.add('agentSetupDirectHeader');
       if (label) {
-        label.textContent = 'RSI, VWAP und Volume besitzen Chart-View-Funktion. Breakout/Fakeout, Volatility und Risk bleiben reine Bewertungsagenten ohne eigenes Chart-Pane.';
+        label.textContent = 'Chartfähig: RSI, VWAP, Volume. Nur Bewertung: Breakout/Fakeout, Volatility Regime, Risk.';
       }
     });
+    markDirectAgentGroups();
   }
 
   function injectLayoutStyles() {
@@ -230,35 +253,30 @@
     const style = document.createElement('style');
     style.id = 'direct-agent-chart-view-layout-style';
     style.textContent = `
-      #chartView .chartCanvasWrap {
-        min-height:760px !important;
-        height:760px;
-        overflow:hidden !important;
-      }
-      #chartView #klineChart {
-        min-height:760px !important;
-        height:760px;
-      }
-      #agentSetupView .configModalBody {
-        align-items:start !important;
-        grid-auto-flow:row dense !important;
-      }
-      #agentSetupView .settingsGroup,
-      #agentSetupView .agentIndicatorGroup,
-      #agentSetupView .agentDirectGroup,
-      #agentSetupView .agentUtilityGroup {
-        align-content:start !important;
-        contain:layout style !important;
-      }
-      #agentSetupView .settingsGroupGrid {
-        align-items:start !important;
-      }
+      main { max-width:none !important; width:100% !important; }
+      #chartView, #agentSetupView { width:100% !important; max-width:none !important; }
+      #chartView > .card, #agentSetupView > .card { width:100% !important; max-width:none !important; overflow:visible !important; }
+      #chartView .chartCanvasWrap { width:100% !important; min-height:860px !important; height:860px; overflow:hidden !important; }
+      #chartView #klineChart { width:100% !important; min-height:860px !important; height:860px; }
+      #agentSetupView .configModalBody { display:grid !important; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) !important; gap:16px !important; align-items:start !important; grid-auto-flow:row dense !important; overflow:visible !important; padding:16px 14px !important; }
+      #agentSetupView .settingsTabsBar { grid-column:1 / -1 !important; width:100% !important; display:flex !important; flex-wrap:wrap !important; align-items:center !important; gap:8px !important; margin:0 0 10px !important; padding:0 0 14px !important; border-bottom:1px solid var(--line) !important; }
+      #agentSetupView .settingsTabButton { min-width:128px !important; justify-content:center !important; }
+      #agentSetupView .settingsGroup:not([data-agent-section]), #agentSetupView .agentSetupDirectHeader { grid-column:1 / -1 !important; }
+      #agentSetupView .agentSetupDirectHeader { margin-top:4px !important; border-left:4px solid var(--accent) !important; }
+      #agentSetupView .agentDirectGroup[data-chart-view="true"] { border-left:4px solid #22d3ee !important; }
+      #agentSetupView .agentDirectGroup[data-chart-view="false"] { border-left:4px solid #fb923c !important; }
+      #agentSetupView .agentChartModeBadge { display:inline-flex !important; align-items:center !important; min-height:24px !important; width:max-content !important; padding:3px 8px !important; border:1px solid var(--line) !important; border-radius:999px !important; background:var(--panel-soft) !important; color:var(--muted) !important; font-size:11px !important; font-weight:900 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
+      #agentSetupView .agentDirectGroup[data-chart-view="true"] .agentChartModeBadge { color:#67e8f9 !important; border-color:#0891b2 !important; background:rgba(8,145,178,.14) !important; }
+      #agentSetupView .agentDirectGroup[data-chart-view="false"] .agentChartModeBadge { color:#fdba74 !important; border-color:#c2410c !important; background:rgba(194,65,12,.14) !important; }
+      #agentSetupView .settingsGroup, #agentSetupView .agentIndicatorGroup, #agentSetupView .agentDirectGroup, #agentSetupView .agentUtilityGroup { min-height:0 !important; height:auto !important; align-content:start !important; contain:layout style !important; }
+      #agentSetupView .settingsGroupGrid { align-items:start !important; }
+      @media (max-width:900px) { main { padding:16px 12px 32px !important; } #agentSetupView .configModalBody { grid-template-columns:1fr !important; padding:12px 0 !important; } #agentSetupView .settingsTabButton { flex:1 1 140px !important; } }
     `;
     document.head.appendChild(style);
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__directAgentChartViewFixPatchedV2) return;
+    if (window.drawChart?.__directAgentChartViewFixPatchedV3) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedDirectAgentChartViewDrawChart(candles, overlay, indicatorData) {
@@ -268,18 +286,18 @@
       renameDirectAgentSetupText();
       return result;
     };
-    window.drawChart.__directAgentChartViewFixPatchedV2 = true;
+    window.drawChart.__directAgentChartViewFixPatchedV3 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV2) return;
+    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV3) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedDirectAgentChartViewClearChart() {
       clearDirectAgentChartView();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__directAgentChartViewFixClearPatchedV2 = true;
+    window.clearKlineChart.__directAgentChartViewFixClearPatchedV3 = true;
   }
 
   function install() {
@@ -287,11 +305,15 @@
     patchDrawChart();
     patchClearChart();
     renameDirectAgentSetupText();
+    applyChartHeight();
     window.setTimeout(renameDirectAgentSetupText, 250);
     window.setTimeout(renameDirectAgentSetupText, 1000);
+    window.setTimeout(applyChartHeight, 350);
+    window.setTimeout(applyChartHeight, 1200);
     document.body.dataset.directAgentChartViewFixPatch = PATCH_VERSION;
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   else install();
+  window.addEventListener('resize', applyChartHeight);
 })();
