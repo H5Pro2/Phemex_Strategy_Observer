@@ -66,11 +66,11 @@ if exist "prepare_dashboard_runtime.py" (
   )
 )
 
-if exist "check_agent_runtime_roles.py" (
+if exist "checks\check_agent_runtime_roles.py" (
   echo --------------------------------------------------
   echo Pruefe Agenten-Rollenvertrag
   echo --------------------------------------------------
-  python check_agent_runtime_roles.py
+  python checks\check_agent_runtime_roles.py
   if errorlevel 1 (
     echo FEHLER: Agenten-Rollenvertrag ist ungueltig.
     pause
@@ -78,11 +78,11 @@ if exist "check_agent_runtime_roles.py" (
   )
 )
 
-if exist "check_brain_replay_enhancements.py" (
+if exist "checks\check_brain_replay_enhancements.py" (
   echo --------------------------------------------------
   echo Pruefe Brain Replay Enhancements
   echo --------------------------------------------------
-  python check_brain_replay_enhancements.py
+  python checks\check_brain_replay_enhancements.py
   if errorlevel 1 (
     echo FEHLER: Brain Replay Enhancements sind ungueltig.
     pause
@@ -90,11 +90,11 @@ if exist "check_brain_replay_enhancements.py" (
   )
 )
 
-if exist "check_brain_dashboard_enhancements.py" (
+if exist "checks\check_brain_dashboard_enhancements.py" (
   echo --------------------------------------------------
   echo Pruefe Brain Dashboard Enhancements
   echo --------------------------------------------------
-  python check_brain_dashboard_enhancements.py
+  python checks\check_brain_dashboard_enhancements.py
   if errorlevel 1 (
     echo FEHLER: Brain Dashboard Enhancements sind ungueltig.
     pause
