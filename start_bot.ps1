@@ -66,33 +66,33 @@ if (Test-Path "prepare_dashboard_runtime.py") {
     }
 }
 
-if (Test-Path "check_agent_runtime_roles.py") {
+if (Test-Path "checks/check_agent_runtime_roles.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Agenten-Rollenvertrag"
     Write-Host "--------------------------------------------------"
-    python check_agent_runtime_roles.py
+    python checks/check_agent_runtime_roles.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Agenten-Rollenvertrag ist ungueltig."
         exit 1
     }
 }
 
-if (Test-Path "check_brain_replay_enhancements.py") {
+if (Test-Path "checks/check_brain_replay_enhancements.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Brain Replay Enhancements"
     Write-Host "--------------------------------------------------"
-    python check_brain_replay_enhancements.py
+    python checks/check_brain_replay_enhancements.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Brain Replay Enhancements sind ungueltig."
         exit 1
     }
 }
 
-if (Test-Path "check_brain_dashboard_enhancements.py") {
+if (Test-Path "checks/check_brain_dashboard_enhancements.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Brain Dashboard Enhancements"
     Write-Host "--------------------------------------------------"
-    python check_brain_dashboard_enhancements.py
+    python checks/check_brain_dashboard_enhancements.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Brain Dashboard Enhancements sind ungueltig."
         exit 1
