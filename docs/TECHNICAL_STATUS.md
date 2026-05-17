@@ -26,6 +26,15 @@ Stand: 2026-05-17
 - Risk / Volatility getrennt bewertet
 - `checks/check_agent_runtime_roles.py` ergaenzt
 
+## Agenten-Setup / Dashboard
+
+- `ui/patches/dashboard_agent_setup_cleanup_patch.js` ergaenzt
+- Chart-Indikator-Agenten getrennt
+- Struktur- und Signalagenten getrennt
+- Bewertungsagenten ohne eigene Chart-Pane getrennt
+- RSI / VWAP / Volume aus direktem Bewertungsbereich entfernt
+- Breakout / Fakeout in Struktur-/Signalbereich verschoben
+
 ## Brain / Replay
 
 - `brain_replay_enhancements.py` ergaenzt
@@ -59,6 +68,20 @@ Stand: 2026-05-17
 - Monospace-Werte fuer technische Kennzahlen
 - klare Statuskanten fuer LONG / SHORT / NEUTRAL / Konflikt
 
+## Chart / KLineCharts
+
+- `indicator_display_enhancements.py` ergaenzt
+- `ui/patches/dashboard_chart_pane_patch.js` ergaenzt
+- `ui/patches/dashboard_kline_native_indicators_patch.js` ergaenzt
+- MACD eigene native KLineCharts-Pane
+- MFI eigene native KLineCharts-Pane
+- RSI eigene native KLineCharts-Pane
+- Volume eigene native KLineCharts-Pane
+- VWAP als Preislinie / Overlay im Hauptchart
+- Chart-Bedienleiste ergaenzt
+- Auto-Scroll AN/AUS ergaenzt
+- Realtime / Zoom / Fit ergaenzt
+
 # --------------------------------------------------
 # Startpruefungen
 # --------------------------------------------------
@@ -66,6 +89,7 @@ Stand: 2026-05-17
 Beim Start ueber `start_bot.ps1` oder `start_bot.bat` werden geprueft:
 
 - Dashboard Runtime
+- Dashboard Runtime Patches
 - Agenten-Rollenvertrag
 - Brain Replay Enhancements
 - Brain Dashboard Enhancements
@@ -77,7 +101,8 @@ Beim Start ueber `start_bot.ps1` oder `start_bot.bat` werden geprueft:
 # --------------------------------------------------
 
 - echte Dashboard-Ansicht nach Start visuell pruefen
+- getrennte KLineCharts-Panes fuer MACD / MFI / RSI / Volume im Browser pruefen
+- VWAP Overlay im Hauptchart pruefen
 - Replay-Regel-Auswertung im Haupt-Dashboard dauerhaft integrieren
 - Brain-Fallbacks im Haupt-Dashboard optisch weiter verdichten
-- README und BAUPLAN bei naechstem Dokumentationslauf konsolidieren
 - direkte Python-Startpruefung bei fehlender `config.json` verbessern
