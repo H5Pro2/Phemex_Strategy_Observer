@@ -20,19 +20,16 @@ def dashboard_patch_version(patch: str) -> str:
 
 
 # --------------------------------------------------
-# DASHBOARD ROLE PATCH
+# PATCH INJECTION
 # --------------------------------------------------
-def prepare_dashboard_role_patch() -> str:
-    root = Path(__file__).resolve().parents[1]
-    dashboard_path = root / "dashboard.html"
-    patch_path = root / "ui" / "patches" / "dashboard_agent_roles_patch.js"
-    marker_start = "<!-- dashboard_agent_roles_patch.js:start -->"
-    marker_end = "<!-- dashboard_agent_roles_patch.js:end -->"
+def inject_dashboard_patch(dashboard_path: Path, patch_path: Path, patch_name: str) -> str:
+    marker_start = f"<!-- {patch_name}:start -->"
+    marker_end = f"<!-- {patch_name}:end -->"
 
     if not dashboard_path.exists():
-        return "SKIP dashboard.html fehlt"
+        return f"SKIP dashboard.html fehlt"
     if not patch_path.exists():
-        return "SKIP ui/patches/dashboard_agent_roles_patch.js fehlt"
+        return f"SKIP {patch_path.as_posix()} fehlt"
 
     html = dashboard_path.read_text(encoding="utf-8")
     patch = patch_path.read_text(encoding="utf-8")
@@ -46,9 +43,9 @@ def prepare_dashboard_role_patch() -> str:
     if pattern.search(html):
         html = pattern.sub(block.strip(), html)
         action = "UPDATED"
-    elif "dashboard_agent_roles_patch.js" in html:
+    elif patch_name in html:
         legacy_pattern = re.compile(
-            r"\n?<!-- dashboard_agent_roles_patch\.js -->\n<script>\n.*?\n</script>\n?",
+            rf"\n?<!-- {re.escape(patch_name)} -->\n<script>\n.*?\n</script>\n?",
             re.DOTALL,
         )
         html = legacy_pattern.sub("", html)
@@ -67,16 +64,30 @@ def prepare_dashboard_role_patch() -> str:
     dashboard_path.write_text(html, encoding="utf-8")
     verify_html = dashboard_path.read_text(encoding="utf-8")
     if version not in verify_html or marker_start not in verify_html or marker_end not in verify_html:
-        raise RuntimeError("Dashboard-Rollenpatch konnte nicht verifiziert werden")
-    return f"{action} ui/patches/dashboard_agent_roles_patch.js {version}"
+        raise RuntimeError(f"Dashboard-Patch konnte nicht verifiziert werden: {patch_name}")
+    return f"{action} {patch_path.as_posix()} {version}"
+
+
+# --------------------------------------------------
+# DASHBOARD PATCHES
+# --------------------------------------------------
+def prepare_dashboard_patches() -> list[str]:
+    root = Path(__file__).resolve().parents[1]
+    dashboard_path = root / "dashboard.html"
+    patches = [
+        (root / "ui" / "patches" / "dashboard_agent_roles_patch.js", "dashboard_agent_roles_patch.js"),
+        (root / "ui" / "patches" / "dashboard_chart_pane_patch.js", "dashboard_chart_pane_patch.js"),
+    ]
+    return [inject_dashboard_patch(dashboard_path, patch_path, patch_name) for patch_path, patch_name in patches]
 
 
 # --------------------------------------------------
 # MAIN
 # --------------------------------------------------
 def main() -> None:
-    result = prepare_dashboard_role_patch()
-    print(f"Dashboard Runtime: {result}")
+    results = prepare_dashboard_patches()
+    for result in results:
+        print(f"Dashboard Runtime: {result}")
 
 
 if __name__ == "__main__":
