@@ -20,3 +20,10 @@ try:
     brain_dashboard_enhancements.install()
 except Exception:
     pass
+
+try:
+    import indicator_display_enhancements
+
+    indicator_display_enhancements.install()
+except Exception:
+    pass
