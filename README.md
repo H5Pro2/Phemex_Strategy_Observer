@@ -54,6 +54,35 @@ Pruefung:
 
 - `checks/check_agent_runtime_roles.py`
 
+## Agenten-Setup im Dashboard
+
+Das Agenten-Setup ist getrennt in:
+
+- Chart-Indikator-Agenten
+- Struktur- und Signalagenten
+- Bewertungsagenten ohne eigene Chart-Pane
+
+Chart-Indikator-Agenten:
+
+- RSI
+- VWAP
+- Volume
+- MACD
+- MFI
+
+Struktur- und Signalagenten:
+
+- Breakout / Fakeout
+- BOS / CHoCH
+- LL / HH Boxen
+- Support / Resistance
+- Swing Labels
+
+Bewertungsagenten ohne eigene Chart-Pane:
+
+- Volatility Regime
+- Risk
+
 ## CEO Trader
 
 Der CEO bewertet die Gesamtlage aus allen Agentenberichten.
@@ -109,7 +138,7 @@ Es prueft:
 
 Kein Agent, kein CEO und keine Audit-Schicht darf das Economic Gate umgehen.
 
-## Dashboard
+## Dashboard / Chart
 
 Dashboard-Hauptdateien:
 
@@ -117,17 +146,39 @@ Dashboard-Hauptdateien:
 - `dashboard_script.js`
 - `styles.css`
 
-Runtime-Patch:
+Runtime-Patches:
 
 - `ui/patches/dashboard_agent_roles_patch.js`
+- `ui/patches/dashboard_chart_pane_patch.js`
+- `ui/patches/dashboard_kline_native_indicators_patch.js`
+- `ui/patches/dashboard_agent_setup_cleanup_patch.js`
 
 Vorbereitungstool:
 
 - `tools/prepare_dashboard_runtime.py`
 
-Aktuelle Dashboard-Patch-Version:
+Patch-Pruefung:
+
+- `checks/check_dashboard_runtime_patches.py`
+
+Aktuelle Dashboard-Patches:
 
 - `role-ui-v3-tech`
+- `chart-controls-v2-tech`
+- `kline-native-indicators-v3-full`
+- `agent-setup-cleanup-v2-tech`
+
+Chart-Anzeige:
+
+- MACD eigene native KLineCharts-Pane
+- MFI eigene native KLineCharts-Pane
+- RSI eigene native KLineCharts-Pane
+- Volume eigene native KLineCharts-Pane
+- VWAP als Preislinie / Overlay im Hauptchart
+- Auto-Scroll AN/AUS
+- Realtime
+- Zoom + / Zoom -
+- Fit
 
 # --------------------------------------------------
 # Setup
@@ -175,6 +226,18 @@ http://127.0.0.1:8787
 # Technische Pruefungen
 # --------------------------------------------------
 
+Dashboard Runtime vorbereiten:
+
+```powershell
+python .\tools\prepare_dashboard_runtime.py
+```
+
+Dashboard Runtime Patches pruefen:
+
+```powershell
+python .\checks\check_dashboard_runtime_patches.py
+```
+
 Agentenrollen:
 
 ```powershell
@@ -191,12 +254,6 @@ Brain Dashboard Summary:
 
 ```powershell
 python .\checks\check_brain_dashboard_enhancements.py
-```
-
-Dashboard Runtime vorbereiten:
-
-```powershell
-python .\tools\prepare_dashboard_runtime.py
 ```
 
 # --------------------------------------------------
