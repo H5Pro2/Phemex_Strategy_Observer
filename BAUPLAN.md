@@ -85,8 +85,30 @@ Die Startdateien pruefen:
 - `config.json` vorhanden oder aus Vorlage erstellbar
 - `.env` vorhanden oder aus Vorlage erstellbar
 - `data`-Ordner vorhanden oder erstellbar
+- Dashboard Runtime vorbereitet
+- Agenten-Rollenvertrag gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
+
+## 1.5 Technischer Rollenstand
+
+Umgesetzt:
+
+- `agent_runtime_roles.py`
+- `check_agent_runtime_roles.py`
+- `dashboard_agent_roles_patch.js`
+- `prepare_dashboard_runtime.py`
+
+Technische Rollen:
+
+- Struktur
+- Momentum
+- Kontext
+- Risiko
+- Entscheidung
+- Weitere
+
+Die Rollenpruefung laeuft vor dem Start ueber `start_bot.ps1` und `start_bot.bat`.
 
 # --------------------------------------------------
 # 2. Zielbild
@@ -358,20 +380,42 @@ Umgesetzt:
 
 ## Abschnitt 2: Agentenrollen schaerfen
 
-Ziel:
+Status:
 
-- Agenten klar in Struktur, Momentum, Risiko, Kontext und Audit gruppieren
-- Score-Bedeutung je Rolle vereinheitlichen
-- Offline-/Weak-/Strong-Qualitaet sauber sichtbar machen
+- teilweise umgesetzt
+
+Umgesetzt:
+
+- Rollenvertrag technisch ergaenzt
+- CEO-Rollenbewertung vorbereitet
+- Kontext-Rolle fuer Volume ergaenzt
+- Risk/Volatility getrennt von Momentum bewertet
+- lokale Rollenpruefung ergaenzt
+- Dashboard-Rollenpatch vorbereitet
+
+Offen:
+
+- Dashboard-Agentenkarten weiter komprimieren
+- Rollenanzeige visuell verbessern
 
 ## Abschnitt 3: CEO-Bewertung verbessern
 
-Ziel:
+Status:
 
-- Rollen-Konsens staerker bewerten
-- Konflikte nicht nur zaehlen, sondern gewichten
-- Blocking-Regeln transparent anzeigen
-- WAIT / BLOCKED / BIAS besser trennen
+- teilweise umgesetzt
+
+Umgesetzt:
+
+- Rollen-Konsens technisch ergaenzt
+- Struktur und Momentum staerker gewichtet
+- Kontext niedriger gewichtet
+- Risk separat ausgewiesen
+- BLOCKED-Verhalten pruefbar gemacht
+
+Offen:
+
+- CEO-Entscheidung im Dashboard klarer visualisieren
+- WAIT / BLOCKED / BIAS optisch besser trennen
 
 ## Abschnitt 4: Brain verbessern
 
@@ -406,7 +450,7 @@ Ziel:
 # --------------------------------------------------
 
 - direkte Python-Startpruefung bei fehlender `config.json` verbessern
-- Agenten-Gewichtung weiter vereinheitlichen
+- Dashboard-Agentenkarten weiter komprimieren
 - CEO-Entscheidung besser visualisieren
 - Replay-Regeln robuster auswerten
 - Dashboard-Design weiter komprimieren
