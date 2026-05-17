@@ -6,11 +6,23 @@ Stand: 2026-05-17
 # 1. System-Ist-Zustand
 # --------------------------------------------------
 
-## 1.1 Was dieses System ist
+## 1.1 Systemrolle
 
 Dieses System ist ein lokales Trading-Agentensystem fuer Marktbeobachtung, Paper-Trading und Entscheidungsanalyse.
 
-Der Bot ist aktuell als Observer- und Paper-Trading-System aufgebaut.
+Der Bot arbeitet als Observer- und Paper-Trading-System.
+
+Live-Trading bleibt gesperrt.
+
+## 1.2 Pipeline
+
+```text
+Agenten
+→ CEO Trader Gesamtbewertung
+→ Brain / Lernschicht Entry-Optimierung
+→ Economic Gate
+→ Paper Trade
+```
 
 Kernaufgaben:
 
@@ -24,33 +36,30 @@ Kernaufgaben:
 - Paper-Trades verwalten
 - Dashboard fuer Status, Chart, Agenten und Einstellungen bereitstellen
 
-Der Bot ist kein Live-Trading-System.
-
-Live-Trading bleibt gesperrt.
-
-## 1.2 Aktuelle Pipeline
+## 1.3 Projektstruktur
 
 ```text
-Agenten
-→ CEO Trader Gesamtbewertung
-→ Brain / Lernschicht Entry-Optimierung
-→ Economic Gate
-→ Paper Trade
+/
+├─ phemex_strategy_observer.py      Kernruntime / Webserver / Observer
+├─ agent_runtime.py                 Agentenruntime
+├─ brain_runtime.py                 Brain- und Lernruntime
+├─ trade_value_gate.py              Economic Gate
+├─ indikator.py                     Indikatorlogik
+├─ dashboard.html                   Dashboard-Hauptdatei
+├─ dashboard_script.js              Dashboard-JavaScript
+├─ styles.css                       Dashboard-Styles
+├─ start_bot.ps1                    empfohlener Windows-Start
+├─ start_bot.bat                    alternativer Windows-Start
+├─ config.example.json              Konfigurationsvorlage
+├─ assets.txt                       Asset-Liste
+├─ docs/                            Dokumentation
+├─ checks/                          lokale Pruefskripte
+├─ tools/                           lokale Hilfs- und Vorbereitungstools
+├─ ui/patches/                      Dashboard Runtime-Patches
+└─ data/                            lokale Laufzeitdaten, nicht versioniert
 ```
 
-Bedeutung:
-
-- Agenten lesen Indikator-, Kerzen- und Kontextdaten.
-- Jeder Agent bewertet seine eigene Datenquelle eigenstaendig.
-- CEO kontrolliert die Gesamtlage aller Agenten.
-- Brain erzeugt und optimiert daraus einen Trade-Kontext.
-- Replay-Regeln koennen Pattern-Kombinationen gewichten.
-- Economic Gate bleibt harte wirtschaftliche Sperre.
-- PaperBroker fuehrt nur Paper-Trades aus.
-
-## 1.3 Repository-Stand
-
-Repository-Regeln wurden bereinigt.
+## 1.4 Repository-Regeln
 
 Versioniert werden:
 
@@ -70,7 +79,7 @@ Nicht versioniert werden:
 
 Lokale Arbeitsdateien werden aus Vorlagen erzeugt.
 
-## 1.4 Start-Stand
+## 1.5 Start-Stand
 
 Vorhandene Startwege:
 
@@ -86,20 +95,18 @@ Die Startdateien pruefen:
 - `.env` vorhanden oder aus Vorlage erstellbar
 - `data`-Ordner vorhanden oder erstellbar
 - Dashboard Runtime vorbereitet
-- Dashboard-Patch-Version verifiziert
+- Dashboard Runtime Patches gueltig
 - Agenten-Rollenvertrag gueltig
 - Brain-/Replay-Erweiterung gueltig
+- Brain-Dashboard-Erweiterung gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
 
-## 1.5 Technischer Rollenstand
+# --------------------------------------------------
+# 2. Agenten / CEO
+# --------------------------------------------------
 
-Umgesetzt:
-
-- `agent_runtime_roles.py`
-- `check_agent_runtime_roles.py`
-- `dashboard_agent_roles_patch.js`
-- `prepare_dashboard_runtime.py`
+## 2.1 Rollenstand
 
 Technische Rollen:
 
@@ -110,81 +117,45 @@ Technische Rollen:
 - Entscheidung
 - Weitere
 
-Die Rollenpruefung laeuft vor dem Start ueber `start_bot.ps1` und `start_bot.bat`.
-
-## 1.6 Dashboard-Optik-Stand
-
-Aktuelle Dashboard-Patch-Version:
-
-- `role-ui-v3-tech`
-
 Umgesetzt:
 
-- professionelle technische Darstellung
-- kompaktere Agentenkarten
-- kleinere Schriftgroessen
-- Monospace-Werte fuer technische Kennzahlen
-- weniger Rundungen
-- reduzierte Badge-Optik
-- klare Statuskanten fuer LONG / SHORT / NEUTRAL / Konflikt
-- kompaktere CEO-, Prioritaets- und Konfliktbereiche
-- mobile Darstellung erhalten
+- `agent_runtime_roles.py`
+- `checks/check_agent_runtime_roles.py`
+- Rollenvertrag fuer Agenten
+- CEO-Rollenbewertung
+- Volume als Kontext getrennt
+- Risk / Volatility getrennt bewertet
 
-`prepare_dashboard_runtime.py` ersetzt vorhandene Patch-Bloecke und prueft, ob die aktuelle Patch-Version eingebettet wurde.
+## 2.2 Agenten-Setup im Dashboard
 
-## 1.7 Brain-/Replay-Stand
+Das Agenten-Setup ist getrennt in:
 
-Umgesetzt:
+- Chart-Indikator-Agenten
+- Struktur- und Signalagenten
+- Bewertungsagenten ohne eigene Chart-Pane
 
-- `brain_replay_enhancements.py`
-- `check_brain_replay_enhancements.py`
-- automatische Einbindung ueber `sitecustomize.py`
-- Startpruefung ueber `start_bot.ps1`
-- Startpruefung ueber `start_bot.bat`
+Chart-Indikator-Agenten:
 
-Verbessert:
+- RSI
+- VWAP
+- Volume
+- MACD
+- MFI
 
-- stabilerer Pattern-Key `v2`
-- rollenbasierter Pattern-Key
-- Memory-Matching auf stabile Pattern-Keys vorbereitet
-- robustere Replay-Regelgewichtung
-- Asset-spezifische Replay-Regeln bevorzugt
-- Edge-Score aus Winrate, AvgR und Profit-Factor
-- Mindestdatenmenge wird staerker abgesichert
-- GOOD/BAD-Regeln werden nicht blind uebernommen
+Struktur- und Signalagenten:
 
-# --------------------------------------------------
-# 2. Zielbild
-# --------------------------------------------------
+- Breakout / Fakeout
+- BOS / CHoCH
+- LL / HH Boxen
+- Support / Resistance
+- Swing Labels
 
-## 2.1 Agenten-Mechanik
+Bewertungsagenten ohne eigene Chart-Pane:
 
-Jeder Agent soll eine klare Rolle haben.
+- Volatility Regime
+- Risk
 
-Rollen:
-
-- Struktur
-- Momentum
-- Risiko
-- Kontext
-- Audit
-- Entscheidung
-
-Jeder Agent liefert:
-
-- Signal
-- Score
-- gelesene Daten
-- Begruendung
-- Konfliktstatus
-- Blocking-Status
-- Qualitaetsprofil
-
-Kein Agent entscheidet alleine ueber einen Trade.
-
-## 2.2 CEO Trader
-
-Der CEO bewertet alle Agentenberichte gemeinsam.
+## 2.3 CEO-Zielbild
 
 CEO prueft:
 
@@ -200,9 +171,32 @@ CEO prueft:
 
 CEO erzeugt keine eigene Preislogik.
 
-## 2.3 Brain / Lernschicht
+# --------------------------------------------------
+# 3. Brain / Replay
+# --------------------------------------------------
 
-Das Brain wertet Agentenkombinationen, Pattern-Keys und Paper-Trade-Ergebnisse aus.
+## 3.1 Brain-Stand
+
+Umgesetzt:
+
+- `brain_replay_enhancements.py`
+- `brain_dashboard_enhancements.py`
+- `checks/check_brain_replay_enhancements.py`
+- `checks/check_brain_dashboard_enhancements.py`
+
+Verbessert:
+
+- stabilerer Pattern-Key `v2`
+- rollenbasierter Pattern-Key
+- Memory-Matching auf stabile Pattern-Keys vorbereitet
+- robustere Replay-Regelgewichtung
+- Asset-spezifische Replay-Regeln bevorzugt
+- Edge-Score aus Winrate, AvgR und Profit-Factor
+- Mindestdatenmenge abgesichert
+- GOOD/BAD-Regeln werden nicht blind uebernommen
+- `dashboard_summary` fuer Brain-/Replay-Status
+
+## 3.2 Brain-Zielbild
 
 Brain optimiert:
 
@@ -219,7 +213,7 @@ Brain optimiert:
 
 LL / HH Boxen sind bevorzugte Entry-Zonen, aber keine Pflichtbedingung.
 
-## 2.4 Replay-Regeln
+## 3.3 Replay-Zielbild
 
 Replay-Regeln sollen nicht nur angezeigt, sondern sinnvoll gewichtet werden.
 
@@ -234,7 +228,69 @@ Ziel:
 
 Replay-Regeln duerfen keine harte Sperre sein, solange sie nicht eindeutig als Blocking-Regel konfiguriert sind.
 
-## 2.5 Economic Gate
+# --------------------------------------------------
+# 4. Chart / Dashboard
+# --------------------------------------------------
+
+## 4.1 Dashboard Runtime-Patches
+
+Runtime-Patches:
+
+- `ui/patches/dashboard_agent_roles_patch.js`
+- `ui/patches/dashboard_chart_pane_patch.js`
+- `ui/patches/dashboard_kline_native_indicators_patch.js`
+- `ui/patches/dashboard_agent_setup_cleanup_patch.js`
+
+Vorbereitung:
+
+- `tools/prepare_dashboard_runtime.py`
+
+Pruefung:
+
+- `checks/check_dashboard_runtime_patches.py`
+
+Aktuelle Patch-Versionen:
+
+- `role-ui-v3-tech`
+- `chart-controls-v2-tech`
+- `kline-native-indicators-v3-full`
+- `agent-setup-cleanup-v2-tech`
+
+## 4.2 KLineCharts-Stand
+
+Umgesetzt:
+
+- `indicator_display_enhancements.py`
+- MACD eigene native KLineCharts-Pane
+- MFI eigene native KLineCharts-Pane
+- RSI eigene native KLineCharts-Pane
+- Volume eigene native KLineCharts-Pane
+- VWAP als Preislinie / Overlay im Hauptchart
+- Chart-Bedienleiste
+- Auto-Scroll AN/AUS
+- Realtime
+- Zoom + / Zoom -
+- Fit
+
+## 4.3 Dashboard-Zielbild
+
+Dashboard soll staerker auf Entscheidung und Bedienbarkeit ausgerichtet werden.
+
+Ziel:
+
+- klare Bereiche
+- einklappbare Agentengruppen
+- kompakte CEO-Zusammenfassung
+- Brain-Status sichtbar
+- Replay-Regeln sichtbar und erklaert
+- Trade-History filterbar
+- Einstellungen uebersichtlich gruppiert
+- Chart-Einstellungen vom Agenten-Setup trennen
+- Chart-Indikatoren sauber in eigenen Panes darstellen
+
+# --------------------------------------------------
+# 5. Economic Gate
+# --------------------------------------------------
 
 Das Economic Gate bleibt die harte mathematische Sperre.
 
@@ -251,14 +307,10 @@ Es prueft:
 Kein Agent, kein CEO, kein Brain und keine Audit-Schicht darf diese Stufe umgehen.
 
 # --------------------------------------------------
-# 3. Lokale Audit-Schicht
+# 6. Lokale Audit-Schicht
 # --------------------------------------------------
 
-## 3.1 Rolle
-
 Die lokale Audit-Schicht soll Entscheidungen erklaeren, nicht treffen.
-
-Sie ist ein optionaler Auswerter fuer Sprache, Konflikte und Risiko-Hinweise.
 
 Erlaubt:
 
@@ -283,124 +335,11 @@ Nicht erlaubt:
 - Orders ausloesen
 - deterministische Preislogik ersetzen
 
-## 3.2 Provider-Neutralitaet
-
-Der Bauplan ist nicht auf einen bestimmten Provider festgelegt.
-
-Moegliche lokale Provider:
-
-- Ollama
-- anderer lokaler HTTP-Provider
-- spaeter eigene regelbasierte Audit-Schicht
-
-Wichtig:
-
-Der Provider ist austauschbar. Die Kernlogik bleibt Agenten → CEO → Brain → Economic Gate.
-
-## 3.3 Zielausgabe
-
-Die Audit-Schicht soll kurze strukturierte Hinweise liefern.
-
-Zielausgabe:
-
-- `enabled`
-- `provider`
-- `model`
-- `role`
-- `verdict`
-- `confidence_note`
-- `risk_note`
-- `conflict_note`
-- `advice`
-- `block_hint`
-
-Erlaubte Verdicts:
-
-- `OK`
-- `WARN`
-- `BLOCK_HINT`
-- `NO_DATA`
-- `ERROR`
-
-`BLOCK_HINT` ist nur ein Hinweis.
-
 # --------------------------------------------------
-# 4. Datenfluss
+# 7. Naechste Ausbaustufen
 # --------------------------------------------------
 
-## 4.1 Eingabe an die Audit-Schicht
-
-Erlaubte Eingabedaten:
-
-- Symbol
-- Timeframe
-- Agenten-Signale
-- Agenten-Scores
-- Konfliktstatus
-- Brain-Entscheidung
-- Brain-Score
-- Memory-Match Count
-- Memory Winrate
-- Memory AvgR
-- Candidate vorhanden ja/nein
-- Economic-Gate-Ergebnis
-- Gate-Reason
-
-Nicht erlaubte Eingabedaten:
-
-- API-Key
-- API-Secret
-- `.env` Inhalte
-- private Accountdetails
-- private Orderrechte
-
-## 4.2 Verarbeitung
-
-Geplanter Ablauf:
-
-1. Agenten erzeugen Reports.
-2. CEO bewertet die Gesamtlage.
-3. Brain erzeugt Entry-Kontext und optional Candidate.
-4. Replay-Regeln werden gewichtet.
-5. Economic Gate prueft harte Wirtschaftlichkeit.
-6. Audit-Schicht erzeugt optional kurze Hinweise.
-7. Dashboard zeigt Entscheidung, Konflikte und Hinweise.
-8. PaperBroker erstellt nur bei bestehender Freigabe einen Paper-Trade.
-
-# --------------------------------------------------
-# 5. Dashboard-Zielbild
-# --------------------------------------------------
-
-Dashboard soll staerker auf Entscheidung und Bedienbarkeit ausgerichtet werden.
-
-Ziel:
-
-- klare Bereiche
-- einklappbare Agentengruppen
-- kompakte CEO-Zusammenfassung
-- Brain-Status sichtbar
-- Replay-Regeln sichtbar und erklaert
-- Trade-History filterbar
-- Einstellungen uebersichtlich gruppiert
-- Chart-Einstellungen vom Agenten-Setup trennen
-
-Wichtige Bereiche:
-
-- Status
-- Chart
-- Agenten
-- CEO
-- Brain
-- Replay
-- Economic Gate
-- Paper Trades
-- Settings
-
-# --------------------------------------------------
-# 6. Naechste Ausbaustufen
-# --------------------------------------------------
-
-## Abschnitt 1: Dokumentation bereinigen
+## Abschnitt 1: Dokumentation / Struktur
 
 Status:
 
@@ -417,9 +356,10 @@ Umgesetzt:
 - `config.json` aus Repository entfernt
 - generierte `data/*.json` aus Repository entfernt
 - `data/.gitkeep` hinzugefuegt
-- `start_bot.bat` erweitert
-- `start_bot.ps1` hinzugefuegt
-- README um Startdateien erweitert
+- `checks/` eingefuehrt
+- `tools/` eingefuehrt
+- `ui/patches/` eingefuehrt
+- `docs/` fuer technische Dokumentation genutzt
 
 ## Abschnitt 2: Agentenrollen schaerfen
 
@@ -436,11 +376,12 @@ Umgesetzt:
 - lokale Rollenpruefung ergaenzt
 - Dashboard-Rollenpatch vorbereitet
 - technische Dashboard-Rollenoptik umgesetzt
+- Agenten-Setup in Chart-/Struktur-/Bewertungsbereiche getrennt
 
 Offen:
 
 - Dashboard-Agentenkarten nach echtem Test weiter feinjustieren
-- Rollenanzeige in bestehende Haupt-HTML dauerhaft integrieren
+- Rollenanzeige dauerhaft in Haupt-HTML integrieren
 
 ## Abschnitt 3: CEO-Bewertung verbessern
 
@@ -474,6 +415,7 @@ Umgesetzt:
 - rollenbasierter Pattern-Key
 - Memory-Matching auf stabilen Pattern-Key vorbereitet
 - lokale Brain-/Replay-Pruefung ergaenzt
+- Brain-Dashboard-Summary ergaenzt
 
 Offen:
 
@@ -499,7 +441,7 @@ Offen:
 - Replay-Regel-Auswertung im Dashboard sichtbarer machen
 - Asset- und Timeframe-Kontext weiter ausbauen
 
-## Abschnitt 6: Dashboard verbessern
+## Abschnitt 6: Dashboard / Chart verbessern
 
 Status:
 
@@ -512,21 +454,27 @@ Umgesetzt:
 - kompaktere CEO-/Prioritaetsbereiche
 - kompaktere Konfliktmatrix
 - mobile Darstellung beruecksichtigt
+- Chart-Bedienleiste ergaenzt
+- native KLineCharts-Panes fuer MACD / MFI / RSI / Volume vorbereitet
+- VWAP als Hauptchart-Overlay vorbereitet
 
 Offen:
 
+- echte Dashboard-Ansicht nach Start visuell pruefen
+- getrennte KLineCharts-Panes fuer MACD / MFI / RSI / Volume im Browser pruefen
+- VWAP Overlay im Hauptchart pruefen
 - Hauptlayout weiter konsolidieren
 - Einstellungen uebersichtlicher gruppieren
 - Popups reduzieren
 - wichtige Entscheidungen noch staerker nach oben holen
 
 # --------------------------------------------------
-# 7. Offene Punkte
+# 8. Offene Punkte
 # --------------------------------------------------
 
 - direkte Python-Startpruefung bei fehlender `config.json` verbessern
 - Dashboard-Agentenkarten nach echtem Test feinjustieren
 - CEO-Entscheidung besser visualisieren
 - Replay-Regeln im Dashboard sichtbarer machen
-- Dashboard-Design weiter konsolidieren
 - Chart-Settings getrennt nach Kerzenkoerper und Docht pruefen
+- Runtime-Patches spaeter dauerhaft in Hauptdateien integrieren
