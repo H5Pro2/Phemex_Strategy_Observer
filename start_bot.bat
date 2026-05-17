@@ -66,6 +66,18 @@ if exist "prepare_dashboard_runtime.py" (
   )
 )
 
+if exist "check_agent_runtime_roles.py" (
+  echo --------------------------------------------------
+  echo Pruefe Agenten-Rollenvertrag
+  echo --------------------------------------------------
+  python check_agent_runtime_roles.py
+  if errorlevel 1 (
+    echo FEHLER: Agenten-Rollenvertrag ist ungueltig.
+    pause
+    exit /b 1
+  )
+)
+
 echo --------------------------------------------------
 echo Installiere/pruefe Python-Abhaengigkeiten
 echo --------------------------------------------------
