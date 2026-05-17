@@ -5,8 +5,9 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v1';
+  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v2-separate-panes';
   let originalDrawChart = null;
+  let originalClearKlineChart = null;
   let mfiRegistered = false;
 
   function chartInstance() {
@@ -21,9 +22,13 @@
     return window.klinecharts || window.KLineCharts || window.KLineChart || null;
   }
 
+  function indicatorNames(indicatorData) {
+    return (indicatorData?.lines || []).map(line => String(line?.name || line?.label || '').toUpperCase());
+  }
+
   function hasIndicatorLine(indicatorData, needle) {
     const text = String(needle || '').toUpperCase();
-    return (indicatorData?.lines || []).some(line => String(line?.name || line?.label || '').toUpperCase().includes(text));
+    return indicatorNames(indicatorData).some(name => name.includes(text));
   }
 
   function registerMfiIndicator() {
@@ -39,9 +44,7 @@
         calcParams: [14],
         minValue: 0,
         maxValue: 100,
-        figures: [
-          { key: 'mfi', title: 'MFI: ', type: 'line' }
-        ],
+        figures: [{ key: 'mfi', title: 'MFI: ', type: 'line' }],
         calc: (dataList, indicator) => {
           const period = Math.max(1, Number(indicator?.calcParams?.[0] || 14));
           const typical = dataList.map(k => (Number(k.high) + Number(k.low) + Number(k.close)) / 3);
@@ -78,24 +81,13 @@
     }
   }
 
-  function createIndicatorSafe(chart, indicator, isStack, paneOptions) {
-    if (!chart || typeof chart.createIndicator !== 'function') return null;
-    try {
-      return chart.createIndicator(indicator, isStack, paneOptions);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function ensureNativeIndicators(indicatorData) {
-    const chart = chartInstance();
-    if (!chart || typeof chart.createIndicator !== 'function') return;
-    const paneOptions = {
-      id: 'bot_indicator_pane',
-      height: 170,
-      minHeight: 110,
+  function paneOptions(id, order, height) {
+    return {
+      id,
+      height,
+      minHeight: 96,
       dragEnabled: true,
-      order: 50,
+      order,
       state: 'normal',
       axis: {
         name: 'right',
@@ -105,47 +97,84 @@
         gap: { top: 0.12, bottom: 0.12 }
       }
     };
+  }
 
+  function createIndicatorSafe(chart, indicator, paneId, order, height) {
+    if (!chart || typeof chart.createIndicator !== 'function') return null;
+    try {
+      return chart.createIndicator(indicator, false, paneOptions(paneId, order, height));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearBotIndicators() {
+    const chart = chartInstance();
+    const active = window.__botNativeIndicators || {};
+    if (!chart || typeof chart.removeIndicator !== 'function') {
+      window.__botNativeIndicators = {};
+      return;
+    }
+    Object.values(active).forEach(value => {
+      if (!value || value === 'attempted') return;
+      try { chart.removeIndicator(value); } catch (_) {}
+    });
+    window.__botNativeIndicators = {};
+  }
+
+  function ensureNativeIndicators(indicatorData) {
+    const chart = chartInstance();
+    if (!chart || typeof chart.createIndicator !== 'function') return;
     window.__botNativeIndicators = window.__botNativeIndicators || {};
 
     if (hasIndicatorLine(indicatorData, 'MACD') && !window.__botNativeIndicators.macd) {
-      window.__botNativeIndicators.macd = createIndicatorSafe(chart, 'MACD', true, paneOptions) || 'attempted';
+      window.__botNativeIndicators.macd = createIndicatorSafe(chart, 'MACD', 'bot_macd_pane', 50, 150) || 'attempted';
     }
     if (hasIndicatorLine(indicatorData, 'RSI') && !window.__botNativeIndicators.rsi) {
-      window.__botNativeIndicators.rsi = createIndicatorSafe(chart, 'RSI', true, paneOptions) || 'attempted';
+      window.__botNativeIndicators.rsi = createIndicatorSafe(chart, 'RSI', 'bot_rsi_pane', 60, 130) || 'attempted';
     }
     if (hasIndicatorLine(indicatorData, 'MFI') && !window.__botNativeIndicators.mfi) {
       registerMfiIndicator();
-      window.__botNativeIndicators.mfi = createIndicatorSafe(chart, { name: 'BOT_MFI', id: 'BOT_MFI_MAIN', calcParams: [14] }, true, paneOptions) || 'attempted';
+      window.__botNativeIndicators.mfi = createIndicatorSafe(chart, { name: 'BOT_MFI', id: 'BOT_MFI_MAIN', calcParams: [14] }, 'bot_mfi_pane', 70, 130) || 'attempted';
     }
 
     const status = document.getElementById('chartPluginStatus');
     if (status) {
       const active = Object.keys(window.__botNativeIndicators).filter(key => window.__botNativeIndicators[key]).join(' / ');
-      status.textContent = `KLineCharts · native Pane ${active || 'bereit'}`;
+      status.textContent = `KLineCharts · separate Pane ${active || 'bereit'}`;
     }
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__nativeIndicatorPatched) return;
+    if (window.drawChart?.__nativeIndicatorPatchedV2) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedNativeIndicatorDrawChart(candles, overlay, indicatorData) {
+      clearBotIndicators();
       const result = originalDrawChart.apply(this, arguments);
       ensureNativeIndicators(indicatorData);
       return result;
     };
-    window.drawChart.__nativeIndicatorPatched = true;
+    window.drawChart.__nativeIndicatorPatchedV2 = true;
+  }
+
+  function patchClearChart() {
+    if (window.clearKlineChart?.__nativeIndicatorClearPatched) return;
+    originalClearKlineChart = window.clearKlineChart;
+    if (typeof originalClearKlineChart !== 'function') return;
+    window.clearKlineChart = function patchedClearKlineChart() {
+      clearBotIndicators();
+      return originalClearKlineChart.apply(this, arguments);
+    };
+    window.clearKlineChart.__nativeIndicatorClearPatched = true;
   }
 
   function install() {
     patchDrawChart();
+    patchClearChart();
     document.body.dataset.klineNativeIndicatorPatch = PATCH_VERSION;
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', install);
-  } else {
-    install();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
+  else install();
 })();
