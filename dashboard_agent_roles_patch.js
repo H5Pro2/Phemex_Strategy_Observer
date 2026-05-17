@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-role-ui-v2';
+  const PATCH_VERSION = '2026-05-17-role-ui-v3-tech';
 
   function normalizedText(value) {
     return String(value || '').toLowerCase();
@@ -77,43 +77,300 @@
     const style = document.createElement('style');
     style.id = styleId;
     style.textContent = `
-      .agentRoleGroup { margin-top:12px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel-soft); }
-      .agentRoleGroupTitle { min-height:34px; padding:8px 11px; font-size:12px; letter-spacing:.05em; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center; background:rgba(15,23,42,.18); border-bottom:1px solid var(--line); }
-      .agentRoleGroupTitle span { color:var(--muted); font-size:11px; text-transform:none; letter-spacing:0; }
-      .agentRoleGroup .agentGrid { padding:10px; display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:10px; }
-      .agentCube, .agentCeoCard { border-radius:8px; padding:11px 12px; min-height:0; }
-      .agentCube .agentHead, .agentCeoCard .agentHead { gap:8px; align-items:flex-start; }
-      .agentName { font-size:13px; line-height:1.25; }
-      .agentFunction { font-size:11px; line-height:1.35; }
-      .agentHeadBadges { gap:5px; justify-content:flex-end; }
-      .agentSignal, .agentQualityPill { padding:3px 7px; font-size:11px; border-radius:999px; }
-      .agentScore { height:5px; margin:8px 0; }
-      .agentTextBox { font-size:11px; line-height:1.35; padding:8px; border-radius:6px; }
-      .agentCompactBoard { border-radius:10px; }
-      .agentCompactTop { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:9px; }
-      .agentCompactKpi { min-height:80px; padding:11px; }
-      .agentCompactKpi span { font-size:11px; }
-      .agentCompactKpi strong { font-size:16px; }
-      .agentCompactKpi small { font-size:11px; line-height:1.35; }
-      .priorityDecisionCenter { border:1px solid var(--line); border-radius:10px; padding:12px; margin-top:12px; background:linear-gradient(180deg, rgba(15,23,42,.24), rgba(15,23,42,.12)); }
-      .priorityHeader { margin-bottom:10px; }
-      .priorityTitle { font-size:13px; letter-spacing:.06em; text-transform:uppercase; }
-      .prioritySummaryCard { display:grid; gap:6px; }
-      .prioritySummaryRow { min-height:34px; padding:7px 9px; border-radius:7px; }
-      .priorityAgentRow, .priorityAgentHead { grid-template-columns:minmax(130px,1.4fr) 82px 86px 48px minmax(120px,1fr); gap:7px; font-size:11px; }
-      .priorityChip { padding:3px 7px; border-radius:999px; font-size:11px; }
-      .ceoExplainPanel { border-radius:9px; padding:11px; margin-top:10px; }
-      .ceoExplainTitle { font-size:12px; letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px; }
-      .ceoExplainRows { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:7px; }
-      .ceoExplainRow { min-height:32px; padding:7px 8px; border-radius:7px; }
-      .ceoExplainRow span { font-size:11px; }
-      .ceoExplainRow strong { font-size:12px; line-height:1.35; }
-      .agentConflictPanel { border-radius:9px; padding:11px; }
-      .agentConflictMatrix { display:grid; gap:6px; }
-      .agentMatrixRow { grid-template-columns:92px 86px 76px 76px 70px minmax(120px,1fr); gap:7px; padding:7px 8px; border-radius:7px; font-size:11px; }
-      .agentMatrixRow span:first-child { font-weight:800; }
+      body {
+        font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+        font-size: 13px;
+        letter-spacing: .005em;
+      }
+      code, .agentSignal, .agentQualityPill, .priorityChip, .replayRuleBadge, .tradeStatus,
+      .agentCompactKpi strong, .prioritySummaryRow strong, .ceoExplainRow strong, .agentMatrixRow strong {
+        font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      .card, .modal, .settingsGroup, .agentCompactBoard, .priorityDecisionCenter, .ceoExplainPanel,
+      .agentConflictPanel, .agentRoleGroup, .agentCube, .agentCeoCard {
+        box-shadow: none !important;
+      }
+      .agentRoleGroup {
+        margin-top:10px;
+        border:1px solid rgba(148,163,184,.28);
+        border-radius:4px;
+        overflow:hidden;
+        background:rgba(15,23,42,.10);
+      }
+      .agentRoleGroup.structure { border-left:3px solid #38bdf8; }
+      .agentRoleGroup.momentum { border-left:3px solid #22c55e; }
+      .agentRoleGroup.context { border-left:3px solid #64748b; }
+      .agentRoleGroup.risk { border-left:3px solid #f97316; }
+      .agentRoleGroup.decision { border-left:3px solid #a855f7; }
+      .agentRoleGroupTitle {
+        min-height:30px;
+        padding:7px 10px;
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        background:rgba(15,23,42,.28);
+        border-bottom:1px solid rgba(148,163,184,.22);
+      }
+      .agentRoleGroupTitle span {
+        color:var(--muted);
+        font-family:"JetBrains Mono", "Cascadia Code", Consolas, monospace;
+        font-size:10px;
+        font-weight:700;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .agentRoleGroup .agentGrid {
+        padding:9px;
+        display:grid;
+        grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+        gap:8px;
+      }
+      .agentCube, .agentCeoCard {
+        border-radius:4px !important;
+        padding:10px 11px !important;
+        min-height:0 !important;
+        border-color:rgba(148,163,184,.24) !important;
+        background:rgba(15,23,42,.10) !important;
+      }
+      .agentCube.long, .agentCeoCard.long { border-left:3px solid #22c55e !important; }
+      .agentCube.short, .agentCeoCard.short { border-left:3px solid #ef4444 !important; }
+      .agentCube.neutral, .agentCeoCard.neutral { border-left:3px solid #64748b !important; }
+      .agentCube.conflict, .agentCeoCard.conflict { border-left:3px solid #f59e0b !important; }
+      .agentCube .agentHead, .agentCeoCard .agentHead {
+        gap:8px;
+        align-items:flex-start;
+      }
+      .agentName {
+        font-size:12px !important;
+        font-weight:800;
+        line-height:1.22;
+        letter-spacing:.01em;
+      }
+      .agentFunction {
+        font-size:10.5px !important;
+        line-height:1.35;
+        color:var(--muted);
+      }
+      .agentHeadBadges {
+        gap:4px;
+        justify-content:flex-end;
+      }
+      .agentSignal, .agentQualityPill {
+        padding:2px 6px !important;
+        font-size:10px !important;
+        border-radius:3px !important;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+      }
+      .agentScore {
+        height:4px !important;
+        margin:7px 0 !important;
+        border-radius:0 !important;
+        background:rgba(148,163,184,.18) !important;
+      }
+      .agentScore span { border-radius:0 !important; }
+      .agentTextBox {
+        font-family:"JetBrains Mono", "Cascadia Code", Consolas, monospace;
+        font-size:10.5px !important;
+        line-height:1.4 !important;
+        padding:7px 8px !important;
+        border-radius:3px !important;
+        background:rgba(15,23,42,.20) !important;
+        border:1px solid rgba(148,163,184,.18) !important;
+      }
+      .agentCompactBoard {
+        border-radius:4px !important;
+        border:1px solid rgba(148,163,184,.28) !important;
+        background:rgba(15,23,42,.12) !important;
+      }
+      .agentCompactTop {
+        display:grid;
+        grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+        gap:8px;
+      }
+      .agentCompactKpi {
+        min-height:72px !important;
+        padding:10px !important;
+        border-radius:3px !important;
+        border:1px solid rgba(148,163,184,.20) !important;
+        background:rgba(15,23,42,.18) !important;
+      }
+      .agentCompactKpi span {
+        font-size:10px !important;
+        font-weight:800;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+        color:var(--muted);
+      }
+      .agentCompactKpi strong {
+        font-size:15px !important;
+        line-height:1.2;
+      }
+      .agentCompactKpi small {
+        font-size:10.5px !important;
+        line-height:1.35;
+        color:var(--muted);
+      }
+      .agentCompactTable {
+        border-radius:3px !important;
+        overflow:hidden;
+      }
+      .agentCompactHead, .agentCompactRow {
+        font-size:10.5px !important;
+        min-height:30px !important;
+      }
+      .agentCompactAvatar, .priorityAvatar {
+        border-radius:3px !important;
+        font-family:"JetBrains Mono", "Cascadia Code", Consolas, monospace;
+        font-size:10px !important;
+      }
+      .priorityDecisionCenter {
+        border:1px solid rgba(148,163,184,.30) !important;
+        border-radius:4px !important;
+        padding:10px !important;
+        margin-top:10px !important;
+        background:rgba(15,23,42,.14) !important;
+      }
+      .priorityHeader {
+        margin-bottom:9px !important;
+        border-bottom:1px solid rgba(148,163,184,.16);
+        padding-bottom:8px;
+      }
+      .priorityTitle {
+        font-size:11px !important;
+        font-weight:900;
+        letter-spacing:.10em;
+        text-transform:uppercase;
+      }
+      .prioritySummaryCard {
+        display:grid;
+        gap:5px;
+      }
+      .prioritySummaryRow {
+        min-height:31px !important;
+        padding:6px 8px !important;
+        border-radius:3px !important;
+        border:1px solid rgba(148,163,184,.18);
+        background:rgba(15,23,42,.18);
+      }
+      .prioritySummaryRow span {
+        font-size:10.5px;
+        letter-spacing:.02em;
+      }
+      .prioritySummaryRow strong {
+        font-size:11px;
+      }
+      .priorityAgentTable {
+        border-radius:3px !important;
+        overflow:hidden;
+        border:1px solid rgba(148,163,184,.18);
+      }
+      .priorityAgentRow, .priorityAgentHead {
+        grid-template-columns:minmax(130px,1.4fr) 82px 86px 48px minmax(120px,1fr);
+        gap:6px !important;
+        font-size:10.5px !important;
+        min-height:30px;
+      }
+      .priorityAgentHead {
+        font-weight:900;
+        letter-spacing:.07em;
+        text-transform:uppercase;
+        color:var(--muted);
+        background:rgba(15,23,42,.24);
+      }
+      .priorityChip {
+        padding:2px 6px !important;
+        border-radius:3px !important;
+        font-size:10px !important;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
+      .ceoExplainPanel {
+        border-radius:4px !important;
+        padding:10px !important;
+        margin-top:9px !important;
+        border:1px solid rgba(148,163,184,.24) !important;
+        background:rgba(15,23,42,.12) !important;
+      }
+      .ceoExplainTitle {
+        font-size:11px !important;
+        font-weight:900;
+        letter-spacing:.10em;
+        text-transform:uppercase;
+        margin-bottom:7px !important;
+      }
+      .ceoExplainRows {
+        display:grid;
+        grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+        gap:6px !important;
+      }
+      .ceoExplainRow {
+        min-height:30px !important;
+        padding:6px 7px !important;
+        border-radius:3px !important;
+        border:1px solid rgba(148,163,184,.18);
+        background:rgba(15,23,42,.16);
+      }
+      .ceoExplainRow span {
+        font-size:10px !important;
+        font-weight:800;
+        letter-spacing:.07em;
+        text-transform:uppercase;
+      }
+      .ceoExplainRow strong {
+        font-size:11px !important;
+        line-height:1.35 !important;
+      }
+      .agentConflictPanel {
+        border-radius:4px !important;
+        padding:10px !important;
+        border:1px solid rgba(148,163,184,.24) !important;
+        background:rgba(15,23,42,.12) !important;
+      }
+      .agentConflictTitle {
+        font-size:11px !important;
+        font-weight:900;
+        letter-spacing:.10em;
+        text-transform:uppercase;
+      }
+      .agentConflictSummary {
+        font-family:"JetBrains Mono", "Cascadia Code", Consolas, monospace;
+        font-size:10.5px !important;
+        color:var(--muted);
+      }
+      .agentConflictMatrix {
+        display:grid;
+        gap:5px !important;
+      }
+      .agentMatrixRow {
+        grid-template-columns:92px 86px 76px 76px 70px minmax(120px,1fr);
+        gap:6px !important;
+        padding:6px 7px !important;
+        border-radius:3px !important;
+        font-size:10.5px !important;
+        border:1px solid rgba(148,163,184,.16);
+        background:rgba(15,23,42,.16);
+      }
+      .agentMatrixRow span:first-child {
+        font-weight:900;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
       .agentMatrixRow.context { border-left:3px solid #64748b; }
+      .agentMatrixRow.long { border-left:3px solid #22c55e; }
+      .agentMatrixRow.short { border-left:3px solid #ef4444; }
+      .agentMatrixRow.neutral { border-left:3px solid #64748b; }
+      select#agentRoleFilter, select#agentSortMode, select#agentAsset {
+        border-radius:3px !important;
+        font-size:12px;
+      }
       @media (max-width: 780px) {
+        body { font-size:12px; }
         .priorityAgentRow, .priorityAgentHead { grid-template-columns:1fr 72px 76px; }
         .priorityAgentRow > div:nth-child(4), .priorityAgentHead > span:nth-child(4), .priorityAgentRow > div:nth-child(5), .priorityAgentHead > span:nth-child(5) { display:none; }
         .agentMatrixRow { grid-template-columns:1fr 80px 70px; }
