@@ -5,19 +5,28 @@ Lokales Trading-Agentensystem fuer Marktbeobachtung, Paper-Trading, Agentenbewer
 Das Projekt ist kein Live-Trading-System. Live-Trading bleibt gesperrt. Der Bot arbeitet als Observer- und Paper-Trading-System.
 
 # --------------------------------------------------
-# Ziel
+# Projektstruktur
 # --------------------------------------------------
 
-Das System soll Marktinformationen auswerten, Agentenberichte erzeugen, Trade-Kandidaten pruefen und Paper-Trades nachvollziehbar auswerten.
-
-Die Hauptlogik ist:
-
 ```text
-Agenten
-→ CEO Trader
-→ Brain / Lernschicht
-→ Economic Gate
-→ Paper Trade
+/
+├─ phemex_strategy_observer.py      Kernruntime / Webserver / Observer
+├─ agent_runtime.py                 Agentenruntime
+├─ brain_runtime.py                 Brain- und Lernruntime
+├─ trade_value_gate.py              Economic Gate
+├─ indikator.py                     Indikatorlogik
+├─ dashboard.html                   Dashboard-Hauptdatei
+├─ dashboard_script.js              Dashboard-JavaScript
+├─ styles.css                       Dashboard-Styles
+├─ start_bot.ps1                    empfohlener Windows-Start
+├─ start_bot.bat                    alternativer Windows-Start
+├─ config.example.json              Konfigurationsvorlage
+├─ assets.txt                       Asset-Liste
+├─ docs/                            Dokumentation
+├─ checks/                          lokale Pruefskripte
+├─ tools/                           lokale Hilfs- und Vorbereitungstools
+├─ ui/patches/                      Dashboard Runtime-Patches
+└─ data/                            lokale Laufzeitdaten, nicht versioniert
 ```
 
 # --------------------------------------------------
@@ -28,25 +37,7 @@ Agenten
 
 Jeder Agent bewertet eine eigene Datenquelle oder Perspektive.
 
-Beispiele:
-
-- Marktstruktur
-- BOS / CHoCH
-- LL / HH Boxen
-- Support / Resistance
-- Swing Labels
-- HMA / SMA / Triple EMA
-- MACD / MFI / RSI / VWAP
-- Breakout / Fakeout
-- Volume
-- Volatilitaet
-- Risiko
-
-Kein einzelner Agent entscheidet alleine ueber einen Trade.
-
-## Agentenrollen
-
-Die technische Rollenstruktur ist:
+Rollen:
 
 - Struktur
 - Momentum
@@ -55,9 +46,13 @@ Die technische Rollenstruktur ist:
 - Entscheidung
 - Weitere
 
-Die Rollenlogik liegt in `agent_runtime_roles.py`.
+Rollenlogik:
 
-Die lokale Pruefung liegt in `check_agent_runtime_roles.py`.
+- `agent_runtime_roles.py`
+
+Pruefung:
+
+- `checks/check_agent_runtime_roles.py`
 
 ## CEO Trader
 
@@ -74,25 +69,19 @@ Aufgaben:
 
 Der CEO erzeugt keine eigene Preislogik.
 
-## Brain / Lernschicht
+## Brain / Replay
 
-Das Brain nutzt Agentenkombinationen, Pattern-Keys und Paper-Trade-Ergebnisse.
+Brain nutzt Agentenkombinationen, Pattern-Keys und Paper-Trade-Ergebnisse.
 
-Aufgaben:
+Erweiterung:
 
-- Entry-Kontext bewerten
-- bevorzugte Entry-Zonen nutzen
-- Fallback-Entry-Kontext erlauben
-- SL/TP-Kontext pruefen
-- Memory-Matches auswerten
-- Confidence berechnen
-- Replay-Regeln gewichten
+- `brain_replay_enhancements.py`
+- `brain_dashboard_enhancements.py`
 
-LL / HH Boxen sind bevorzugte Entry-Zonen, aber keine Pflichtbedingung.
+Pruefungen:
 
-Die Brain-/Replay-Erweiterung liegt in `brain_replay_enhancements.py`.
-
-Die lokale Pruefung liegt in `check_brain_replay_enhancements.py`.
+- `checks/check_brain_replay_enhancements.py`
+- `checks/check_brain_dashboard_enhancements.py`
 
 Umgesetzt:
 
@@ -102,6 +91,7 @@ Umgesetzt:
 - Asset-spezifische Replay-Regeln
 - Edge-Score aus Winrate, AvgR und Profit-Factor
 - Schutz gegen zu kleine Datenbasis
+- `dashboard_summary` fuer Brain-/Replay-Status
 
 ## Economic Gate
 
@@ -119,78 +109,25 @@ Es prueft:
 
 Kein Agent, kein CEO und keine Audit-Schicht darf das Economic Gate umgehen.
 
-## Replay / Auswertung
-
-Replay-Daten dienen zur besseren Bewertung von Pattern-Kombinationen und Regeln.
-
-Ziel:
-
-- Regeln anhand vergangener Paper-Trades besser gewichten
-- schlechte Pattern-Kombinationen erkennen
-- starke Agenten-Kombinationen hervorheben
-- Dashboard-Auswertung verbessern
-
-Replay-Regeln werden nicht nur nach GOOD/BAD bewertet, sondern mit einem sicheren Edge-Score aus Datenbasis, Winrate, AvgR und Profit-Factor abgesichert.
-
 ## Dashboard
 
-Das Dashboard zeigt Status, Chart, Agenten, Brain, CEO, Replay, Trade-History und Einstellungen.
+Dashboard-Hauptdateien:
 
-Zielrichtung:
+- `dashboard.html`
+- `dashboard_script.js`
+- `styles.css`
 
-- bessere Uebersicht
-- einklappbare Bereiche
-- klare Agentenrollen
-- sichtbare Entscheidungslogik
-- reduzierte, lesbare Hinweise
+Runtime-Patch:
 
-Die Dashboard-Rollen-Erweiterung liegt in `dashboard_agent_roles_patch.js`.
+- `ui/patches/dashboard_agent_roles_patch.js`
+
+Vorbereitungstool:
+
+- `tools/prepare_dashboard_runtime.py`
 
 Aktuelle Dashboard-Patch-Version:
 
 - `role-ui-v3-tech`
-
-Der Patch setzt eine professionellere technische Darstellung um:
-
-- kompaktere Agentenkarten
-- weniger Rundungen
-- technische Monospace-Werte
-- klarere LONG / SHORT / NEUTRAL / Konflikt-Kanten
-- kompaktere CEO-, Prioritaets- und Konfliktbereiche
-- mobile Darstellung bleibt erhalten
-
-Die lokale Dashboard-Vorbereitung liegt in `prepare_dashboard_runtime.py`.
-
-Die Dashboard-Vorbereitung ersetzt vorhandene Patch-Bloecke und verifiziert die aktive Patch-Version.
-
-# --------------------------------------------------
-# Lokale Audit-Schicht
-# --------------------------------------------------
-
-Das System kann optional eine lokale Audit-Schicht nutzen.
-
-Diese Schicht ist kein Trader.
-
-Erlaubt:
-
-- Agentenberichte zusammenfassen
-- Konflikte erklaeren
-- Risiko-Hinweise formulieren
-- CEO-/Brain-Entscheidungen lesbarer machen
-- Dashboard-Texte verbessern
-
-Nicht erlaubt:
-
-- Entry setzen
-- Stop-Loss setzen
-- Take-Profit setzen
-- Positionsgroesse setzen
-- Economic Gate umgehen
-- Live-Trading freigeben
-- API-Schluessel lesen
-- Orders ausloesen
-
-Ein lokaler Provider wie Ollama kann verwendet werden, ist aber nicht der Hauptfokus des Projekts.
 
 # --------------------------------------------------
 # Setup
@@ -203,8 +140,6 @@ Copy-Item config.example.json config.json
 ```
 
 API-Daten gehoeren nur in `.env`.
-
-Fuer Public-Klines werden keine privaten Orderrechte benoetigt.
 
 `config.json` ist absichtlich nicht versioniert. Sie muss lokal aus `config.example.json` erstellt werden.
 
@@ -236,73 +171,33 @@ Dashboard:
 http://127.0.0.1:8787
 ```
 
-Einmaliger Scan:
-
-```powershell
-python .\phemex_strategy_observer.py --config .\config.json --once
-```
-
-Wenn `config.json` fehlt:
-
-```powershell
-Copy-Item config.example.json config.json
-```
-
-Wenn `.env` fehlt:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-# --------------------------------------------------
-# Startdateien
-# --------------------------------------------------
-
-`start_bot.ps1` und `start_bot.bat` pruefen:
-
-- Python vorhanden
-- `requirements.txt` vorhanden
-- `config.json` vorhanden oder aus Vorlage erstellbar
-- `.env` vorhanden oder aus Vorlage erstellbar
-- `data`-Ordner vorhanden oder erstellbar
-- Dashboard Runtime vorbereitet
-- Dashboard-Patch-Version verifiziert
-- Agenten-Rollenvertrag gueltig
-- Brain-/Replay-Erweiterung gueltig
-- Python-Abhaengigkeiten installierbar
-- Bot-Start ohne Fehler
-
 # --------------------------------------------------
 # Technische Pruefungen
 # --------------------------------------------------
 
-Lokale Rollenpruefung:
+Agentenrollen:
 
 ```powershell
-python .\check_agent_runtime_roles.py
+python .\checks\check_agent_runtime_roles.py
 ```
 
-Lokale Brain-/Replay-Pruefung:
+Brain / Replay:
 
 ```powershell
-python .\check_brain_replay_enhancements.py
+python .\checks\check_brain_replay_enhancements.py
+```
+
+Brain Dashboard Summary:
+
+```powershell
+python .\checks\check_brain_dashboard_enhancements.py
 ```
 
 Dashboard Runtime vorbereiten:
 
 ```powershell
-python .\prepare_dashboard_runtime.py
+python .\tools\prepare_dashboard_runtime.py
 ```
-
-Erwartete Dashboard-Runtime-Ausgabe enthaelt eine Aktion wie:
-
-- `ADDED`
-- `UPDATED`
-- `MIGRATED`
-- `APPENDED`
-- `SKIP`
-
-und die aktive Patch-Version `role-ui-v3-tech`.
 
 # --------------------------------------------------
 # Konfiguration
@@ -331,28 +226,10 @@ Wichtige Dateien:
 Diese Dateien sind Laufzeitdaten und werden nicht versioniert.
 
 # --------------------------------------------------
-# Repository-Regeln
-# --------------------------------------------------
-
-Versioniert werden:
-
-- Quellcode
-- Vorlagen
-- Dokumentation
-- statische Assets
-
-Nicht versioniert werden:
-
-- `.env`
-- `config.json`
-- `data/*.json`
-- lokale Exporte
-- Logs
-
-# --------------------------------------------------
-# Projekt-Dokumentation
+# Dokumentation
 # --------------------------------------------------
 
 - `README.md` kurzer Einstieg und Projektueberblick
-- `BAUPLAN.md` Architektur, Zielbild und naechste Ausbaustufen
+- `BAUPLAN.md` Architektur und Zielbild
 - `strategy.md` Regelwerk und Trading-Logik
+- `docs/TECHNICAL_STATUS.md` aktueller technischer Umsetzungsstand
