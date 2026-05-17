@@ -131,7 +131,22 @@ Zielrichtung:
 
 Die Dashboard-Rollen-Erweiterung liegt in `dashboard_agent_roles_patch.js`.
 
+Aktuelle Dashboard-Patch-Version:
+
+- `role-ui-v3-tech`
+
+Der Patch setzt eine professionellere technische Darstellung um:
+
+- kompaktere Agentenkarten
+- weniger Rundungen
+- technische Monospace-Werte
+- klarere LONG / SHORT / NEUTRAL / Konflikt-Kanten
+- kompaktere CEO-, Prioritaets- und Konfliktbereiche
+- mobile Darstellung bleibt erhalten
+
 Die lokale Dashboard-Vorbereitung liegt in `prepare_dashboard_runtime.py`.
+
+Die Dashboard-Vorbereitung ersetzt vorhandene Patch-Bloecke und verifiziert die aktive Patch-Version.
 
 # --------------------------------------------------
 # Lokale Audit-Schicht
@@ -236,6 +251,7 @@ Copy-Item .env.example .env
 - `.env` vorhanden oder aus Vorlage erstellbar
 - `data`-Ordner vorhanden oder erstellbar
 - Dashboard Runtime vorbereitet
+- Dashboard-Patch-Version verifiziert
 - Agenten-Rollenvertrag gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
@@ -255,6 +271,16 @@ Dashboard Runtime vorbereiten:
 ```powershell
 python .\prepare_dashboard_runtime.py
 ```
+
+Erwartete Dashboard-Runtime-Ausgabe enthaelt eine Aktion wie:
+
+- `ADDED`
+- `UPDATED`
+- `MIGRATED`
+- `APPENDED`
+- `SKIP`
+
+und die aktive Patch-Version `role-ui-v3-tech`.
 
 # --------------------------------------------------
 # Konfiguration
