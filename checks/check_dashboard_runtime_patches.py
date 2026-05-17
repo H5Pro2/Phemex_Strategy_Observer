@@ -18,6 +18,7 @@ REQUIRED_PATCHES = [
     "dashboard_agent_roles_patch.js",
     "dashboard_chart_pane_patch.js",
     "dashboard_kline_native_indicators_patch.js",
+    "dashboard_all_agent_indicators_patch.js",
     "dashboard_agent_setup_cleanup_patch.js",
     "dashboard_settings_layout_patch.js",
     "dashboard_settings_tabs_patch.js",
