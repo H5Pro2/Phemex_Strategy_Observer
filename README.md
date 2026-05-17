@@ -44,6 +44,21 @@ Beispiele:
 
 Kein einzelner Agent entscheidet alleine ueber einen Trade.
 
+## Agentenrollen
+
+Die technische Rollenstruktur ist:
+
+- Struktur
+- Momentum
+- Kontext
+- Risiko
+- Entscheidung
+- Weitere
+
+Die Rollenlogik liegt in `agent_runtime_roles.py`.
+
+Die lokale Pruefung liegt in `check_agent_runtime_roles.py`.
+
 ## CEO Trader
 
 Der CEO bewertet die Gesamtlage aus allen Agentenberichten.
@@ -51,6 +66,7 @@ Der CEO bewertet die Gesamtlage aus allen Agentenberichten.
 Aufgaben:
 
 - Richtungskonsens bewerten
+- Rollen-Konsens bewerten
 - Konflikte erkennen
 - Blocking-Signale beruecksichtigen
 - Agentenqualitaet einordnen
@@ -112,6 +128,10 @@ Zielrichtung:
 - klare Agentenrollen
 - sichtbare Entscheidungslogik
 - reduzierte, lesbare Hinweise
+
+Die Dashboard-Rollen-Erweiterung liegt in `dashboard_agent_roles_patch.js`.
+
+Die lokale Dashboard-Vorbereitung liegt in `prepare_dashboard_runtime.py`.
 
 # --------------------------------------------------
 # Lokale Audit-Schicht
@@ -215,8 +235,26 @@ Copy-Item .env.example .env
 - `config.json` vorhanden oder aus Vorlage erstellbar
 - `.env` vorhanden oder aus Vorlage erstellbar
 - `data`-Ordner vorhanden oder erstellbar
+- Dashboard Runtime vorbereitet
+- Agenten-Rollenvertrag gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
+
+# --------------------------------------------------
+# Technische Pruefungen
+# --------------------------------------------------
+
+Lokale Rollenpruefung:
+
+```powershell
+python .\check_agent_runtime_roles.py
+```
+
+Dashboard Runtime vorbereiten:
+
+```powershell
+python .\prepare_dashboard_runtime.py
+```
 
 # --------------------------------------------------
 # Konfiguration
