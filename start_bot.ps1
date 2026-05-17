@@ -66,6 +66,17 @@ if (Test-Path "prepare_dashboard_runtime.py") {
     }
 }
 
+if (Test-Path "check_agent_runtime_roles.py") {
+    Write-Host "--------------------------------------------------"
+    Write-Host "Pruefe Agenten-Rollenvertrag"
+    Write-Host "--------------------------------------------------"
+    python check_agent_runtime_roles.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FEHLER: Agenten-Rollenvertrag ist ungueltig."
+        exit 1
+    }
+}
+
 Write-Host "--------------------------------------------------"
 Write-Host "Installiere/pruefe Python-Abhaengigkeiten"
 Write-Host "--------------------------------------------------"
