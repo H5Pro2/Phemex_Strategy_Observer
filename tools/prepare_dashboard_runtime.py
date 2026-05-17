@@ -77,6 +77,7 @@ def prepare_dashboard_patches() -> list[str]:
     patches = [
         (root / "ui" / "patches" / "dashboard_agent_roles_patch.js", "dashboard_agent_roles_patch.js"),
         (root / "ui" / "patches" / "dashboard_chart_pane_patch.js", "dashboard_chart_pane_patch.js"),
+        (root / "ui" / "patches" / "dashboard_kline_native_indicators_patch.js", "dashboard_kline_native_indicators_patch.js"),
     ]
     return [inject_dashboard_patch(dashboard_path, patch_path, patch_name) for patch_path, patch_name in patches]
 
