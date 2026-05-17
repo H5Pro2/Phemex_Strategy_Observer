@@ -19,6 +19,7 @@ REQUIRED_PATCHES = [
     "dashboard_chart_pane_patch.js",
     "dashboard_kline_native_indicators_patch.js",
     "dashboard_agent_setup_cleanup_patch.js",
+    "dashboard_settings_layout_patch.js",
 ]
 
 
