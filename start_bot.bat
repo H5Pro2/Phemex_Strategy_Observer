@@ -66,6 +66,18 @@ if exist "tools\prepare_dashboard_runtime.py" (
   )
 )
 
+if exist "checks\check_dashboard_runtime_patches.py" (
+  echo --------------------------------------------------
+  echo Pruefe Dashboard Runtime Patches
+  echo --------------------------------------------------
+  python checks\check_dashboard_runtime_patches.py
+  if errorlevel 1 (
+    echo FEHLER: Dashboard Runtime Patches sind ungueltig.
+    pause
+    exit /b 1
+  )
+)
+
 if exist "checks\check_agent_runtime_roles.py" (
   echo --------------------------------------------------
   echo Pruefe Agenten-Rollenvertrag
