@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v2-separate-panes';
+  const PATCH_VERSION = '2026-05-17-kline-native-indicators-v3-full';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
   let mfiRegistered = false;
@@ -122,6 +122,20 @@
     window.__botNativeIndicators = {};
   }
 
+  function addPriceLineFromData(indicatorData, names) {
+    const chart = chartInstance();
+    if (!chart || typeof chart.createOverlay !== 'function') return 'attempted';
+    const lines = (indicatorData?.lines || []).filter(line => names.some(name => String(line?.name || '').toUpperCase().includes(name)));
+    lines.forEach(line => {
+      const points = (line.series || []).map(point => ({ timestamp: point.timestamp, value: point.value })).filter(point => Number.isFinite(Number(point.value)));
+      if (!points.length) return;
+      try {
+        chart.createOverlay({ name: 'segment', id: `bot_${String(line.name).toLowerCase()}_line`, points, styles: { line: { color: line.color || '#94a3b8', size: 1 } } });
+      } catch (_) {}
+    });
+    return lines.length ? 'overlay' : null;
+  }
+
   function ensureNativeIndicators(indicatorData) {
     const chart = chartInstance();
     if (!chart || typeof chart.createIndicator !== 'function') return;
@@ -137,16 +151,22 @@
       registerMfiIndicator();
       window.__botNativeIndicators.mfi = createIndicatorSafe(chart, { name: 'BOT_MFI', id: 'BOT_MFI_MAIN', calcParams: [14] }, 'bot_mfi_pane', 70, 130) || 'attempted';
     }
+    if (hasIndicatorLine(indicatorData, 'VOLUME') && !window.__botNativeIndicators.volume) {
+      window.__botNativeIndicators.volume = createIndicatorSafe(chart, 'VOL', 'bot_volume_pane', 80, 120) || 'attempted';
+    }
+    if (hasIndicatorLine(indicatorData, 'VWAP') && !window.__botNativeIndicators.vwap) {
+      window.__botNativeIndicators.vwap = addPriceLineFromData(indicatorData, ['VWAP']) || 'attempted';
+    }
 
     const status = document.getElementById('chartPluginStatus');
     if (status) {
       const active = Object.keys(window.__botNativeIndicators).filter(key => window.__botNativeIndicators[key]).join(' / ');
-      status.textContent = `KLineCharts · separate Pane ${active || 'bereit'}`;
+      status.textContent = `KLineCharts · Indikatoren ${active || 'bereit'}`;
     }
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__nativeIndicatorPatchedV2) return;
+    if (window.drawChart?.__nativeIndicatorPatchedV3) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedNativeIndicatorDrawChart(candles, overlay, indicatorData) {
@@ -155,7 +175,7 @@
       ensureNativeIndicators(indicatorData);
       return result;
     };
-    window.drawChart.__nativeIndicatorPatchedV2 = true;
+    window.drawChart.__nativeIndicatorPatchedV3 = true;
   }
 
   function patchClearChart() {
