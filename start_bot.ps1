@@ -66,6 +66,17 @@ if (Test-Path "tools/prepare_dashboard_runtime.py") {
     }
 }
 
+if (Test-Path "checks/check_dashboard_runtime_patches.py") {
+    Write-Host "--------------------------------------------------"
+    Write-Host "Pruefe Dashboard Runtime Patches"
+    Write-Host "--------------------------------------------------"
+    python checks/check_dashboard_runtime_patches.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FEHLER: Dashboard Runtime Patches sind ungueltig."
+        exit 1
+    }
+}
+
 if (Test-Path "checks/check_agent_runtime_roles.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Agenten-Rollenvertrag"
