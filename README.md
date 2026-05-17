@@ -90,6 +90,19 @@ Aufgaben:
 
 LL / HH Boxen sind bevorzugte Entry-Zonen, aber keine Pflichtbedingung.
 
+Die Brain-/Replay-Erweiterung liegt in `brain_replay_enhancements.py`.
+
+Die lokale Pruefung liegt in `check_brain_replay_enhancements.py`.
+
+Umgesetzt:
+
+- stabilerer Pattern-Key `v2`
+- rollenbasierter Pattern-Key
+- robustere Replay-Regelgewichtung
+- Asset-spezifische Replay-Regeln
+- Edge-Score aus Winrate, AvgR und Profit-Factor
+- Schutz gegen zu kleine Datenbasis
+
 ## Economic Gate
 
 Das Economic Gate ist die harte mathematische Sperre.
@@ -116,6 +129,8 @@ Ziel:
 - schlechte Pattern-Kombinationen erkennen
 - starke Agenten-Kombinationen hervorheben
 - Dashboard-Auswertung verbessern
+
+Replay-Regeln werden nicht nur nach GOOD/BAD bewertet, sondern mit einem sicheren Edge-Score aus Datenbasis, Winrate, AvgR und Profit-Factor abgesichert.
 
 ## Dashboard
 
@@ -253,6 +268,7 @@ Copy-Item .env.example .env
 - Dashboard Runtime vorbereitet
 - Dashboard-Patch-Version verifiziert
 - Agenten-Rollenvertrag gueltig
+- Brain-/Replay-Erweiterung gueltig
 - Python-Abhaengigkeiten installierbar
 - Bot-Start ohne Fehler
 
@@ -264,6 +280,12 @@ Lokale Rollenpruefung:
 
 ```powershell
 python .\check_agent_runtime_roles.py
+```
+
+Lokale Brain-/Replay-Pruefung:
+
+```powershell
+python .\check_brain_replay_enhancements.py
 ```
 
 Dashboard Runtime vorbereiten:
