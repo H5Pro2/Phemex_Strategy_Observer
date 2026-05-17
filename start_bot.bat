@@ -78,6 +78,18 @@ if exist "check_agent_runtime_roles.py" (
   )
 )
 
+if exist "check_brain_replay_enhancements.py" (
+  echo --------------------------------------------------
+  echo Pruefe Brain Replay Enhancements
+  echo --------------------------------------------------
+  python check_brain_replay_enhancements.py
+  if errorlevel 1 (
+    echo FEHLER: Brain Replay Enhancements sind ungueltig.
+    pause
+    exit /b 1
+  )
+)
+
 echo --------------------------------------------------
 echo Installiere/pruefe Python-Abhaengigkeiten
 echo --------------------------------------------------
