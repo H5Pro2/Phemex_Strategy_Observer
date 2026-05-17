@@ -88,6 +88,17 @@ if (Test-Path "check_brain_replay_enhancements.py") {
     }
 }
 
+if (Test-Path "check_brain_dashboard_enhancements.py") {
+    Write-Host "--------------------------------------------------"
+    Write-Host "Pruefe Brain Dashboard Enhancements"
+    Write-Host "--------------------------------------------------"
+    python check_brain_dashboard_enhancements.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FEHLER: Brain Dashboard Enhancements sind ungueltig."
+        exit 1
+    }
+}
+
 Write-Host "--------------------------------------------------"
 Write-Host "Installiere/pruefe Python-Abhaengigkeiten"
 Write-Host "--------------------------------------------------"
