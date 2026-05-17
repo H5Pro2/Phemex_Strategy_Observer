@@ -55,11 +55,11 @@ if (-not (Test-Path "data")) {
     New-Item -ItemType Directory -Path "data" | Out-Null
 }
 
-if (Test-Path "prepare_dashboard_runtime.py") {
+if (Test-Path "tools/prepare_dashboard_runtime.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Bereite Dashboard Runtime vor"
     Write-Host "--------------------------------------------------"
-    python prepare_dashboard_runtime.py
+    python tools/prepare_dashboard_runtime.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Dashboard Runtime konnte nicht vorbereitet werden."
         exit 1
