@@ -147,8 +147,12 @@ def apply_economic_gate_to_brain_decision(brain_decision: dict[str, Any], value_
 
 
 # --------------------------------------------------
-# PATCH APPLICATION
+# INSTALLATION
 # --------------------------------------------------
-def apply_brain_dashboard_enhancement_patch() -> None:
+def install() -> None:
     br.build_brain_decision = build_brain_decision
     br.apply_economic_gate_to_brain_decision = apply_economic_gate_to_brain_decision
+
+
+def apply_brain_dashboard_enhancement_patch() -> None:
+    install()
