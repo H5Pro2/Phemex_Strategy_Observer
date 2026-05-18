@@ -15,6 +15,13 @@ except Exception:
     pass
 
 try:
+    from brain_ceo_quality_enhancements import apply_brain_ceo_quality_patch
+
+    apply_brain_ceo_quality_patch()
+except Exception:
+    pass
+
+try:
     import brain_dashboard_enhancements
 
     brain_dashboard_enhancements.install()
