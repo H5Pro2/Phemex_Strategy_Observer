@@ -5,34 +5,63 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-18-agent-setup-final-order-v1';
+  const PATCH_VERSION = '2026-05-18-agent-setup-final-order-v2-real-groups';
   const CHART_VIEW_SECTIONS = ['hma', 'sma', 'triple_ema', 'macd', 'mfi', 'rsi', 'vwap', 'volume'];
   const CHART_STATUS_SECTIONS = ['breakout_fakeout', 'volatility_regime', 'risk'];
+  let orderScheduled = false;
+
+  function setupView() {
+    return document.getElementById('agentSetupView') || null;
+  }
 
   function setupBody() {
-    return document.getElementById('agentSetupView')?.querySelector('.configModalBody') || null;
+    return setupView()?.querySelector('.configModalBody') || null;
+  }
+
+  function sectionGroup(section) {
+    return setupView()?.querySelector(`[data-agent-section="${section}"]`) || null;
   }
 
   function directHeaderBlocks(body) {
-    return Array.from(body?.querySelectorAll('.settingsGroup') || []).filter(block => {
+    return Array.from(body?.querySelectorAll(':scope > .settingsGroup') || []).filter(block => {
       if (block.dataset.agentSection) return false;
       const title = String(block.querySelector(':scope > h3')?.textContent || '').trim();
       return /Direkte Agenten|Agenten ohne eigene Hauptchart-Linie|Nur Bewertungsagenten/i.test(title);
     });
   }
 
-  function sectionGroup(body, section) {
-    return body?.querySelector(`[data-agent-section="${section}"]`) || null;
+  function baseReference(body) {
+    const tabs = body.querySelector(':scope > .settingsTabsBar');
+    const firstNormalGroup = Array.from(body.children).find(child => {
+      if (child.id === 'agentSetupChartViewGroup') return false;
+      if (child.id === 'agentSetupChartStatusGroup') return false;
+      if (child.classList?.contains('settingsTabsBar')) return false;
+      return child.classList?.contains('settingsGroup') && !child.dataset.agentSection;
+    });
+    return firstNormalGroup || tabs || body.firstElementChild;
   }
 
-  function sectionHeader(id, title, detail, mode) {
-    const existing = document.getElementById(id);
-    if (existing) existing.remove();
-    const header = document.createElement('div');
-    header.id = id;
-    header.className = `agentSetupFinalSectionHeader ${mode}`;
-    header.innerHTML = `<div><strong>${title}</strong><span>${detail}</span></div>`;
-    return header;
+  function createShell(id, mode, title, detail) {
+    let shell = document.getElementById(id);
+    if (!shell) {
+      shell = document.createElement('section');
+      shell.id = id;
+      shell.className = `agentSetupFinalGroup ${mode}`;
+      shell.innerHTML = `
+        <div class="agentSetupFinalGroupHeader">
+          <div>
+            <strong>${title}</strong>
+            <span>${detail}</span>
+          </div>
+        </div>
+        <div class="agentSetupFinalCards"></div>
+      `;
+    }
+    return shell;
+  }
+
+  function cardsContainer(shell) {
+    return shell.querySelector('.agentSetupFinalCards');
   }
 
   function insertAfter(reference, node) {
@@ -54,49 +83,62 @@
     grid.insertBefore(badge, grid.firstChild);
   }
 
+  function removeLegacyHeaders(body) {
+    directHeaderBlocks(body).forEach(block => block.remove());
+    document.getElementById('agentSetupChartViewAgentsHeader')?.remove();
+    document.getElementById('agentSetupChartStatusAgentsHeader')?.remove();
+    document.getElementById('agentSetupEvaluationAgentsHeader')?.remove();
+  }
+
+  function moveGroupsIntoShell(sections, shell, mode, label) {
+    const cards = cardsContainer(shell);
+    if (!cards) return;
+    sections.map(sectionGroup).filter(Boolean).forEach(group => {
+      markGroup(group, mode, label);
+      cards.appendChild(group);
+    });
+  }
+
   function applyFinalOrder() {
+    orderScheduled = false;
     const body = setupBody();
     if (!body) return;
 
-    const tabs = body.querySelector('.settingsTabsBar');
+    const tabs = body.querySelector(':scope > .settingsTabsBar');
     if (tabs && tabs !== body.firstElementChild) body.insertBefore(tabs, body.firstElementChild);
 
-    directHeaderBlocks(body).forEach(block => block.remove());
-    document.getElementById('agentSetupEvaluationAgentsHeader')?.remove();
+    removeLegacyHeaders(body);
 
-    const chartGroups = CHART_VIEW_SECTIONS.map(section => sectionGroup(body, section)).filter(Boolean);
-    const statusGroups = CHART_STATUS_SECTIONS.map(section => sectionGroup(body, section)).filter(Boolean);
-
-    chartGroups.forEach(group => markGroup(group, 'chart', 'Chart View'));
-    statusGroups.forEach(group => markGroup(group, 'status', 'Chart Status'));
-
-    const firstNormalGroup = Array.from(body.children).find(child => {
-      if (child.classList?.contains('settingsTabsBar')) return false;
-      if (child.classList?.contains('agentSetupFinalSectionHeader')) return false;
-      return child.classList?.contains('settingsGroup') && !child.dataset.agentSection;
-    });
-
-    const reference = firstNormalGroup || tabs || body.firstElementChild;
-    const chartHeader = sectionHeader(
-      'agentSetupChartViewAgentsHeader',
+    const chartShell = createShell(
+      'agentSetupChartViewGroup',
+      'chart',
       'Chart View Agenten',
-      'HMA, SMA, Triple EMA, MACD, MFI, RSI, VWAP und Volume werden im Chart dargestellt.',
-      'chart'
+      'HMA, SMA, Triple EMA, MACD, MFI, RSI, VWAP und Volume werden im Chart dargestellt.'
     );
-    const statusHeader = sectionHeader(
-      'agentSetupChartStatusAgentsHeader',
+    const statusShell = createShell(
+      'agentSetupChartStatusGroup',
+      'status',
       'Chart Status Agenten',
-      'Breakout/Fakeout, Volatility und Risk erscheinen als Statusbereich im Chartfenster.',
-      'status'
+      'Breakout/Fakeout, Volatility und Risk erscheinen als Statusbereich im Chartfenster.'
     );
 
-    body.insertBefore(chartHeader, reference?.nextSibling || body.firstChild);
-    let cursor = chartHeader;
-    chartGroups.forEach(group => { cursor = insertAfter(cursor, group); });
-    cursor = insertAfter(cursor, statusHeader);
-    statusGroups.forEach(group => { cursor = insertAfter(cursor, group); });
+    const reference = baseReference(body);
+    insertAfter(reference, chartShell);
+    insertAfter(chartShell, statusShell);
+
+    moveGroupsIntoShell(CHART_VIEW_SECTIONS, chartShell, 'chart', 'Chart View');
+    moveGroupsIntoShell(CHART_STATUS_SECTIONS, statusShell, 'status', 'Chart Status');
+
+    chartShell.hidden = cardsContainer(chartShell)?.children.length <= 0;
+    statusShell.hidden = cardsContainer(statusShell)?.children.length <= 0;
 
     document.body.dataset.agentSetupFinalOrderPatch = PATCH_VERSION;
+  }
+
+  function scheduleFinalOrder(delay = 40) {
+    if (orderScheduled) return;
+    orderScheduled = true;
+    window.setTimeout(applyFinalOrder, delay);
   }
 
   function installStyles() {
@@ -105,33 +147,58 @@
     const style = document.createElement('style');
     style.id = 'agent-setup-final-order-style';
     style.textContent = `
+      #agentSetupView {
+        position:relative !important;
+        z-index:80 !important;
+        isolation:isolate !important;
+        background:var(--bg) !important;
+      }
+      #agentSetupView.hidden {
+        display:none !important;
+      }
+      #agentSetupView > .card {
+        position:relative !important;
+        z-index:90 !important;
+        width:100% !important;
+        max-width:none !important;
+        overflow:visible !important;
+        box-shadow:0 18px 45px rgba(0,0,0,.28) !important;
+      }
       #agentSetupView .configModalBody {
         display:grid !important;
-        grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) !important;
-        gap:16px !important;
+        grid-template-columns:repeat(auto-fit, minmax(390px, 1fr)) !important;
+        gap:18px !important;
         align-items:start !important;
+        overflow:visible !important;
       }
       #agentSetupView .settingsTabsBar,
       #agentSetupView .settingsGroup:not([data-agent-section]),
-      #agentSetupView .agentSetupFinalSectionHeader {
+      #agentSetupView .agentSetupFinalGroup {
         grid-column:1 / -1 !important;
       }
-      #agentSetupView .agentSetupFinalSectionHeader {
-        min-height:66px !important;
+      #agentSetupView .agentSetupFinalGroup {
+        display:block !important;
+        padding:14px !important;
+        border:1px solid var(--line) !important;
+        border-radius:10px !important;
+        background:rgba(15,23,42,.22) !important;
+      }
+      #agentSetupView .agentSetupFinalGroup.chart {
+        border-left:6px solid #22d3ee !important;
+      }
+      #agentSetupView .agentSetupFinalGroup.status {
+        border-left:6px solid #a78bfa !important;
+      }
+      #agentSetupView .agentSetupFinalGroupHeader {
         display:flex !important;
         align-items:center !important;
-        padding:14px 16px !important;
-        border:1px solid var(--line) !important;
-        border-radius:8px !important;
-        background:rgba(15,23,42,.28) !important;
+        justify-content:space-between !important;
+        min-height:56px !important;
+        margin:0 0 14px !important;
+        padding:4px 2px 12px !important;
+        border-bottom:1px solid rgba(148,163,184,.18) !important;
       }
-      #agentSetupView .agentSetupFinalSectionHeader.chart {
-        border-left:5px solid #22d3ee !important;
-      }
-      #agentSetupView .agentSetupFinalSectionHeader.status {
-        border-left:5px solid #a78bfa !important;
-      }
-      #agentSetupView .agentSetupFinalSectionHeader strong {
+      #agentSetupView .agentSetupFinalGroupHeader strong {
         display:block !important;
         color:var(--ink) !important;
         font-size:15px !important;
@@ -139,11 +206,52 @@
         letter-spacing:.07em !important;
         text-transform:uppercase !important;
       }
-      #agentSetupView .agentSetupFinalSectionHeader span {
+      #agentSetupView .agentSetupFinalGroupHeader span {
         display:block !important;
         margin-top:5px !important;
         color:var(--muted) !important;
         font-size:12px !important;
+        line-height:1.35 !important;
+      }
+      #agentSetupView .agentSetupFinalCards {
+        display:grid !important;
+        grid-template-columns:repeat(auto-fit, minmax(390px, 1fr)) !important;
+        gap:16px !important;
+        align-items:stretch !important;
+      }
+      #agentSetupView .agentSetupFinalCards > .settingsGroup,
+      #agentSetupView .agentSetupFinalCards > .agentIndicatorGroup,
+      #agentSetupView .agentSetupFinalCards > .agentDirectGroup,
+      #agentSetupView .agentSetupFinalCards > .agentUtilityGroup {
+        min-height:238px !important;
+        height:238px !important;
+        max-height:238px !important;
+        display:flex !important;
+        flex-direction:column !important;
+        overflow:hidden !important;
+        margin:0 !important;
+      }
+      #agentSetupView .agentSetupFinalCards > .settingsGroup > h3,
+      #agentSetupView .agentSetupFinalCards > .agentIndicatorGroup > h3,
+      #agentSetupView .agentSetupFinalCards > .agentDirectGroup > h3,
+      #agentSetupView .agentSetupFinalCards > .agentUtilityGroup > h3 {
+        min-height:24px !important;
+        margin-bottom:8px !important;
+        overflow:hidden !important;
+        text-overflow:ellipsis !important;
+        white-space:nowrap !important;
+      }
+      #agentSetupView .agentSetupFinalCards .settingsGroupGrid {
+        flex:1 1 auto !important;
+        display:grid !important;
+        grid-template-columns:repeat(2, minmax(0, 1fr)) !important;
+        gap:10px 12px !important;
+        align-content:start !important;
+        overflow:hidden !important;
+      }
+      #agentSetupView .agentSetupFinalCards .label.fullWidth,
+      #agentSetupView .agentSetupFinalCards .fullWidth {
+        grid-column:1 / -1 !important;
       }
       #agentSetupView [data-agent-display-group="chart"] {
         border-left:4px solid #22d3ee !important;
@@ -176,6 +284,28 @@
         border-color:#7c3aed !important;
         background:rgba(124,58,237,.14) !important;
       }
+      #agentSetupView .modalActions {
+        position:sticky !important;
+        bottom:0 !important;
+        z-index:110 !important;
+        background:linear-gradient(180deg, rgba(17,24,39,.92), rgba(17,24,39,.99)) !important;
+        border-top:1px solid var(--line) !important;
+        box-shadow:0 -12px 30px rgba(0,0,0,.22) !important;
+      }
+      @media (max-width:900px) {
+        #agentSetupView .configModalBody,
+        #agentSetupView .agentSetupFinalCards {
+          grid-template-columns:1fr !important;
+        }
+        #agentSetupView .agentSetupFinalCards > .settingsGroup,
+        #agentSetupView .agentSetupFinalCards > .agentIndicatorGroup,
+        #agentSetupView .agentSetupFinalCards > .agentDirectGroup,
+        #agentSetupView .agentSetupFinalCards > .agentUtilityGroup {
+          height:auto !important;
+          max-height:none !important;
+          min-height:238px !important;
+        }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -184,15 +314,19 @@
     document.addEventListener('click', event => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target.closest('#agentSetupButton, [data-view="agentSetup"], .settingsTabButton')) {
-        window.setTimeout(applyFinalOrder, 40);
+      if (target.closest('#agentSetupViewButton, #agentSetupButton, [data-view="agentSetup"], .settingsTabButton')) {
+        scheduleFinalOrder(40);
         window.setTimeout(applyFinalOrder, 250);
       }
     }, true);
 
-    const view = document.getElementById('agentSetupView');
+    const view = setupView();
     if (view && !view.dataset.finalOrderObserver) {
-      const observer = new MutationObserver(() => window.requestAnimationFrame(applyFinalOrder));
+      const observer = new MutationObserver(mutations => {
+        if (mutations.some(mutation => Array.from(mutation.addedNodes).some(node => node instanceof Element))) {
+          scheduleFinalOrder(60);
+        }
+      });
       observer.observe(view, { childList: true, subtree: true });
       view.dataset.finalOrderObserver = '1';
     }
