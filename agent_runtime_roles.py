@@ -225,10 +225,54 @@ def _role_signal_summary(reports: list[ar.AgentReport]) -> dict[str, dict[str, A
 
 
 # --------------------------------------------------
+# CEO QUALITY OVERVIEW
+# --------------------------------------------------
+def _ceo_quality_overview(reports: list[ar.AgentReport]) -> dict[str, Any]:
+    overview: dict[str, Any] = {
+        "strong_agents": [],
+        "ok_agents": [],
+        "weak_agents": [],
+        "offline_agents": [],
+        "blocking_agents": [],
+        "conflict_agents": [],
+        "usable_agents": [],
+        "role_counts": {},
+        "reliability_avg": 0,
+    }
+    reliability_sum = 0
+    for report in reports:
+        profile = _agent_quality_profile(report)
+        quality = str(profile.get("quality", "WEAK")).upper()
+        role = str(profile.get("role", _agent_role(report.agent_name)))
+        overview["role_counts"][role] = int(overview["role_counts"].get(role, 0)) + 1
+        reliability_sum += int(profile.get("reliability_score", 0))
+        name = report.agent_name
+        if quality == "STRONG":
+            overview["strong_agents"].append(name)
+        elif quality == "OK":
+            overview["ok_agents"].append(name)
+        elif quality == "OFFLINE":
+            overview["offline_agents"].append(name)
+        elif quality == "BLOCK":
+            overview["blocking_agents"].append(name)
+        else:
+            overview["weak_agents"].append(name)
+        if bool(profile.get("usable_for_bias")):
+            overview["usable_agents"].append(name)
+        if report.conflict:
+            overview["conflict_agents"].append(name)
+        if report.blocking and name not in overview["blocking_agents"]:
+            overview["blocking_agents"].append(name)
+    overview["reliability_avg"] = int(reliability_sum / max(1, len(reports))) if reports else 0
+    return overview
+
+
+# --------------------------------------------------
 # CEO AGENT CONTRACT
 # --------------------------------------------------
 def _ceo_agent(reports: list[ar.AgentReport]) -> ar.AgentReport:
     role_groups = _role_signal_summary(reports)
+    quality_overview = _ceo_quality_overview(reports)
     blocking = any(report.blocking for report in reports)
     structure = role_groups.get("structure", {})
     momentum = role_groups.get("momentum", {})
@@ -270,44 +314,81 @@ def _ceo_agent(reports: list[ar.AgentReport]) -> ar.AgentReport:
         + float(context.get("short_score", 0)) * 0.45
     )
     weighted_gap = abs(weighted_long - weighted_short)
-    data_quality_penalty = min(22, weak_count * 3 + offline_count * 6)
+    data_quality_penalty = min(28, weak_count * 3 + offline_count * 6)
     long_direction_count = max(1, primary_long_count + int(context.get("long_count", 0)))
     short_direction_count = max(1, primary_short_count + int(context.get("short_count", 0)))
     base_strength = int(max(weighted_long / long_direction_count, weighted_short / short_direction_count)) if (long_count + short_count) else 50
     quality_score = max(0, min(100, base_strength - data_quality_penalty))
 
+    structure_strength = int(structure.get("quality_strength", structure.get("strength", 0)) or 0)
+    momentum_strength = int(momentum.get("quality_strength", momentum.get("strength", 0)) or 0)
+    context_strength = int(context.get("quality_strength", context.get("strength", 0)) or 0)
+    primary_aligned = structure_signal in ("LONG", "SHORT") and structure_signal == momentum_signal
+    context_supports_primary = context_signal in ("LONG", "SHORT") and context_signal in (structure_signal, momentum_signal)
+    role_alignment_score = 0
+    if primary_aligned:
+        role_alignment_score = int((structure_strength * 1.35 + momentum_strength * 1.05) / 2.4)
+        if context_supports_primary:
+            role_alignment_score = min(100, role_alignment_score + max(4, int(context_strength * 0.08)))
+    elif structure_signal in ("LONG", "SHORT") or momentum_signal in ("LONG", "SHORT"):
+        role_alignment_score = max(structure_strength, momentum_strength) - 18
+        if context_supports_primary:
+            role_alignment_score += 6
+    else:
+        role_alignment_score = min(45, quality_score)
+    if hard_role_conflict:
+        role_alignment_score -= 25
+    if blocking:
+        role_alignment_score -= 40
+    role_alignment_score = max(0, min(100, int(role_alignment_score - min(18, offline_count * 4))))
+    final_quality_score = max(0, min(100, int((quality_score * 0.65) + (role_alignment_score * 0.35))))
+
     if blocking:
         decision: ar.AgentDecision = "BLOCKED"
         score = 0
+        decision_grade = "BLOCKED"
         reason = "Mindestens ein blockierender Agent meldet Blockade."
     elif hard_role_conflict:
         decision = "WAIT"
-        score = max(0, min(100, quality_score))
+        score = max(0, min(100, final_quality_score))
+        decision_grade = "CONFLICT"
         reason = f"Struktur und Momentum widersprechen sich: Struktur {structure_signal}, Momentum {momentum_signal}."
     elif primary_usable_count < 2:
         decision = "WAIT"
-        score = max(35, min(55, quality_score))
+        score = max(35, min(55, final_quality_score))
+        decision_grade = "NO_PRIMARY_CONFIRMATION"
         reason = "Zu wenige nutzbare Struktur-/Momentum-Agenten fuer CEO-Bias."
     elif weighted_long > weighted_short and weighted_long >= 110 and weighted_gap >= 22 and primary_long_count >= 2:
         decision = "LONG_BIAS"
-        score = max(0, min(100, quality_score))
+        score = max(0, min(100, final_quality_score))
+        decision_grade = "A" if score >= 78 and primary_aligned else "B" if score >= 64 else "C"
         reason = f"Rollen-Konsens LONG: Struktur {structure_signal}, Momentum {momentum_signal}, Kontext {context_signal}, Risk {risk_signal}."
     elif weighted_short > weighted_long and weighted_short >= 110 and weighted_gap >= 22 and primary_short_count >= 2:
         decision = "SHORT_BIAS"
-        score = max(0, min(100, quality_score))
+        score = max(0, min(100, final_quality_score))
+        decision_grade = "A" if score >= 78 and primary_aligned else "B" if score >= 64 else "C"
         reason = f"Rollen-Konsens SHORT: Struktur {structure_signal}, Momentum {momentum_signal}, Kontext {context_signal}, Risk {risk_signal}."
     else:
         decision = "WAIT"
-        score = max(35, min(60, quality_score))
+        score = max(35, min(60, final_quality_score))
+        decision_grade = "WAIT"
         reason = "Keine ausreichende Rollen-Bestaetigung zwischen Struktur und Momentum."
+
+    reason_parts = [reason]
+    if quality_overview.get("blocking_agents"):
+        reason_parts.append("Blocker: " + ", ".join(quality_overview["blocking_agents"][:4]))
+    if quality_overview.get("offline_agents"):
+        reason_parts.append("Offline: " + ", ".join(quality_overview["offline_agents"][:4]))
+    if quality_overview.get("weak_agents"):
+        reason_parts.append("Schwach: " + ", ".join(quality_overview["weak_agents"][:4]))
 
     return ar.AgentReport(
         agent_name="CEO Agent",
         function="Agentenberichte nach Rollen, Datenqualitaet, Konflikten und Risk-Gates bewerten",
         signal="LONG" if decision == "LONG_BIAS" else "SHORT" if decision == "SHORT_BIAS" else "NEUTRAL",
         score=score,
-        reads=f"Structure {structure_signal} | Momentum {momentum_signal} | Context {context_signal} | Risk {risk_signal} | Quality {quality_score} | LONG {long_count}/{round(long_score, 1)} | SHORT {short_count}/{round(short_score, 1)}",
-        message=f"{decision}: {reason}",
+        reads=f"Grade {decision_grade} | Align {role_alignment_score} | Quality {quality_score}->{final_quality_score} | Structure {structure_signal} | Momentum {momentum_signal} | Context {context_signal} | Risk {risk_signal} | LONG {long_count}/{round(long_score, 1)} | SHORT {short_count}/{round(short_score, 1)}",
+        message=f"{decision}: {' | '.join(reason_parts)}",
         conflict=conflict or hard_role_conflict,
         blocking=blocking,
         role="decision",
@@ -320,6 +401,11 @@ def _ceo_agent(reports: list[ar.AgentReport]) -> ar.AgentReport:
             "weighted_short_score": round(weighted_short, 3),
             "weighted_gap": round(weighted_gap, 3),
             "quality_score": quality_score,
+            "final_quality_score": final_quality_score,
+            "role_alignment_score": role_alignment_score,
+            "decision_grade": decision_grade,
+            "primary_aligned": primary_aligned,
+            "context_supports_primary": context_supports_primary,
             "data_quality_penalty": data_quality_penalty,
             "usable_count": usable_count,
             "primary_usable_count": primary_usable_count,
@@ -330,6 +416,8 @@ def _ceo_agent(reports: list[ar.AgentReport]) -> ar.AgentReport:
             "offline_count": offline_count,
             "decision": decision,
             "reason": reason,
+            "reason_parts": reason_parts,
+            "quality_overview": quality_overview,
             "role_groups": role_groups,
             "hard_role_conflict": hard_role_conflict,
         },
