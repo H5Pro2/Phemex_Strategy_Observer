@@ -85,6 +85,7 @@ def prepare_dashboard_patches() -> list[str]:
         (root / "ui" / "patches" / "dashboard_settings_tabs_patch.js", "dashboard_settings_tabs_patch.js"),
         (root / "ui" / "patches" / "dashboard_agent_setup_final_order_patch.js", "dashboard_agent_setup_final_order_patch.js"),
         (root / "ui" / "patches" / "dashboard_chart_status_layout_fix_patch.js", "dashboard_chart_status_layout_fix_patch.js"),
+        (root / "ui" / "patches" / "dashboard_bot_view_layout_patch.js", "dashboard_bot_view_layout_patch.js"),
     ]
     return [inject_dashboard_patch(dashboard_path, patch_path, patch_name) for patch_path, patch_name in patches]
 
