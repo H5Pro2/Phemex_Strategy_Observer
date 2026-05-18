@@ -5,9 +5,10 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v6-clean-agent-order';
+  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v7-direct-status-chart';
   const CHART_VIEW_SECTIONS = ['hma', 'sma', 'triple_ema', 'macd', 'mfi', 'rsi', 'vwap', 'volume'];
-  const EVALUATION_ONLY_SECTIONS = ['breakout_fakeout', 'volatility_regime', 'risk'];
+  const CHART_STATUS_SECTIONS = ['breakout_fakeout', 'volatility_regime', 'risk'];
+  const EVALUATION_ONLY_SECTIONS = [];
   let originalDrawChart = null;
   let originalClearKlineChart = null;
   let directVolumeRegistered = false;
@@ -22,6 +23,13 @@
     if (window.latestConfig) return window.latestConfig;
     if (window.latestStatusData?.config) return window.latestStatusData.config;
     return {};
+  }
+
+  function runtimeStatus() {
+    try {
+      if (typeof latestStatusData !== 'undefined' && latestStatusData) return latestStatusData;
+    } catch (_) {}
+    return window.latestStatusData || null;
   }
 
   function configValue(key, fallback = undefined) {
@@ -71,6 +79,56 @@
     return number > 1000000000000 ? Math.floor(number / 1000) : number;
   }
 
+  function selectedChartSymbol() {
+    const explicit = document.getElementById('chartAsset')?.value || document.getElementById('assetFilter')?.value;
+    const cfg = runtimeConfig();
+    const fallback = Array.isArray(cfg.symbols) && cfg.symbols.length ? cfg.symbols[0] : '';
+    const value = explicit && explicit !== '__ALL__' ? explicit : fallback;
+    return String(value || '').replace('.P', '').split(':', 1)[0].trim().toUpperCase();
+  }
+
+  function currentAgentBoard() {
+    const status = runtimeStatus();
+    const symbol = selectedChartSymbol();
+    if (!status || !symbol) return null;
+    return status?.cycle?.agents?.[symbol] || status?.cycle?.symbols?.[symbol]?.agents || null;
+  }
+
+  function agentReports() {
+    const board = currentAgentBoard();
+    const reports = Array.isArray(board?.reports) ? board.reports : [];
+    const extended = reports.slice();
+    if (board?.brain) extended.push({ ...board.brain, agent_name: 'Brain Agent' });
+    if (board?.ceo) extended.push({ ...board.ceo, agent_name: 'CEO Agent' });
+    return extended.filter(Boolean);
+  }
+
+  function findReport(...needles) {
+    const wanted = needles.map(item => String(item || '').toLowerCase());
+    return agentReports().find(report => {
+      const name = String(report?.agent_name || '').toLowerCase();
+      return wanted.every(needle => name.includes(needle));
+    }) || null;
+  }
+
+  function textValue(value, fallback = '-') {
+    if (value === null || value === undefined || value === '') return fallback;
+    return String(value);
+  }
+
+  function scoreText(report) {
+    const number = Number(report?.score);
+    return Number.isFinite(number) ? String(Math.round(number)) : '-';
+  }
+
+  function signalClass(report) {
+    const signal = String(report?.signal || 'NEUTRAL').toLowerCase();
+    if (report?.blocking) return 'blocked';
+    if (signal === 'long') return 'long';
+    if (signal === 'short') return 'short';
+    return 'neutral';
+  }
+
   function registerDirectVolumeIndicator() {
     if (directVolumeRegistered) return;
     const api = apiInstance();
@@ -111,7 +169,7 @@
     }
   }
 
-  function createOverlaySafe(id, points, color) {
+  function createOverlaySafe(id, points, color, size = 1) {
     const chart = chartInstance();
     if (!chart || typeof chart.createOverlay !== 'function' || !points.length) return null;
     try {
@@ -119,7 +177,7 @@
         name: 'segment',
         id,
         points,
-        styles: { line: { color: color || '#14b8a6', size: 1 } }
+        styles: { line: { color: color || '#14b8a6', size } }
       });
       return { type: 'overlay', id };
     } catch (_) {
@@ -216,6 +274,76 @@
     }, 80);
   }
 
+  function drawBreakoutRange(candles, report) {
+    const details = report?.details || {};
+    const high = Number(details.range_high);
+    const low = Number(details.range_low);
+    const typed = Array.isArray(candles) ? candles : [];
+    if (!Number.isFinite(high) || !Number.isFinite(low) || typed.length < 2) return;
+    const start = candleTime(typed[Math.max(0, typed.length - 48)]);
+    const end = candleTime(typed[typed.length - 1]);
+    if (start === null || end === null) return;
+    window.__botDirectAgentChartView.breakoutHigh = createOverlaySafe('bot_direct_breakout_high', [{ timestamp: start, value: high }, { timestamp: end, value: high }], '#f472b6', 1) || 'attempted';
+    window.__botDirectAgentChartView.breakoutLow = createOverlaySafe('bot_direct_breakout_low', [{ timestamp: start, value: low }, { timestamp: end, value: low }], '#f472b6', 1) || 'attempted';
+  }
+
+  function directAgentTile(title, report, detail) {
+    const cls = signalClass(report);
+    const signal = textValue(report?.signal, 'NEUTRAL');
+    return `
+      <div class="directAgentChartTile ${cls}">
+        <div class="directAgentChartTileHead"><strong>${title}</strong><span>${signal}</span></div>
+        <div class="directAgentChartScore">Score ${scoreText(report)}</div>
+        <div class="directAgentChartDetail">${detail || textValue(report?.message, 'wartet')}</div>
+      </div>
+    `;
+  }
+
+  function ensureDirectAgentStatusPanel(candles) {
+    const chartView = document.getElementById('chartView');
+    const chartCard = chartView?.querySelector('.card');
+    if (!chartCard) return;
+
+    let panel = document.getElementById('directAgentChartStatusPanel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'directAgentChartStatusPanel';
+      panel.className = 'directAgentChartStatusPanel';
+      const chartMeta = document.getElementById('chartMeta');
+      if (chartMeta && chartMeta.parentNode === chartCard) chartCard.insertBefore(panel, chartMeta);
+      else chartCard.appendChild(panel);
+    }
+
+    const breakout = findReport('breakout');
+    const volatility = findReport('volatility');
+    const risk = findReport('risk');
+    const breakoutDetail = breakout?.details?.mode
+      ? `${textValue(breakout.details.mode)} · High ${textValue(breakout.details.range_high)} · Low ${textValue(breakout.details.range_low)}`
+      : textValue(breakout?.message, 'wartet');
+    const volatilityDetail = volatility?.details?.regime
+      ? `${textValue(volatility.details.regime)} · ATR ${textValue(volatility.details.atr)} · Ratio ${textValue(volatility.details.ratio)}x`
+      : textValue(volatility?.message, 'wartet');
+    const riskDetail = Array.isArray(risk?.details?.hard_blocks) && risk.details.hard_blocks.length
+      ? `Block: ${risk.details.hard_blocks.join(' / ')}`
+      : Array.isArray(risk?.details?.warnings) && risk.details.warnings.length
+        ? `Warnung: ${risk.details.warnings.join(' / ')}`
+        : textValue(risk?.message, 'wartet');
+
+    panel.innerHTML = `
+      <div class="directAgentChartStatusHead">
+        <strong>Direkte Agenten im Chartfenster</strong>
+        <span>Range / Regime / Risk-Status</span>
+      </div>
+      <div class="directAgentChartGrid">
+        ${directAgentTile('Breakout / Fakeout', breakout, breakoutDetail)}
+        ${directAgentTile('Volatility Regime', volatility, volatilityDetail)}
+        ${directAgentTile('Risk Agent', risk, riskDetail)}
+      </div>
+    `;
+
+    if (breakout) drawBreakoutRange(candles, breakout);
+  }
+
   function ensureDirectAgentChartView(candles) {
     const chart = chartInstance();
     if (!chart) return;
@@ -239,6 +367,7 @@
       }
     }
 
+    ensureDirectAgentStatusPanel(candles);
     applyChartHeight();
 
     const status = document.getElementById('chartPluginStatus');
@@ -285,7 +414,7 @@
 
   function markGroup(group, mode, label) {
     if (!group) return;
-    group.dataset.chartView = mode === 'chart' ? 'true' : 'false';
+    group.dataset.chartView = mode === 'chart' || mode === 'status' ? 'true' : 'false';
     group.dataset.agentDisplayGroup = mode;
     group.querySelectorAll('.agentChartModeBadge').forEach(badge => badge.remove());
     const grid = group.querySelector('.settingsGroupGrid');
@@ -304,41 +433,49 @@
     if (tabs && tabs !== body.firstElementChild) body.insertBefore(tabs, body.firstElementChild);
 
     const chartGroups = CHART_VIEW_SECTIONS.map(section => sectionGroup(body, section)).filter(Boolean);
+    const statusGroups = CHART_STATUS_SECTIONS.map(section => sectionGroup(body, section)).filter(Boolean);
     const evaluationGroups = EVALUATION_ONLY_SECTIONS.map(section => sectionGroup(body, section)).filter(Boolean);
 
     chartGroups.forEach(group => markGroup(group, 'chart', 'Chart View'));
+    statusGroups.forEach(group => markGroup(group, 'status', 'Chart Status'));
     evaluationGroups.forEach(group => markGroup(group, 'evaluation', 'Nur Bewertung'));
+
+    const oldHeader = directHeaderBlock(body);
+    if (oldHeader) oldHeader.remove();
 
     const chartHeader = sectionHeader(
       'agentSetupChartViewAgentsHeader',
       'Chart View Agenten',
-      'Agenten mit Chart-Anzeige, eigenem Pane oder Preislinie.',
+      'Agenten mit Linie, Pane oder Preis-Overlay im Chart.',
       'chart'
     );
-    const evaluationHeader = directHeaderBlock(body) || sectionHeader(
+    const statusHeader = sectionHeader(
+      'agentSetupChartStatusAgentsHeader',
+      'Chart Status Agenten',
+      'Direkte Agenten als Status-Kacheln und Range-Anzeige im Chartfenster.',
+      'status'
+    );
+    const evaluationHeader = sectionHeader(
       'agentSetupEvaluationAgentsHeader',
       'Nur Bewertungsagenten',
-      'Bewertung, Risiko, Regime und Filter ohne eigenes Chart-Fenster.',
+      'Bewertung, Risiko, Regime und Filter ohne eigene Chart-Anzeige.',
       'evaluation'
     );
-
-    if (evaluationHeader.classList.contains('settingsGroup')) {
-      evaluationHeader.id = 'agentSetupEvaluationAgentsHeader';
-      evaluationHeader.className = 'agentSetupSectionHeader evaluation';
-      evaluationHeader.innerHTML = '<div><strong>Nur Bewertungsagenten</strong><span>Bewertung, Risiko, Regime und Filter ohne eigenes Chart-Fenster.</span></div>';
-    }
 
     const reference = body.querySelector('.settingsGroup:not([data-agent-section])') || body.firstElementChild;
     body.insertBefore(chartHeader, reference?.nextSibling || body.firstChild);
     let cursor = chartHeader;
-    chartGroups.forEach(group => {
-      cursor = insertAfter(cursor, group);
-    });
-
-    cursor = insertAfter(cursor, evaluationHeader);
-    evaluationGroups.forEach(group => {
-      cursor = insertAfter(cursor, group);
-    });
+    chartGroups.forEach(group => { cursor = insertAfter(cursor, group); });
+    if (statusGroups.length) {
+      cursor = insertAfter(cursor, statusHeader);
+      statusGroups.forEach(group => { cursor = insertAfter(cursor, group); });
+    }
+    if (evaluationGroups.length) {
+      cursor = insertAfter(cursor, evaluationHeader);
+      evaluationGroups.forEach(group => { cursor = insertAfter(cursor, group); });
+    } else {
+      evaluationHeader.remove();
+    }
 
     document.body.dataset.agentSetupCleanOrder = PATCH_VERSION;
   }
@@ -355,19 +492,36 @@
       #chartView .chartCanvasWrap { width:100% !important; min-height:980px !important; height:980px; max-height:none !important; overflow:visible !important; }
       #chartView #klineChart { width:100% !important; min-height:980px !important; height:980px; max-height:none !important; }
       #chartView #chartMeta { clear:both !important; margin-top:14px !important; }
+      #chartView .directAgentChartStatusPanel { margin:14px 0 10px !important; padding:12px !important; border:1px solid var(--line) !important; border-left:5px solid #a78bfa !important; border-radius:8px !important; background:rgba(15,23,42,.22) !important; }
+      #chartView .directAgentChartStatusHead { display:flex !important; align-items:baseline !important; justify-content:space-between !important; gap:12px !important; margin-bottom:10px !important; }
+      #chartView .directAgentChartStatusHead strong { color:var(--ink) !important; font-size:13px !important; font-weight:900 !important; letter-spacing:.07em !important; text-transform:uppercase !important; }
+      #chartView .directAgentChartStatusHead span { color:var(--muted) !important; font-size:12px !important; }
+      #chartView .directAgentChartGrid { display:grid !important; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)) !important; gap:10px !important; }
+      #chartView .directAgentChartTile { min-height:96px !important; padding:11px 12px !important; border:1px solid var(--line) !important; border-radius:7px !important; background:var(--panel-soft) !important; box-shadow:inset 4px 0 0 #64748b !important; }
+      #chartView .directAgentChartTile.long { box-shadow:inset 4px 0 0 #22c55e !important; }
+      #chartView .directAgentChartTile.short { box-shadow:inset 4px 0 0 #ef4444 !important; }
+      #chartView .directAgentChartTile.blocked { box-shadow:inset 4px 0 0 #f97316 !important; }
+      #chartView .directAgentChartTileHead { display:flex !important; align-items:center !important; justify-content:space-between !important; gap:10px !important; }
+      #chartView .directAgentChartTileHead strong { color:var(--ink) !important; font-size:12px !important; font-weight:900 !important; letter-spacing:.05em !important; text-transform:uppercase !important; }
+      #chartView .directAgentChartTileHead span { display:inline-flex !important; align-items:center !important; min-height:22px !important; padding:2px 7px !important; border-radius:999px !important; background:rgba(148,163,184,.18) !important; color:var(--muted) !important; font-size:11px !important; font-weight:900 !important; }
+      #chartView .directAgentChartScore { margin-top:8px !important; color:var(--accent) !important; font-size:12px !important; font-weight:900 !important; }
+      #chartView .directAgentChartDetail { margin-top:6px !important; color:var(--muted) !important; font-size:12px !important; line-height:1.35 !important; overflow-wrap:anywhere !important; }
       #agentSetupView .configModalBody { display:grid !important; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)) !important; gap:16px !important; align-items:start !important; grid-auto-flow:row dense !important; overflow:visible !important; padding:16px 14px 84px !important; }
       #agentSetupView .settingsTabsBar { grid-column:1 / -1 !important; width:100% !important; display:flex !important; flex-wrap:wrap !important; align-items:center !important; gap:8px !important; margin:0 0 10px !important; padding:0 0 14px !important; border-bottom:1px solid var(--line) !important; }
       #agentSetupView .settingsTabButton { min-width:128px !important; justify-content:center !important; }
       #agentSetupView .settingsGroup:not([data-agent-section]), #agentSetupView .agentSetupSectionHeader { grid-column:1 / -1 !important; }
       #agentSetupView .agentSetupSectionHeader { display:flex !important; align-items:center !important; justify-content:space-between !important; min-height:66px !important; padding:14px 16px !important; border:1px solid var(--line) !important; border-radius:8px !important; background:rgba(15,23,42,.24) !important; }
       #agentSetupView .agentSetupSectionHeader.chart { border-left:5px solid #22d3ee !important; }
+      #agentSetupView .agentSetupSectionHeader.status { border-left:5px solid #a78bfa !important; }
       #agentSetupView .agentSetupSectionHeader.evaluation { border-left:5px solid #fb923c !important; }
       #agentSetupView .agentSetupSectionHeader strong { display:block !important; color:var(--ink) !important; font-size:15px !important; font-weight:900 !important; letter-spacing:.07em !important; text-transform:uppercase !important; }
       #agentSetupView .agentSetupSectionHeader span { display:block !important; margin-top:5px !important; color:var(--muted) !important; font-size:12px !important; letter-spacing:.02em !important; }
       #agentSetupView [data-agent-display-group="chart"] { border-left:4px solid #22d3ee !important; }
+      #agentSetupView [data-agent-display-group="status"] { border-left:4px solid #a78bfa !important; }
       #agentSetupView [data-agent-display-group="evaluation"] { border-left:4px solid #fb923c !important; }
       #agentSetupView .agentChartModeBadge { display:inline-flex !important; align-items:center !important; min-height:24px !important; width:max-content !important; padding:3px 8px !important; border:1px solid var(--line) !important; border-radius:999px !important; background:var(--panel-soft) !important; color:var(--muted) !important; font-size:11px !important; font-weight:900 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
       #agentSetupView [data-agent-display-group="chart"] .agentChartModeBadge { color:#67e8f9 !important; border-color:#0891b2 !important; background:rgba(8,145,178,.14) !important; }
+      #agentSetupView [data-agent-display-group="status"] .agentChartModeBadge { color:#ddd6fe !important; border-color:#7c3aed !important; background:rgba(124,58,237,.14) !important; }
       #agentSetupView [data-agent-display-group="evaluation"] .agentChartModeBadge { color:#fdba74 !important; border-color:#c2410c !important; background:rgba(194,65,12,.14) !important; }
       #agentSetupView .settingsGroup, #agentSetupView .agentIndicatorGroup, #agentSetupView .agentDirectGroup, #agentSetupView .agentUtilityGroup { min-height:0 !important; height:auto !important; align-content:start !important; contain:layout style !important; }
       #agentSetupView .settingsGroupGrid { align-items:start !important; }
@@ -379,7 +533,7 @@
   }
 
   function patchDrawChart() {
-    if (window.drawChart?.__directAgentChartViewFixPatchedV6) return;
+    if (window.drawChart?.__directAgentChartViewFixPatchedV7) return;
     originalDrawChart = window.drawChart;
     if (typeof originalDrawChart !== 'function') return;
     window.drawChart = function patchedDirectAgentChartViewDrawChart(candles, overlay, indicatorData) {
@@ -389,18 +543,18 @@
       layoutAgentSetupSections();
       return result;
     };
-    window.drawChart.__directAgentChartViewFixPatchedV6 = true;
+    window.drawChart.__directAgentChartViewFixPatchedV7 = true;
   }
 
   function patchClearChart() {
-    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV6) return;
+    if (window.clearKlineChart?.__directAgentChartViewFixClearPatchedV7) return;
     originalClearKlineChart = window.clearKlineChart;
     if (typeof originalClearKlineChart !== 'function') return;
     window.clearKlineChart = function patchedDirectAgentChartViewClearChart() {
       clearDirectAgentChartView();
       return originalClearKlineChart.apply(this, arguments);
     };
-    window.clearKlineChart.__directAgentChartViewFixClearPatchedV6 = true;
+    window.clearKlineChart.__directAgentChartViewFixClearPatchedV7 = true;
   }
 
   function install() {
