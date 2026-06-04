@@ -1,6 +1,6 @@
 # Phemex Strategy Observer
 
-Lokales Analyse- und Paper-Trading-System fuer Phemex. Das Projekt kombiniert technische Signalquellen, eine deterministische Strategy Engine, ein spezialisiertes LLM-Rollenteam und ein Dashboard fuer Chart-, Analyse- und Setup-Ansichten.
+Lokales Analyse- und Paper-Trading-System für Phemex. Das Projekt kombiniert technische Signalquellen, eine deterministische Strategy Engine, ein spezialisiertes LLM-Rollenteam und ein Dashboard für Chart-, Analyse- und Setup-Ansichten.
 
 Repository: https://github.com/H5Pro2/Phemex_Strategy_Observer
 
@@ -28,18 +28,18 @@ Der CEO/Judge ist die finale Instanz und entscheidet `APPROVE`, `WAIT` oder `BLO
 +-- agent_runtime_roles.py            Rollen- und Agenten-Hilfslogik
 +-- llm_roles.py                      LLM-Rollen, Prompts und Rollen-Auswertung
 +-- brain_runtime.py                  Memory- und Lernschicht
-+-- trade_value_gate.py               Economic Gate und harte Risiko-Pruefung
++-- trade_value_gate.py               Economic Gate und harte Risiko-Prüfung
 +-- indikator.py                      Indikator- und Signalberechnung
 +-- dashboard.html                    Dashboard-Hauptdatei
 +-- dashboard_script.js               Dashboard-JavaScript
-+-- dashboard_script_check.js         gebuendelter Dashboard-Check
++-- dashboard_script_check.js         gebündelter Dashboard-Check
 +-- config.example.json               Konfigurationsvorlage
-+-- .env.example                      Vorlage fuer private API-Werte
++-- .env.example                      Vorlage für private API-Werte
 +-- assets.txt                        Asset-Liste
 +-- BAUPLAN.md                        Architektur und Zielbild
-+-- DESIGNE_ANLEITUNG.md              UI-Designregeln fuer weitere Arbeiten
++-- DESIGNE_ANLEITUNG.md              UI-Designregeln für weitere Arbeiten
 +-- strategy.md                       Strategie- und Trading-Regelwerk
-+-- checks/                           lokale Pruefskripte
++-- checks/                           lokale Prüfscripte
 +-- docs/                             technische Dokumentation
 +-- tools/                            Hilfs- und Build-Tools
 +-- ui/patches/                       Dashboard Runtime-Patches
@@ -48,7 +48,7 @@ Der CEO/Judge ist die finale Instanz und entscheidet `APPROVE`, `WAIT` oder `BLO
 
 ## Dashboard
 
-Das Dashboard laeuft lokal unter:
+Das Dashboard läuft lokal unter:
 
 ```text
 http://127.0.0.1:8787
@@ -65,23 +65,23 @@ Das UI ist auf kompakte, einheitliche Bereiche ausgelegt. Ausklappbare Bereiche 
 
 ## LLM-Anbindung
 
-Unterstuetzte Provider:
+Unterstützte Provider:
 
 - OpenAI
 - Ollama lokal
 
-OpenAI wird ueber `.env` konfiguriert. Ollama wird lokal ueber Base URL und Modell eingestellt, zum Beispiel:
+OpenAI wird über `.env` konfiguriert. Ollama wird lokal über Base URL und Modell eingestellt, zum Beispiel:
 
 ```text
 http://127.0.0.1:11434
 qwen2.5:3b
 ```
 
-Die aktiven Signalquellen der Analysten werden als strukturierter Kontext an die jeweiligen Rollen uebergeben. Prompt-Erweiterungen koennen im Strategy Setup gepflegt werden.
+Die aktiven Signalquellen der Analysten werden als strukturierter Kontext an die jeweiligen Rollen übergeben. Prompt-Erweiterungen können im Strategy Setup gepflegt werden.
 
 ## Sicherheit
 
-Private Werte gehoeren nicht ins Repository.
+Private Werte gehören nicht ins Repository.
 
 Nicht versioniert:
 
@@ -94,7 +94,7 @@ Live-Trading ist in diesem Observer absichtlich gesperrt. Das Economic Gate darf
 
 ## Setup
 
-Abhaengigkeiten installieren:
+Abhängigkeiten installieren:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -129,7 +129,7 @@ Manueller Start:
 python .\phemex_strategy_observer.py --config .\config.json --web
 ```
 
-## Pruefungen
+## Prüfungen
 
 Python Runtime:
 
@@ -159,11 +159,11 @@ python .\checks\check_dashboard_runtime_patches.py
 ## Wichtige Dateien
 
 - `BAUPLAN.md`: grober Architektur- und Umbauplan
-- `DESIGNE_ANLEITUNG.md`: Designregeln fuer neue UI-Funktionen
+- `DESIGNE_ANLEITUNG.md`: Designregeln für neue UI-Funktionen
 - `strategy.md`: Trading-Regeln und Strategie-Logik
 - `docs/TECHNICAL_STATUS.md`: technischer Stand
-- `config.example.json`: sichere Vorlage fuer `config.json`
-- `.env.example`: sichere Vorlage fuer `.env`
+- `config.example.json`: sichere Vorlage für `config.json`
+- `.env.example`: sichere Vorlage für `.env`
 
 ## Aktueller Schwerpunkt
 
@@ -173,6 +173,6 @@ Das Projekt entwickelt sich von einem klassischen Indikator-Agenten-System zu ei
 2. Die Strategy Engine baut einen Trade-Kandidaten.
 3. Das LLM-Rollenteam bewertet den Kandidaten aus Spezialrollen.
 4. CEO/Judge entscheidet final.
-5. Economic Gate und Paper-Trading pruefen die praktische Umsetzbarkeit.
+5. Economic Gate und Paper-Trading prüfen die praktische Umsetzbarkeit.
 
 Ziel ist eine nachvollziehbare Live-Analyse mit sauberer UI, begrenzten LLM-Kosten und klarer Trennung zwischen technischer Preislogik und LLM-Bewertung.
