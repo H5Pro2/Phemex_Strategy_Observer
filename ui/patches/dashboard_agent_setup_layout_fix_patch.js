@@ -152,7 +152,7 @@
     return Array.from(view.querySelectorAll('.settingsGroup')).find(block => {
       if (block.dataset.agentSection) return false;
       const text = String(block.querySelector(':scope > h3')?.textContent || '').trim();
-      return /Direkte Agenten|Agenten ohne eigene Hauptchart-Linie/i.test(text);
+      return /Direkte Signalquellen|Signalquellen ohne eigene Hauptchart-Linie|Direkte Agenten|Agenten ohne eigene Hauptchart-Linie/i.test(text);
     });
   }
 
@@ -190,8 +190,8 @@
       header.classList.add('agentSetupDirectHeader');
       const title = header.querySelector(':scope > h3');
       const label = header.querySelector(':scope .label');
-      if (title) title.textContent = 'Direkte Agenten';
-      if (label) label.textContent = 'RSI, VWAP und Volume haben Chart-View-Funktion. Breakout/Fakeout, Volatility und Risk bleiben Bewertungsagenten ohne eigenes Chart-Pane.';
+      if (title) title.textContent = 'Direkte Signalquellen';
+      if (label) label.textContent = 'Diese Quellen bleiben in ihrer Analystenrolle und liefern Kontextdaten ohne eigenes Chart-Pane.';
     }
 
     const chartGroups = CHART_VIEW_SECTIONS
@@ -205,14 +205,14 @@
     evaluationGroups.forEach(group => markDirectGroup(group, false));
 
     if (chartGroups.length) {
-      const title = makeSectionTitle('agentSetupChartViewAgentsTitle', 'Chart View Agenten', 'RSI / VWAP / Volume werden im Chart angezeigt');
+      const title = makeSectionTitle('agentSetupChartViewAgentsTitle', 'Chart View Signalquellen', 'RSI / VWAP / Volume werden im Chart angezeigt');
       body.insertBefore(title, chartGroups[0]);
       chartGroups.forEach(group => body.insertBefore(group, title.nextSibling));
     }
 
     if (evaluationGroups.length) {
       const firstReference = evaluationGroups[0];
-      const title = makeSectionTitle('agentSetupEvaluationAgentsTitle', 'Nur Bewertungsagenten', 'Signal-, Regime- und Risiko-Auswertung ohne eigenes Chart-Pane');
+      const title = makeSectionTitle('agentSetupEvaluationAgentsTitle', 'Risk Officer / Kontext', 'Signal-, Regime- und Risiko-Auswertung ohne eigenes Chart-Pane');
       body.insertBefore(title, firstReference);
       evaluationGroups.forEach(group => body.insertBefore(group, title.nextSibling));
     }

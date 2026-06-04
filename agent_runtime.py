@@ -430,7 +430,7 @@ def _box_agent(candles: list[Any], indicator: dict[str, Any]) -> AgentReport:
     if current is None or not boxes:
         return AgentReport(
             agent_name="LL / HH Box Agent",
-            function="Preisposition in Strukturboxen pruefen",
+            function="Preisposition in Strukturboxen prüfen",
             signal="NEUTRAL",
             score=45,
             reads=f"boxes: {len(boxes)}",
@@ -985,7 +985,7 @@ def _volatility_regime_agent(candles: list[Any], period: int = 14, lookback: int
     if len(candles) < safe_period + safe_lookback:
         return AgentReport(
             agent_name="Volatility Regime Agent",
-            function="ATR-Volatilitaet und Risiko-Regime kontrollieren",
+            function="ATR-Volatilität und Risiko-Regime kontrollieren",
             signal="NEUTRAL",
             score=45,
             reads=f"candles {len(candles)} | ATR {safe_period} | lookback {safe_lookback}",
@@ -995,7 +995,7 @@ def _volatility_regime_agent(candles: list[Any], period: int = 14, lookback: int
     if len(atrs) < 2:
         return AgentReport(
             agent_name="Volatility Regime Agent",
-            function="ATR-Volatilitaet und Risiko-Regime kontrollieren",
+            function="ATR-Volatilität und Risiko-Regime kontrollieren",
             signal="NEUTRAL",
             score=45,
             reads="ATR leer",
@@ -1009,25 +1009,25 @@ def _volatility_regime_agent(candles: list[Any], period: int = 14, lookback: int
         regime = "extrem"
         score = 38
         blocking = False
-        message = "Volatilitaet ist extrem hoch; Risiko-Regime markiert starke Vorsicht."
+        message = "Volatilität ist extrem hoch; Risiko-Regime markiert starke Vorsicht."
     elif ratio >= 1.35:
         regime = "hoch"
         score = 48
         blocking = False
-        message = "Volatilitaet ist erhoeht; Entries brauchen bessere Bestaetigung."
+        message = "Volatilität ist erhöht; Entries brauchen bessere Bestätigung."
     elif ratio <= 0.65:
         regime = "ruhig"
         score = 55
         blocking = False
-        message = "Volatilitaet ist niedrig; Breakouts koennen schwach sein."
+        message = "Volatilität ist niedrig; Breakouts können schwach sein."
     else:
         regime = "normal"
         score = 68
         blocking = False
-        message = "Volatilitaet liegt im normalen Arbeitsbereich."
+        message = "Volatilität liegt im normalen Arbeitsbereich."
     return AgentReport(
         agent_name="Volatility Regime Agent",
-        function="ATR-Volatilitaet und Risiko-Regime kontrollieren",
+        function="ATR-Volatilität und Risiko-Regime kontrollieren",
         signal="NEUTRAL",
         score=score,
         reads=f"ATR{safe_period} {round(current_atr, 8)} | avg {round(average_atr, 8)} | ratio {round(ratio, 2)}x | regime {regime}",
@@ -1042,7 +1042,7 @@ def _volume_agent(candles: list[Any], period: int = 20) -> AgentReport:
     if len(candles) < 2:
         return AgentReport(
             agent_name="Volume Agent",
-            function="Volumen-Kontext pruefen",
+            function="Volumen-Kontext prüfen",
             signal="NEUTRAL",
             score=45,
             reads="zu wenig Kerzen",
@@ -1054,7 +1054,7 @@ def _volume_agent(candles: list[Any], period: int = 20) -> AgentReport:
     if not volumes:
         return AgentReport(
             agent_name="Volume Agent",
-            function="Volumen-Kontext pruefen",
+            function="Volumen-Kontext prüfen",
             signal="NEUTRAL",
             score=45,
             reads="volume leer",
@@ -1231,7 +1231,7 @@ def _ceo_agent(reports: list[AgentReport]) -> AgentReport:
     elif usable_count < 2:
         decision = "WAIT"
         score = max(35, min(55, quality_score))
-        reason = "Zu wenige qualitativ nutzbare Agentensignale fuer CEO-Bias."
+        reason = "Zu wenige qualitativ nutzbare Agentensignale für CEO-Bias."
     elif weighted_long > weighted_short and weighted_long >= 110 and weighted_gap >= 22 and long_count >= 2:
         decision = "LONG_BIAS"
         score = max(0, min(100, quality_score))
@@ -1243,11 +1243,11 @@ def _ceo_agent(reports: list[AgentReport]) -> AgentReport:
     else:
         decision = "WAIT"
         score = max(35, min(60, quality_score))
-        reason = "Keine ausreichende Rollen-Bestaetigung zwischen Struktur, Momentum und Risk."
+        reason = "Keine ausreichende Rollen-Bestätigung zwischen Struktur, Momentum und Risk."
 
     return AgentReport(
         agent_name="CEO Agent",
-        function="Agentenberichte nach Rollen, Datenqualitaet, Konflikten und Risk-Gates bewerten",
+        function="Agentenberichte nach Rollen, Datenqualität, Konflikten und Risk-Gates bewerten",
         signal="LONG" if decision == "LONG_BIAS" else "SHORT" if decision == "SHORT_BIAS" else "NEUTRAL",
         score=score,
         reads=f"Structure {structure_signal} | Momentum {momentum_signal} | Risk {risk_signal} | Quality {quality_score} | LONG {long_count}/{round(long_score, 1)} | SHORT {short_count}/{round(short_score, 1)}",

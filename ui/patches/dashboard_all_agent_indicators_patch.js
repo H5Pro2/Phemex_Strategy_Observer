@@ -5,10 +5,11 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-all-agent-indicators-v1-safe';
+  const PATCH_VERSION = '2026-06-02-all-agent-indicators-v4-rsi-anchor-revert';
   let originalDrawChart = null;
   let originalClearKlineChart = null;
   let mfiRegistered = false;
+  let rsiRegistered = false;
 
   function chartInstance() {
     if (window.__klineChartInstance) return window.__klineChartInstance;
@@ -257,6 +258,51 @@
     }
   }
 
+  function registerRsi() {
+    if (rsiRegistered) return;
+    const api = apiInstance();
+    if (!api || typeof api.registerIndicator !== 'function') return;
+    try {
+      api.registerIndicator({
+        name: 'BOT_RSI',
+        shortName: 'RSI',
+        series: 'normal',
+        precision: 2,
+        calcParams: [14],
+        minValue: 0,
+        maxValue: 100,
+        figures: [{ key: 'rsi', title: 'RSI: ', type: 'line' }],
+        calc: (dataList, indicator) => {
+          const period = Math.max(1, Number(indicator?.calcParams?.[0] || 14));
+          let avgGain = 0;
+          let avgLoss = 0;
+          return dataList.map((k, index) => {
+            if (index === 0) return { rsi: null };
+            const diff = Number(k.close) - Number(dataList[index - 1]?.close || k.close);
+            const gain = Math.max(diff, 0);
+            const loss = Math.max(-diff, 0);
+            if (index <= period) {
+              avgGain += gain;
+              avgLoss += loss;
+              if (index < period) return { rsi: null };
+              avgGain /= period;
+              avgLoss /= period;
+            } else {
+              avgGain = ((avgGain * (period - 1)) + gain) / period;
+              avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+            }
+            if (avgLoss <= 0) return { rsi: 100 };
+            const rs = avgGain / avgLoss;
+            return { rsi: 100 - (100 / (1 + rs)) };
+          });
+        }
+      });
+      rsiRegistered = true;
+    } catch (_) {
+      rsiRegistered = true;
+    }
+  }
+
   function pane(id, order, height) {
     return {
       id,
@@ -305,7 +351,8 @@
     }
 
     if (showIndicator(indicatorData, 'RSI', 'indicator_show_rsi', 'agent_rsi_enabled', false)) {
-      createIndicator('RSI', 'rsi', { name: 'RSI', calcParams: [Math.max(1, Math.floor(numberConfig('agent_rsi_period', numberConfig('indicator_rsi_period', 14))))] }, 'bot_rsi_pane', 60, 130);
+      registerRsi();
+      createIndicator('BOT_RSI', 'rsi', { name: 'BOT_RSI', id: 'BOT_RSI_MAIN', calcParams: [Math.max(1, Math.floor(numberConfig('agent_rsi_period', numberConfig('indicator_rsi_period', 14))))] }, 'bot_rsi_pane', 60, 130);
     }
 
     if (showIndicator(indicatorData, 'MFI', 'indicator_show_mfi', 'agent_mfi_enabled', false)) {
@@ -320,7 +367,7 @@
     const status = document.getElementById('chartPluginStatus');
     if (status) {
       const active = Object.keys(window.__botNativeIndicators).filter(key => window.__botNativeIndicators[key]).join(' / ');
-      status.textContent = `KLineCharts · Agent-Indikatoren ${active || 'bereit'}`;
+      status.textContent = `KLineCharts | Signalquellen ${active || 'bereit'}`;
     }
   }
 

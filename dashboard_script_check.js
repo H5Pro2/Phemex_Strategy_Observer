@@ -4,16 +4,28 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const map = {
         invalid_side: 'keine LONG/SHORT-Richtung',
         missing_price: 'Entry/SL/TP fehlt',
-        invalid_entry: 'Entry ungueltig',
-        invalid_long_geometry: 'LONG-Geometrie ungueltig',
-        invalid_short_geometry: 'SHORT-Geometrie ungueltig',
-        invalid_risk_reward: 'Risk/Reward ungueltig',
+        invalid_entry: 'Entry ungültig',
+        invalid_long_geometry: 'LONG-Geometrie ungültig',
+        invalid_short_geometry: 'SHORT-Geometrie ungültig',
+        invalid_risk_reward: 'Risk/Reward ungültig',
         reward_too_small: 'TP-Abstand zu klein',
         sl_distance_too_high: 'SL-Abstand zu gross',
         rr_too_small: 'RR zu klein',
         net_profit_too_small: 'Netto-Profit zu klein'
       };
       return map[String(reason || '')] || fmt(reason);
+    };
+    const DEFAULT_LLM_ROLE_PROMPTS = {
+      llm_role_market_structure_prompt_extra: 'Bewerte nur die Marktstruktur. Achte besonders auf Trendkontext, frische BOS/CHoCH Signale, HH/LL Sequenz, Range-Gefahr und ob der Kandidat nahe an relevanten Strukturzonen liegt. Bei unklarer Range oder widersprüchlicher Struktur eher WAIT statt APPROVE.',
+      llm_role_momentum_prompt_extra: 'Bewerte nur Momentum und technische Bestätigung. Achte auf RSI/MFI, MACD, EMA/HMA/VWAP Lage, Volumenimpuls und Divergenzen. APPROVE nur, wenn Momentum die geplante Richtung nachvollziehbar unterstützt; bei spätem oder erschöpftem Move eher WAIT.',
+      llm_role_risk_officer_prompt_extra: 'Bewerte Risiko strikt. Prüfe RR, SL-Distanz, Fee/R, Volatilität, offene Trades, Positionsgröße und Overtrading. Setze hard_block=true, wenn Kosten, Stop-Abstand, offene Exponierung oder Volatilität den Trade ungünstig machen.',
+      llm_role_skeptic_prompt_extra: 'Suche zuerst aktiv Gründe gegen den Trade. Markiere schwache Annahmen, Datenlücken, Fallback-Setups, zu wenig Live-Historie, Seitwärtsphasen und Widersprüche zwischen Signalquellen. Nur APPROVE, wenn keine wesentlichen Gegenargumente bleiben.',
+      llm_role_execution_prompt_extra: 'Bewerte Ausführung und Timing. Prüfe, ob Limit oder Market sinnvoll ist, ob der Entry zu spät kommt, ob der Preis dem Ziel schon zu nahe ist und ob der geplante Entry noch ein gutes Chance/Risiko-Verhältnis bietet.',
+      llm_role_judge_prompt_extra: 'Entscheide konservativ als CEO/Judge. Risk Officer und Skeptic Hard-Blocks haben Vorrang. Bei Rollen-Konflikt, schwacher Datenlage oder fehlender klarer Übereinstimmung WAIT. APPROVE nur, wenn Struktur, Momentum, Risiko und Ausführung zusammenpassen.'
+    };
+    const rolePromptValue = (data, key) => {
+      const value = String(data?.[key] || '').trim();
+      return value || DEFAULT_LLM_ROLE_PROMPTS[key] || '';
     };
     const gateNumber = value => value === null || value === undefined || value === '' ? '-' : Number(value).toFixed(6);
     const gatePercent = value => value === null || value === undefined || value === '' ? '-' : (Number(value) * 100).toFixed(3) + '%';
@@ -26,6 +38,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       if (gate.reward_fraction !== undefined) parts.push(`Reward ${gatePercent(gate.reward_fraction)}`);
       if (gate.net_profit_fraction !== undefined) parts.push(`Netto ${gatePercent(gate.net_profit_fraction)}`);
       if (gate.min_net_profit_fraction !== undefined) parts.push(`min Netto ${gatePercent(gate.min_net_profit_fraction)}`);
+      if (gate.fee_to_risk_fraction !== undefined) parts.push(`Fee/R ${gatePercent(gate.fee_to_risk_fraction)}`);
+      if (gate.max_fee_to_risk_fraction !== undefined) parts.push(`max Fee/R ${gatePercent(gate.max_fee_to_risk_fraction)}`);
       if (gate.max_sl_distance_fraction !== undefined) parts.push(`max SL ${gatePercent(gate.max_sl_distance_fraction)}`);
       return parts.join(' | ');
     }
@@ -203,17 +217,23 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let currentView = 'dashboard';
     let agentSortMode = 'score_desc';
     let agentRoleFilter = 'all';
+    let detailsOpenState = {};
     let lastChartKey = '';
     let klineChart = null;
     let klineOverlayIds = [];
     let marketStructureOverlaysRegistered = false;
     let chartConfig = null;
     let latestConfig = {};
+    let latestEnvSettings = {};
     function applyUiTheme(theme) {
       const value = theme === 'light' ? 'light' : 'dark';
       document.body.dataset.theme = value;
     }
     let localTradeSizes = {};
+    let agentSettingsDirty = false;
+    let agentSettingsRendering = false;
+    let agentSettingsSaving = false;
+    let agentSettingsRenderRevision = 0;
     let activeTradeSizeSymbol = null;
     let localMinProfitFractions = {};
     let localMaxSlDistanceFractions = {};
@@ -227,6 +247,29 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let replayRequestRunning = false;
     let refreshRunning = false;
     let refreshFailedCount = 0;
+    window.__setDetailsOpen = (key, open) => {
+      if (!key) return;
+      detailsOpenState[key] = !!open;
+    };
+    function detailsAttrs(key, defaultOpen=false) {
+      const open = Object.prototype.hasOwnProperty.call(detailsOpenState, key) ? detailsOpenState[key] : !!defaultOpen;
+      return `data-details-key="${key}" ${open ? 'open ' : ''}ontoggle="window.__setDetailsOpen && window.__setDetailsOpen('${key}', this.open)"`;
+    }
+    function mergeConfigState(update = {}) {
+      if (!update || typeof update !== 'object') return latestConfig || {};
+      latestConfig = { ...(latestConfig || {}), ...update };
+      return latestConfig;
+    }
+    async function refreshEnvSettings() {
+      try {
+        const response = await fetch('/api/env-settings', { cache: 'no-store' });
+        if (response.ok) {
+          latestEnvSettings = await response.json();
+          if (!Object.prototype.hasOwnProperty.call(latestEnvSettings, 'openai_key_present')) latestEnvSettings.openai_key_present = false;
+        }
+      } catch (error) {}
+      return latestEnvSettings || {};
+    }
     function td(value) { return `<td>${value}</td>`; }
     function assetViewLabel(value) {
       return value ? value : 'Gesamt';
@@ -316,13 +359,13 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         const image = direction === 'long' ? '/files/arrow_up.png' : '/files/arrow_down.png';
         icon.innerHTML = `<img src="${image}" alt="${direction}">`;
       } else {
-        icon.innerHTML = '<span class="dayCandleFallback">–</span>';
+        icon.innerHTML = '<span class="dayCandleFallback">-</span>';
       }
       const label = direction === 'long' ? 'LONG' : direction === 'short' ? 'SHORT' : 'NEUTRAL';
       const open = day.open !== undefined ? `O ${fmt(day.open)}` : '';
       const close = day.close !== undefined ? `C ${fmt(day.close)}` : '';
       const candles = day.candles !== undefined ? `${fmt(day.candles)} Kerzen` : 'keine Day-Candle';
-      detail.textContent = `${label} · ${[open, close, candles].filter(Boolean).join(' · ')}`;
+      detail.textContent = `${label} | ${[open, close, candles].filter(Boolean).join(' | ')}`;
     }
     function flashButton(id) {
       const btn = document.getElementById(id);
@@ -357,16 +400,35 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       syncSwitchState('cfgIndicatorShowMacd', 'cfgIndicatorShowMacdState', 'Aktiv', 'Aus');
       syncSwitchState('cfgIndicatorShowSupportResistance', 'cfgIndicatorShowSupportResistanceState', 'Aktiv', 'Aus');
       syncSwitchState('cfgBrainEnabled', 'cfgBrainEnabledState', 'Aktiv', 'Aus');
-      syncSwitchState('cfgBrainRequireBox', 'cfgBrainRequireBoxState', 'Aktiv', 'Aus');
       syncSwitchState('cfgBrainLlmLayer', 'cfgBrainLlmLayerState', 'Aktiv', 'Aus');
       syncSwitchState('cfgOllamaEnabled', 'cfgOllamaEnabledState', 'Aktiv', 'Aus');
       syncSwitchState('cfgOllamaBlockHint', 'cfgOllamaBlockHintState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleTeamEnabled', 'cfgLlmRoleTeamState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgOpenAiEnabled', 'cfgOpenAiEnabledState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleRequired', 'cfgLlmRoleRequiredState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleMarketStructure', 'cfgLlmRoleMarketStructureState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleMomentum', 'cfgLlmRoleMomentumState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleRiskOfficer', 'cfgLlmRoleRiskOfficerState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleSkeptic', 'cfgLlmRoleSkepticState', 'Aktiv', 'Aus');
+      syncSwitchState('cfgLlmRoleExecution', 'cfgLlmRoleExecutionState', 'Aktiv', 'Aus');
       syncSwitchState('cfgAgentShowOffline', 'cfgAgentShowOfflineState', 'Aktiv', 'Aus');
       document.querySelectorAll('[data-agent-enabled]').forEach(input => syncSwitchState(input.id, `${input.id}State`, 'Aktiv', 'Aus'));
       document.querySelectorAll('[data-agent-blocking]').forEach(input => syncSwitchState(input.id, `${input.id}State`, 'Block', 'Info'));
       syncUtilityAgentGroupStates();
     }
+    function syncLlmProviderVisibility() {
+      const provider = document.getElementById('cfgLlmProvider')?.value || 'openai';
+      document.querySelectorAll('.providerOpenAi').forEach(el => el.classList.toggle('providerHidden', provider !== 'openai'));
+      document.querySelectorAll('.providerOllama').forEach(el => el.classList.toggle('providerHidden', provider !== 'ollama'));
+      const help = document.getElementById('llmProviderHelp');
+      if (help) {
+        help.textContent = provider === 'ollama'
+          ? 'Ollama ist als lokaler Provider aktiv. OpenAI-Felder werden ausgeblendet.'
+          : 'OpenAI ist als Provider aktiv. Ollama-Felder werden ausgeblendet.';
+      }
+    }
     async function refresh() {
+      if (document.querySelector('.modalBackdrop.open')) return;
       if (refreshRunning) return;
       refreshRunning = true;
       try {
@@ -379,9 +441,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       refreshFailedCount = 0;
       latestStatusData = data;
       const perf = data.paper?.performance || {};
-      const cfg = data.config || {};
-      latestConfig = cfg;
-      renderReplayRuleWeightStatus();
+      const cfg = mergeConfigState(data.config || {});
+      await refreshEnvSettings();
       applyUiTheme(cfg.ui_theme);
       updateKlineChartStyles();
       const account = data.account || {};
@@ -399,7 +460,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const apiWarning = account.status && account.status !== 'ok';
       statusPanel.className = 'statusPanel ' + (liveActive ? 'live' : apiWarning ? 'warning' : cfg.observer_enabled ? 'running' : 'stopped');
       document.getElementById('statusTitle').textContent = liveActive ? 'LIVE' : paperMode.toUpperCase();
-      document.getElementById('statusDetail').textContent = apiWarning ? `${assetModeLabel} | ${scanner} | API pruefen` : `${assetModeLabel} | ${scanner}`;
+      document.getElementById('statusDetail').textContent = apiWarning ? `${assetModeLabel} | ${scanner} | API prüfen` : `${assetModeLabel} | ${scanner}`;
       document.getElementById('accountBalance').textContent = account.status === 'ok' ? money(account.account_balance, currency) : 'API nicht verbunden';
       document.getElementById('availableBalance').textContent = account.status === 'ok' ? money(account.available_balance_estimate, currency) : fmt(account.error, '-');
       document.getElementById('profit').textContent = pct(perf.profit_fraction);
@@ -440,6 +501,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       syncAgentAssetOptions(cfg);
       syncReplayAssetOptions(cfg);
       renderLlmAuditSummary(data, cfg);
+      renderLiveAnalysisFlowSummary(data, cfg);
       renderAgentViewer(data, cfg);
       const viewLabel = assetViewLabel(selectedAsset);
       syncTradeHistoryFilters(tradesAll);
@@ -509,20 +571,24 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         ['Asset Mode', cfg.observer_asset_mode === 'multi' ? 'Multi Asset' : 'Single Asset'],
         ['Risk Locks', `max ${cfg.max_open_trades_total} gesamt / ${cfg.max_open_trades_per_asset} je Asset`],
         ['Correlation Lock', cfg.block_same_direction_correlated_trades ? 'aktiv' : 'aus'],
-        ['Stop-Loss', cfg.stop_loss_mode === 'atr' ? `ATR ${fmt(cfg.stop_loss_atr_period)} × ${fmt(cfg.stop_loss_atr_multiplier)}` : `Struktur + ${fmt(cfg.stop_loss_buffer_percent)}% Puffer`],
+        ['Stop-Loss', cfg.stop_loss_mode === 'atr' ? `ATR ${fmt(cfg.stop_loss_atr_period)} x ${fmt(cfg.stop_loss_atr_multiplier)}` : `Struktur + ${fmt(cfg.stop_loss_buffer_percent)}% Puffer`],
         ['Phemex Balance', account.status === 'ok' ? money(account.account_balance, currency) : fmt(account.error)],
-        ['Positionsgroesse', cfg.trade_size_mode === 'asset' ? `${cfg.trade_size_asset} Asset` : `${cfg.trade_size_usd} USD/USDT`],
-        ['Timeframes', `${timeframeLabel(data.config?.signal_timeframe_seconds)} / ${timeframeLabel(data.config?.confirmation_timeframe_seconds)}`],
+        ['Positionsgröße', cfg.trade_size_mode === 'asset' ? `${cfg.trade_size_asset} Asset` : `${cfg.trade_size_usd} USD/USDT`],
+        ['Timeframe', `${timeframeLabel(data.config?.signal_timeframe_seconds)}`],
         ['Trend', cfg.trend_filter_mode === 'ema' ? `${emaSourceLabel(cfg.trend_ema_source, cfg.signal_timeframe_seconds)} ${cfg.trend_ema_period}${cfg.use_trend_filter ? ' blockierend' : ' optional'}` : (cfg.trend_filter_mode === 'day_candle' ? `Day-Candle${cfg.use_trend_filter ? ' blockierend' : ' Status'}` : 'aus')],
-        ['Loops', `Phemex ${fmt(cfg.phemex_poll_seconds ?? cfg.poll_seconds)}s / System ${fmt(cfg.system_loop_seconds)}s`],
+        ['Abfrage', `Phemex / LLM ${fmt(cfg.phemex_poll_seconds ?? cfg.poll_seconds)}s`],
         ['TP/SL', `${data.config?.reward_risk}:1`],
-        ['Value Gate', `min Netto ${percentDisplay(cfg.min_net_profit_fraction)} | max SL ${percentDisplay(cfg.max_sl_distance_fraction)}`],
-        ['Ollama Audit', `${cfg.brain_llm_layer_enabled && cfg.ollama_enabled ? 'aktiv' : 'aus'} | ${fmt(cfg.ollama_model || 'qwen2.5:3b')}`],
+        ['Value Gate', `min Netto ${percentDisplay(cfg.min_net_profit_fraction)} | max SL ${percentDisplay(cfg.max_sl_distance_fraction)} | max Fee/R ${percentDisplay(cfg.max_fee_to_risk_fraction)}`],
+        ['LLM Rollenteam', `${llmAuditEnabled(cfg) ? 'aktiv' : 'aus'} | ${fmt((cfg.llm_provider === 'ollama' ? cfg.ollama_model : cfg.openai_model) || 'gpt-4.1-mini')}`],
         ['Paper-Trades', `${fmt(perf.closed, 0)} geschlossen / ${fmt(data.paper?.open_trades, 0)} offen / ${fmt(data.paper?.pending_trades, 0)} pending`],
       ];
       document.getElementById('botRows').innerHTML = botRows.map(([k,v]) => `<tr><th>${k}</th><td>${fmt(v)}</td></tr>`).join('');
 
       const buckets = data.memory?.top_buckets || [];
+      const memorySummary = document.getElementById('memorySummary');
+      if (memorySummary) {
+        memorySummary.textContent = `Live-/Paper-Lernspeicher: ${fmt(data.memory?.completed_trades ?? 0, 0)} abgeschlossene Trades | ${fmt(data.memory?.bucket_count ?? 0, 0)} Buckets | Quelle ${fmt(data.memory?.source || 'live_paper')}`;
+      }
       document.getElementById('bucketRows').innerHTML = buckets.map(b => '<tr>' + [
         td(`<code>${b.key}</code>`), td(b.count), td(pct(b.win_rate)), td(b.avg_r)
       ].join('') + '</tr>').join('') || '<tr><td colspan="4">Noch keine abgeschlossenen Trades im Lernspeicher.</td></tr>';
@@ -560,8 +626,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     }
     function replayGateLabel(gate) {
       if (!gate) return '-';
-      if (gate.trade_allowed) return `OK · RR ${fmt(gate.rr)}`;
-      return `BLOCK · ${fmt(gate.reason)}`;
+      if (gate.trade_allowed) return `OK | RR ${fmt(gate.rr)}`;
+      return `BLOCK | ${fmt(gate.reason)}`;
     }
     function replayTradeLabel(frame) {
       const events = frame?.replay_events || [];
@@ -569,7 +635,22 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const eventText = events.length
         ? events.map(event => `${fmt(event.status)}${event.result_r !== undefined && event.result_r !== null ? ' ' + fmt(event.result_r) + 'R' : ''}`).join(' / ')
         : '-';
-      return `${eventText}<br><span class="label">P ${fmt(summary.pending, 0)} · O ${fmt(summary.open, 0)} · TP ${fmt(summary.tp, 0)} · SL ${fmt(summary.sl, 0)} · Exp ${fmt(summary.expired, 0)}</span>`;
+      return `${eventText}<br><span class="label">P ${fmt(summary.pending, 0)} | O ${fmt(summary.open, 0)} | TP ${fmt(summary.tp, 0)} | SL ${fmt(summary.sl, 0)} | Exp ${fmt(summary.expired, 0)}</span>`;
+    }
+    function replayLlmRoleLabel(frame) {
+      const protocol = frame?.llm_role_protocol || {};
+      if (!protocol || Object.keys(protocol).length === 0) return '<span class="tradeStatus neutral">keine Rollen</span>';
+      const judge = protocol.judge || {};
+      const gate = protocol.gate || {};
+      const roles = Array.isArray(protocol.roles) ? protocol.roles : [];
+      const decision = String(protocol.decision || judge.decision || 'WAIT').toUpperCase();
+      const hardBlocks = roles.filter(role => role?.hard_block || String(role?.decision || '').toUpperCase() === 'BLOCK').length;
+      const statusClass = decision === 'APPROVE' ? 'tp' : decision === 'BLOCK' || gate.allowed === false ? 'sl' : 'pending';
+      const provider = protocol.provider ? `${escapeHtml(protocol.provider)} | ` : '';
+      const gateText = gate.allowed === false ? ` | ${escapeHtml(gate.reason || 'block')}` : '';
+      const roleText = roles.length ? ` | Rollen ${roles.length}` : '';
+      const blockText = hardBlocks ? ` | Blocks ${hardBlocks}` : '';
+      return `<div class="replayRoleBox"><span class="tradeStatus ${statusClass}">${provider}${escapeHtml(decision)}${gateText}</span><small>${escapeHtml(judge.summary || judge.advice || '-')}${roleText}${blockText}</small></div>`;
     }
     function replayDecisionValue(frame) {
       return String(frame?.decision || frame?.ceo_signal || '').toUpperCase();
@@ -601,8 +682,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const returned = (data?.frames || []).length;
       const fullTotal = Number(data?.summary?.frames || returned);
       const filtered = filteredCount === null ? returned : filteredCount;
-      const limitText = displayLimit && filtered > shownCount ? ` · Anzeige max ${fmt(displayLimit, 0)}` : '';
-      const backendLimitText = fullTotal > returned ? ` · geladen ${fmt(returned, 0)} von ${fmt(fullTotal, 0)}` : '';
+      const limitText = displayLimit && filtered > shownCount ? ` | Anzeige max ${fmt(displayLimit, 0)}` : '';
+      const backendLimitText = fullTotal > returned ? ` | geladen ${fmt(returned, 0)} von ${fmt(fullTotal, 0)}` : '';
       el.textContent = `Filter: ${fmt(shownCount, 0)} sichtbar / ${fmt(filtered, 0)} Treffer${backendLimitText}${limitText}`;
       el.className = shownCount === filtered && fullTotal === returned ? 'controlStatus' : 'controlStatus warn';
     }
@@ -629,15 +710,15 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       return count < replayRuleMinCount(memory) ? 'warn' : 'neutral';
     }
     function replayRuleSafetyText(rule, memory=null) {
-      if (rule?.eligible) return `aktivierbar · min ${fmt(replayRuleMinCount(memory), 0)}`;
+      if (rule?.eligible) return `aktivierbar | min ${fmt(replayRuleMinCount(memory), 0)}`;
       const count = Number(rule?.count || 0);
-      if (count < replayRuleMinCount(memory)) return `zu wenig Daten · min ${fmt(replayRuleMinCount(memory), 0)}`;
+      if (count < replayRuleMinCount(memory)) return `zu wenig Daten | min ${fmt(replayRuleMinCount(memory), 0)}`;
       return 'nur Beobachtung';
     }
     function replayRuleScopeText(rule) {
       const scope = String(rule?.scope || latestConfig?.replay_rule_scope || 'asset').toLowerCase();
       const symbol = rule?.symbol || '-';
-      return scope === 'global' ? 'global' : `asset · ${symbol}`;
+      return scope === 'global' ? 'global' : `asset | ${symbol}`;
     }
     function replayActionClass(action) {
       const value = String(action || '').toUpperCase();
@@ -666,9 +747,9 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         return;
       }
       summaryEl.innerHTML = [
-        `<strong>Memory-Testmodus</strong> · isoliert vom Live-Lernspeicher: ${memory.isolated_from_live_memory ? 'Ja' : 'Nein'}`,
-        `Abgeschlossene Replay-Trades ${fmt(memory.completed_trades, 0)} · Buckets ${fmt(memory.bucket_count, 0)}`,
-        `Winrate ${pct(memory.win_rate)} · Sum R ${fmt(memory.sum_r, 0)}`,
+        `<strong>Memory-Testmodus</strong> | isoliert vom Live-Lernspeicher: ${memory.isolated_from_live_memory ? 'Ja' : 'Nein'}`,
+        `Abgeschlossene Replay-Trades ${fmt(memory.completed_trades, 0)} | Buckets ${fmt(memory.bucket_count, 0)}`,
+        `Winrate ${pct(memory.win_rate)} | Sum R ${fmt(memory.sum_r, 0)}`,
       ].join('<br>');
       const buckets = memory.top_buckets || [];
       rowsEl.innerHTML = buckets.map(bucket => {
@@ -695,13 +776,13 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       if (rulesSummaryEl) {
         const activeRules = (latestConfig?.replay_rule_weight_rules || []).length;
         const safetyLine = memory.rule_small_sample
-          ? `Warnung: kleine Datenbasis · abgeschlossen ${fmt(memory.completed_trades, 0)} · empfohlen mindestens ${fmt(Math.max(replayRuleMinCount(memory) * 3, 20), 0)}`
-          : `Datenbasis ausreichend · abgeschlossen ${fmt(memory.completed_trades, 0)}`;
+          ? `Warnung: kleine Datenbasis | abgeschlossen ${fmt(memory.completed_trades, 0)} | empfohlen mindestens ${fmt(Math.max(replayRuleMinCount(memory) * 3, 20), 0)}`
+          : `Datenbasis ausreichend | abgeschlossen ${fmt(memory.completed_trades, 0)}`;
         rulesSummaryEl.innerHTML = [
-          `<strong>Replay-Lernregeln</strong> · ${memory.source === 'replay_history' ? 'aus gespeicherter Historie' : 'aktueller Replay-Test'} · zunächst nur Vorschau`,
-          `GOOD ${fmt(goodRules, 0)} · BAD ${fmt(badRules, 0)} · WATCH ${fmt(watchRules, 0)} · aktivierbar ${fmt(eligibleRules, 0)}`,
-          `Mindest-Trades je Pattern ${fmt(replayRuleMinCount(memory), 0)} · Bonus +${fmt(Math.abs(replayRuleAdjustment({quality:'GOOD'}, memory)), 0)} · Malus ${fmt(replayRuleAdjustment({quality:'BAD'}, memory), 0)} · Max ${fmt(memory.rule_max_abs_adjustment ?? latestConfig?.replay_rule_max_abs_adjustment ?? 12, 0)}`,
-          `Status ${latestConfig?.replay_rule_weight_enabled ? 'aktiv' : 'Vorschau'} · übernommene Regeln ${fmt(activeRules, 0)} · Scope ${latestConfig?.replay_rule_scope || 'asset'}`,
+          `<strong>Replay-Lernregeln</strong> | ${memory.source === 'replay_history' ? 'aus gespeicherter Historie' : 'aktueller Replay-Test'} | zunächst nur Vorschau`,
+          `GOOD ${fmt(goodRules, 0)} | BAD ${fmt(badRules, 0)} | WATCH ${fmt(watchRules, 0)} | aktivierbar ${fmt(eligibleRules, 0)}`,
+          `Mindest-Trades je Pattern ${fmt(replayRuleMinCount(memory), 0)} | Bonus +${fmt(Math.abs(replayRuleAdjustment({quality:'GOOD'}, memory)), 0)} | Malus ${fmt(replayRuleAdjustment({quality:'BAD'}, memory), 0)} | Max ${fmt(memory.rule_max_abs_adjustment ?? latestConfig?.replay_rule_max_abs_adjustment ?? 12, 0)}`,
+          `Status ${latestConfig?.replay_rule_weight_enabled ? 'aktiv' : 'Vorschau'} | übernommene Regeln ${fmt(activeRules, 0)} | Scope ${latestConfig?.replay_rule_scope || 'asset'}`,
           `Asset-Schutz: Regeln wirken nur auf das Asset, aus dem der Replay-Lauf stammt`,
           safetyLine,
         ].join('<br>');
@@ -763,14 +844,14 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           el.textContent = message;
           el.className = `controlStatus ${level || 'ok'}`;
         } else {
-          el.textContent = enabled ? `Replay-Regeln aktiv · ${count} Regeln` : `Replay-Regeln aus · ${count} Regeln gespeichert`;
+          el.textContent = enabled ? `Replay-Regeln aktiv | ${count} Regeln` : `Replay-Regeln aus | ${count} Regeln gespeichert`;
           el.className = enabled ? 'controlStatus ok' : 'controlStatus';
         }
       }
       if (manager) {
         manager.innerHTML = [
           `<div class="replayRuleMetric"><span>Status</span><strong>${enabled ? 'Aktiv' : 'Aus'}</strong><small>${fmt(count, 0)} gespeicherte Regeln</small></div>`,
-          `<div class="replayRuleMetric"><span>Qualität</span><strong>GOOD ${fmt(goodCount, 0)} · BAD ${fmt(badCount, 0)}</strong><small>WATCH bleibt ohne Brain-Gewichtung</small></div>`,
+          `<div class="replayRuleMetric"><span>Qualität</span><strong>GOOD ${fmt(goodCount, 0)} | BAD ${fmt(badCount, 0)}</strong><small>WATCH bleibt ohne Brain-Gewichtung</small></div>`,
           `<div class="replayRuleMetric"><span>Sicherheit</span><strong>min ${fmt(minCount, 0)} Trades</strong><small>max Bonus/Malus ${fmt(maxAbs, 0)}</small></div>`,
           `<div class="replayRuleMetric"><span>Scope</span><strong>${escapeHtml(scope)}</strong><small>Asset-Regeln bevorzugt</small></div>`,
         ].join('');
@@ -792,8 +873,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || 'Replay-Lernregeln konnten nicht gespeichert werden');
-      latestConfig = data;
-      renderReplayRuleWeightStatus(enabled ? `Replay-Regeln aktiv · ${rules.length} Regeln übernommen` : 'Replay-Regeln deaktiviert · 0 aktive Regeln', 'ok');
+      latestConfig = { ...latestConfig, ...data };
+      renderReplayRuleWeightStatus(enabled ? `Replay-Regeln aktiv | ${rules.length} Regeln übernommen` : 'Replay-Regeln deaktiviert | 0 aktive Regeln', 'ok');
       renderReplayMemoryTest(lastReplayPreviewData || {});
     }
 
@@ -810,10 +891,11 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         return '<tr>' + [
           td(fmt(frame.time_utc)),
           td(fmt(frame.close)),
-          td(`${fmt(frame.ceo_signal)} · ${fmt(frame.ceo_score)}`),
-          td(`${fmt(frame.decision)} · ${fmt(frame.brain_score)}`),
+          td(`${fmt(frame.ceo_signal)} | ${fmt(frame.ceo_score)}`),
+          td(`${fmt(frame.decision)} | ${fmt(frame.brain_score)}`),
           td(replayGateLabel(frame.gate)),
           td(entry),
+          td(replayLlmRoleLabel(frame)),
           td(replayTradeLabel(frame)),
           td(fmt(frame.brain_message)),
         ].join('') + '</tr>';
@@ -849,6 +931,14 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           target_method: candidate.target_method || '',
           replay_events: events.map(event => event.status).join('|'),
           replay_result_r: events.map(event => event.result_r ?? '').filter(value => value !== '').join('|'),
+          llm_provider: frame.llm_role_protocol?.provider || '',
+          llm_model: frame.llm_role_protocol?.model || '',
+          llm_decision: frame.llm_role_protocol?.decision || '',
+          llm_judge_decision: frame.llm_role_protocol?.judge?.decision || '',
+          llm_judge_summary: frame.llm_role_protocol?.judge?.summary || '',
+          llm_gate_allowed: frame.llm_role_protocol?.gate?.allowed ?? '',
+          llm_gate_reason: frame.llm_role_protocol?.gate?.reason || '',
+          llm_role_blocks: Array.isArray(frame.llm_role_protocol?.roles) ? frame.llm_role_protocol.roles.filter(role => role?.hard_block || String(role?.decision || '').toUpperCase() === 'BLOCK').length : '',
           replay_pending: tradeSummary.pending ?? 0,
           replay_open: tradeSummary.open ?? 0,
           replay_tp: tradeSummary.tp ?? 0,
@@ -915,6 +1005,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     function replayHistoryStatsSummary(asset) {
       const currency = latestConfig?.replay_pnl_currency || 'USDT';
       return [
+        ['Side', escapeHtml(asset.display_side || '-')],
         ['Asset Menge', fmt(asset.display_asset_quantity ?? asset.avg_asset_quantity)],
         ['RR Faktor', fmt(asset.avg_rr_factor)],
         ['TP', pnlMoney(asset.display_tp_price, currency)],
@@ -935,7 +1026,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
             <div class="replayRankCard ${replayActionClass(asset.action)}">
               <div class="replayRankHead">
                 <div class="replayRankSymbol">${escapeHtml(asset.symbol)}</div>
-                <div class="replayRankBadge">Rang ${fmt(asset.rank, '-')} · ${escapeHtml(asset.ranking_grade || '-')}</div>
+                <div class="replayRankBadge">Rang ${fmt(asset.rank, '-')} | ${escapeHtml(asset.ranking_grade || '-')}</div>
               </div>
               <div class="replayRankAction"><span class="replayDecisionBadge mini ${replayActionClass(asset.action)}">${escapeHtml(replayActionText(asset))}</span><small>${escapeHtml(asset.action_reason || '')}</small></div>
               <div class="replayRankStats">
@@ -950,6 +1041,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           <tr>
             ${td(fmt(asset.rank))}
             ${td(escapeHtml(asset.symbol))}
+            ${td(escapeHtml(asset.display_side || '-'))}
             ${td(fmt(asset.display_asset_quantity ?? asset.avg_asset_quantity))}
             ${td(fmt(asset.avg_rr_factor))}
             ${td(pnlMoney(asset.display_tp_price, latestConfig?.replay_pnl_currency || 'USDT'))}
@@ -957,7 +1049,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
             ${td(pnlMoney(asset.display_fee_or_trade_value_usd ?? asset.display_notional_usd ?? asset.avg_notional_usd, latestConfig?.replay_pnl_currency || 'USDT'))}
             ${td(pnlMoney(asset.net_pnl_usd, latestConfig?.replay_pnl_currency || 'USDT'))}
           </tr>
-        `).join('') : `<tr><td colspan="8">Noch keine Replay-Historie.</td></tr>`;
+        `).join('') : `<tr><td colspan="9">Noch keine Replay-Historie.</td></tr>`;
       }
     }
     function replayMemoryFromHistoryForSymbol(symbol) {
@@ -995,7 +1087,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const s = data?.summary || {};
       summary.className = 'replaySummaryGrid';
       const replayCards = [
-        { label: 'Replay', headline: `${escapeHtml(data?.symbol || '-')} · ${timeframeLabel(data?.resolution)}`, subline: `${fmt(s.frames, 0)} Frames · gespeichert` },
+        { label: 'Replay', headline: `${escapeHtml(data?.symbol || '-')} | ${timeframeLabel(data?.resolution)}`, subline: `${fmt(s.frames, 0)} Frames | gespeichert` },
         { label: 'Gate', stats: [['Candidates', fmt(s.candidates, 0)], ['OK', fmt(s.gate_allowed, 0)], ['Block', fmt(s.gate_blocked, 0)]] },
         { label: 'Trades', stats: [['Created', fmt(s.replay_created, 0)], ['Closed', fmt(s.replay_closed, 0)], ['Open', fmt(s.replay_open, 0)]] },
         { label: 'Ergebnis', stats: [['TP', fmt(s.replay_tp, 0)], ['SL', fmt(s.replay_sl, 0)], ['Expired', fmt(s.replay_expired, 0)]] },
@@ -1062,8 +1154,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         const worstRun = runs.find(run => String(run.id) === String(markers.worstId || ''));
         summary.innerHTML = `
           <div class="replayHistorySummaryCompact">
-            <div class="replayHistorySummaryMain">${escapeHtml(selectedSymbol)} · ${runs.length} Läufe · ${assetCount} Assets</div>
-            <div class="replayHistorySummarySub">Best: ${bestRun ? `${pnlMoney(bestRun.summary?.replay_net_pnl_usd, latestConfig?.replay_pnl_currency || 'USDT')} · ${fmt(bestRun.summary?.replay_sum_r)}R` : '-'} · Low: ${worstRun ? `${pnlMoney(worstRun.summary?.replay_net_pnl_usd, latestConfig?.replay_pnl_currency || 'USDT')} · DD ${pnlMoney(worstRun.summary?.replay_max_drawdown_usd, latestConfig?.replay_pnl_currency || 'USDT')}` : '-'}</div>
+            <div class="replayHistorySummaryMain">${escapeHtml(selectedSymbol)} | ${runs.length} Läufe | ${assetCount} Assets</div>
+            <div class="replayHistorySummarySub">Best: ${bestRun ? `${pnlMoney(bestRun.summary?.replay_net_pnl_usd, latestConfig?.replay_pnl_currency || 'USDT')} | ${fmt(bestRun.summary?.replay_sum_r)}R` : '-'} | Low: ${worstRun ? `${pnlMoney(worstRun.summary?.replay_net_pnl_usd, latestConfig?.replay_pnl_currency || 'USDT')} | DD ${pnlMoney(worstRun.summary?.replay_max_drawdown_usd, latestConfig?.replay_pnl_currency || 'USDT')}` : '-'}</div>
           </div>`;
       }
       if (rows) {
@@ -1072,7 +1164,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           const markerClass = String(run.id) === String(markers.bestId || '') ? 'best' : String(run.id) === String(markers.worstId || '') ? 'worst' : '';
           return `<tr class="replayHistoryRow ${markerClass}">
             ${td(replayRunMark(run, markers))}
-            ${td(`<div class="mainCell">${escapeHtml(fmt(run.symbol))} · ${timeframeLabel(run.resolution)}</div><div class="subCell">${escapeHtml(fmt(run.created_at_utc))} · ${fmt(s.frames, 0)} Frames</div>`)}
+            ${td(`<div class="mainCell">${escapeHtml(fmt(run.symbol))} | ${timeframeLabel(run.resolution)}</div><div class="subCell">${escapeHtml(fmt(run.created_at_utc))} | ${fmt(s.frames, 0)} Frames</div>`)}
             ${td(`<div class="num">${fmt(s.replay_created, 0)}</div><div class="subCell">closed ${fmt(s.replay_closed, 0)}</div>`)}
             ${td(`<div class="num">${pct(s.replay_win_rate)}</div>`)}
             ${td(`<div class="num">${fmt(s.replay_sum_r)}</div>`)}
@@ -1164,8 +1256,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           const replayCards = [
             {
               label: 'Replay',
-              headline: `${escapeHtml(data.symbol)} · ${timeframeLabel(data.resolution)}`,
-              subline: `${fmt(s.frames, 0)} Frames · ${fmt(s.available_candles, 0)} Kerzen geladen`,
+              headline: `${escapeHtml(data.symbol)} | ${timeframeLabel(data.resolution)}`,
+              subline: `${fmt(s.frames, 0)} Frames | ${fmt(s.available_candles, 0)} Kerzen geladen`,
             },
             {
               label: 'Brain',
@@ -1258,7 +1350,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         await loadReplayHistory();
         switchReplayTab('trades');
         if (status) {
-          status.textContent = data.summary?.kline_limit_fallback ? 'Replay fertig · Phemex-Limit-Fallback aktiv' : 'Replay fertig';
+          status.textContent = data.summary?.kline_limit_fallback ? 'Replay fertig | Phemex-Limit-Fallback aktiv' : 'Replay fertig';
           status.className = 'controlStatus ok';
         }
       } catch (error) {
@@ -1274,21 +1366,30 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         }
       }
     }
+    function agentSetupLooksUnloaded() {
+      const provider = document.getElementById('cfgLlmProvider');
+      const openAiModel = document.getElementById('cfgOpenAiModel');
+      const ollamaModel = document.getElementById('cfgOllamaModel');
+      const roleTeam = document.getElementById('cfgLlmRoleTeamEnabled');
+      return !!provider && !openAiModel?.value && !ollamaModel?.value && roleTeam?.checked !== true;
+    }
+    function shouldForceAgentSettingsLoad() {
+      return agentSetupLooksUnloaded() || !agentSettingsDirty;
+    }
     function setView(view) {
+      if (view === 'replay') view = 'dashboard';
       currentView = view;
       document.getElementById('dashboardView').classList.toggle('hidden', view !== 'dashboard');
       document.getElementById('chartView').classList.toggle('hidden', view !== 'chart');
       document.getElementById('agentView').classList.toggle('hidden', view !== 'agents');
       document.getElementById('agentSetupView')?.classList.toggle('hidden', view !== 'agent_setup');
-      document.getElementById('replayView').classList.toggle('hidden', view !== 'replay');
+      document.getElementById('replayView')?.classList.add('hidden');
       document.getElementById('chartViewButton').classList.toggle('active', view === 'chart');
       document.getElementById('agentViewButton').classList.toggle('active', view === 'agents');
       document.getElementById('agentSetupViewButton')?.classList.toggle('active', view === 'agent_setup');
-      document.getElementById('replayViewButton').classList.toggle('active', view === 'replay');
-      document.getElementById('chartViewButton').textContent = view === 'chart' ? 'Bot View' : 'Chart View';
-      document.getElementById('agentViewButton').textContent = view === 'agents' ? 'Bot View' : 'Agent Viewer';
-      document.getElementById('agentSetupViewButton') && (document.getElementById('agentSetupViewButton').textContent = view === 'agent_setup' ? 'Bot View' : 'Agenten Setup');
-      document.getElementById('replayViewButton').textContent = view === 'replay' ? 'Bot View' : 'Replay View';
+      document.getElementById('chartViewButton').textContent = 'Chart View';
+      document.getElementById('agentViewButton').textContent = 'Analyse Viewer';
+      document.getElementById('agentSetupViewButton') && (document.getElementById('agentSetupViewButton').textContent = 'Strategie Setup');
       if (view === 'chart') {
         window.setTimeout(() => {
           resizeKlineChart();
@@ -1299,12 +1400,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         syncAgentAssetOptions(latestConfig || {});
         renderAgentViewer(latestStatusData || {}, latestConfig || {});
       }
-      if (view === 'replay') {
-        syncReplayAssetOptions(latestConfig || {});
-        renderReplayRuleWeightStatus();
-      }
       if (view === 'agent_setup') {
-        loadAgentSettings();
+        loadAgentSettings({ force: true });
       }
     }
     function syncChartAssetOptions(cfg) {
@@ -1356,49 +1453,405 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     function activeAgentSymbol() {
       return document.getElementById('agentAsset')?.value || selectedAgentAsset || selectedAsset || (latestConfig?.symbols || [])[0] || 'BTCUSDT';
     }
+    function currentTradeTimeframeSeconds() {
+      return Number(document.getElementById('cfgSignalTf')?.value || latestConfig?.signal_timeframe_seconds || 300);
+    }
+    function currentPhemexPollSeconds() {
+      return Math.max(5, Number(document.getElementById('cfgPhemexPoll')?.value || latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || 30));
+    }
+    function markSettingsDirty() {
+      const status = document.getElementById('configStatus');
+      if (status) status.textContent = 'Nicht gespeicherte Änderungen.';
+    }
+    const PHEMEX_POLL_PRESET_VALUES = ['30', '60', '150', '300', '600', '900', '1800'];
+    function setPhemexPollPresetUi(selected) {
+      const group = document.getElementById('cfgPhemexPollPreset');
+      const input = document.getElementById('cfgPhemexPoll');
+      if (!group || !input) return;
+      const value = selected || 'custom';
+      if (group.tagName === 'SELECT') {
+        group.value = value;
+        input.hidden = value !== 'custom';
+        return;
+      }
+      group.dataset.value = value;
+      group.querySelectorAll('[data-phemex-poll-preset]').forEach(button => {
+        const active = button.dataset.phemexPollPreset === value;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      input.hidden = value !== 'custom';
+    }
+    function syncPhemexPollPreset(seconds) {
+      const input = document.getElementById('cfgPhemexPoll');
+      if (!input) return;
+      const value = String(Math.max(5, Number(seconds || input.value || 30)));
+      input.value = value;
+      setPhemexPollPresetUi(PHEMEX_POLL_PRESET_VALUES.includes(value) ? value : 'custom');
+    }
+    function syncPhemexPollInputFromPreset(value) {
+      const input = document.getElementById('cfgPhemexPoll');
+      if (!input) return;
+      const preset = document.getElementById('cfgPhemexPollPreset');
+      const selected = value || (preset?.tagName === 'SELECT' ? preset.value : preset?.dataset.value) || 'custom';
+      if (selected !== 'custom') input.value = selected;
+      setPhemexPollPresetUi(selected);
+    }
+    function syncSingleTradeTimeframeFields() {
+      const seconds = currentTradeTimeframeSeconds();
+      const confirm = document.getElementById('cfgConfirmTf');
+      if (confirm) confirm.value = String(seconds);
+    }
     function llmLayerForSymbol(data, cfg, symbol) {
       const activeSymbol = symbol || selectedAgentAsset || selectedAsset || (cfg?.symbols || [])[0] || 'BTCUSDT';
       const board = data?.cycle?.agents?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.agents || null;
       const brainState = data?.cycle?.brains?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.brain || null;
       const layer = board?.llm_layer || brainState?.llm_layer || null;
       if (layer) return layer;
-      const enabled = !!cfg?.brain_llm_layer_enabled && !!cfg?.ollama_enabled;
+      const provider = cfg?.llm_provider || 'openai';
+      const providerEnabled = provider === 'ollama' ? !!cfg?.ollama_enabled : !!cfg?.openai_enabled;
+      const keyReady = provider !== 'openai' || !!latestEnvSettings?.openai_key_present;
+      const enabled = !!cfg?.llm_role_team_enabled && providerEnabled && keyReady;
+      const missingReason = !cfg?.llm_role_team_enabled
+        ? 'LLM-Rollenteam ist deaktiviert.'
+        : !providerEnabled
+          ? `${provider === 'ollama' ? 'Ollama' : 'OpenAI'} ist deaktiviert.`
+          : provider === 'openai' && !keyReady
+            ? 'OPENAI_API_KEY fehlt.'
+            : 'Wartet auf nächsten Analysezyklus.';
       return {
         enabled,
-        provider: 'ollama',
-        model: cfg?.ollama_model || 'qwen2.5:3b',
-        role: 'local_trade_auditor',
+        provider,
+        model: provider === 'ollama' ? (cfg?.ollama_model || 'qwen2.5:3b') : (cfg?.openai_model || 'gpt-4.1-mini'),
+        role: 'llm_role_team',
         verdict: enabled ? 'NO_DATA' : 'NO_DATA',
         confidence_note: '-',
-        risk_note: enabled ? 'Wartet auf naechsten Agentenzyklus.' : 'LLM/Ollama ist deaktiviert.',
+        risk_note: missingReason,
         conflict_note: '-',
-        advice: enabled ? 'Noch kein LLM-Audit im aktuellen Status.' : 'Aktivierung ueber Agent Settings / Ollama Audit.',
+        advice: enabled ? 'Noch kein Rollenbericht im aktuellen Status.' : missingReason,
         block_hint: false,
       };
     }
     function renderLlmAuditContent(llmLayer, cfg) {
       const layer = llmLayer || llmLayerForSymbol(latestStatusData || {}, cfg || latestConfig || {}, selectedAgentAsset || selectedAsset);
-      const enabled = !!layer?.enabled;
-      const provider = layer?.provider || 'ollama';
-      const model = layer?.model || cfg?.ollama_model || 'qwen2.5:3b';
-      const verdict = layer?.verdict || 'NO_DATA';
+      const provider = layer?.provider || cfg?.llm_provider || 'openai';
+      const keyMissing = provider === 'openai' && latestEnvSettings?.openai_key_present === false;
+      const enabled = !!layer?.enabled && !keyMissing;
+      const model = layer?.model || (provider === 'ollama' ? cfg?.ollama_model : cfg?.openai_model) || 'gpt-4.1-mini';
+      const verdict = keyMissing ? 'NO_DATA' : (layer?.verdict || 'NO_DATA');
+      const decision = keyMissing ? '-' : (layer?.decision || layer?.judge?.decision || '-');
       const blockHint = !!layer?.block_hint;
-      const riskNote = layer?.risk_note && layer.risk_note !== '-' ? layer.risk_note : (layer?.message || '-');
+      const riskNote = keyMissing ? 'OPENAI_API_KEY fehlt.' : (layer?.risk_note && layer.risk_note !== '-' ? layer.risk_note : (layer?.message || '-'));
       const conflictNote = layer?.conflict_note && layer.conflict_note !== '-' ? layer.conflict_note : '-';
-      const auditNote = layer?.advice && layer.advice !== '-' ? layer.advice : (layer?.message || '-');
-      return `<div class="llmAuditGrid">
-        <div class="llmAuditItem"><div class="label">Status</div><div class="llmBadge ${enabled ? 'active' : 'inactive'}">${enabled ? 'Aktiv' : 'Aus'}</div></div>
-        <div class="llmAuditItem"><div class="label">Provider</div><div class="llmAuditValue">${escapeHtml(provider)}</div></div>
-        <div class="llmAuditItem"><div class="label">Modell</div><div class="llmAuditValue">${escapeHtml(model)}</div></div>
-        <div class="llmAuditItem"><div class="label">Verdict</div><div class="llmVerdict ${escapeHtml(String(verdict).toLowerCase())}">${escapeHtml(verdict)}</div></div>
-        <div class="llmAuditItem fullWidth"><div class="label">Risiko-Hinweis</div><div class="llmNote">${escapeHtml(riskNote)}</div></div>
-        <div class="llmAuditItem fullWidth"><div class="label">Konflikt-Hinweis</div><div class="llmNote">${escapeHtml(conflictNote)}</div></div>
-        <div class="llmAuditItem fullWidth"><div class="label">Audit-Hinweis</div><div class="llmNote">${escapeHtml(auditNote)}</div></div>
-        <div class="llmAuditItem"><div class="label">Block Hint</div><div class="llmBadge ${blockHint ? 'warn' : 'inactive'}">${blockHint ? 'Hinweis' : 'Nein'}</div></div>
+      const auditNote = keyMissing ? 'API Connection öffnen und OpenAI Key speichern.' : (layer?.advice && layer.advice !== '-' ? layer.advice : (layer?.message || '-'));
+      const trace = layer?.context_trace || layer?.input_context || null;
+      const reports = Array.isArray(trace?.technical_reports) ? trace.technical_reports : [];
+      const activeSources = Array.isArray(trace?.active_sources) ? trace.active_sources : [];
+      const snapshot = trace?.indicator_snapshot && typeof trace.indicator_snapshot === 'object' ? trace.indicator_snapshot : {};
+      const snapshotKeys = Object.keys(snapshot).filter(key => snapshot[key] !== null && snapshot[key] !== undefined);
+      const roleCount = Array.isArray(layer?.roles) ? layer.roles.length : 0;
+      const connectionClass = keyMissing || !enabled ? 'bad' : (trace ? 'good' : 'wait');
+      const connectionLabel = keyMissing ? 'Key fehlt' : enabled ? 'Verbunden' : 'Aus';
+      const runStatus = llmRunStatus(layer, cfg, trace, keyMissing, enabled);
+      const runLabel = trace ? `${escapeHtml(trace.symbol || '-')} | ${timeframeLabel(trace.timeframe_seconds || 0)}` : 'Noch kein Rollenlauf';
+      const sentLabel = trace
+        ? `${fmt(activeSources.length, 0)} Quellen | ${fmt(reports.length, 0)} Reports | ${fmt(snapshotKeys.length, 0)} Datenbereiche`
+        : 'Wartet auf Trade-Kandidat';
+      return `<div class="llmAuditCompact">
+        <div class="llmControlHeader">
+          <div>
+            <span class="llmControlEyebrow">LLM Kontrollbereich</span>
+            <strong>${escapeHtml(connectionLabel)} | ${escapeHtml(provider)} | ${escapeHtml(model)}</strong>
+            <small>${escapeHtml(runStatus.detail)}</small>
+          </div>
+          <span class="llmDecisionPill ${escapeHtml(runStatus.cls || connectionClass)}">${escapeHtml(runStatus.label)}</span>
+        </div>
+        <div class="llmControlGrid">
+          <div><span>Verbindung</span><strong>${escapeHtml(connectionLabel)}</strong><small>${escapeHtml(provider)} / ${escapeHtml(model)}</small></div>
+          <div><span>LLM Status</span><strong>${escapeHtml(runStatus.label)}</strong><small>${escapeHtml(runStatus.detail)}</small></div>
+          <div><span>Letzter Lauf</span><strong>${runLabel}</strong><small>${escapeHtml(trace?.pipeline_decision ? `Pipeline ${trace.pipeline_decision}` : 'Noch keine LLM-Auswertung im Status.')}</small></div>
+          <div><span>Gesendet</span><strong>${escapeHtml(sentLabel)}</strong><small>${escapeHtml(activeSources.slice(0, 5).join(', ') || 'Keine aktiven Quellen im Trace.')}${activeSources.length > 5 ? ` +${activeSources.length - 5}` : ''}</small></div>
+          <div><span>Rollen</span><strong>${fmt(roleCount, 0)} Berichte</strong><small>Market Structure, Momentum, Risk, Skeptic, Execution</small></div>
+          <div><span>CEO/Judge</span><strong>${escapeHtml(decision)}</strong><small>${escapeHtml(layer?.judge?.summary || riskNote || '-')}</small></div>
+          <div><span>Block</span><strong>${blockHint ? 'Hinweis' : 'Nein'}</strong><small>${escapeHtml(verdict)}</small></div>
+        </div>
+        ${renderLlmConversation(layer)}
+        ${renderLlmRoleTable(layer)}
+        ${renderLlmAnalysisHistory(latestStatusData?.llm_analysis_history || [])}
+        <details class="llmAuditNotes" ${detailsAttrs('llm-audit-notes')}>
+          <summary>Eingabedaten und Trace anzeigen</summary>
+          <div class="llmNoteGrid">
+            <div><span>Risiko</span><p>${escapeHtml(riskNote)}</p></div>
+            <div><span>Konflikt</span><p>${escapeHtml(conflictNote)}</p></div>
+            <div><span>Audit</span><p>${escapeHtml(auditNote)}</p></div>
+          </div>
+          ${renderLlmContextTrace(trace)}
+        </details>
+      </div>`;
+    }
+    function llmRunStatus(layer, cfg, trace, keyMissing, enabled) {
+      const message = String(layer?.message || layer?.advice || layer?.risk_note || '').toLowerCase();
+      const verdict = String(layer?.verdict || '').toUpperCase();
+      const roleCount = Array.isArray(layer?.roles) ? layer.roles.length : 0;
+      if (!cfg?.llm_role_team_enabled) {
+        return { label:'Deaktiviert', cls:'neutral', detail:'LLM-Rollenteam ist im Strategie Setup ausgeschaltet.' };
+      }
+      if (keyMissing) {
+        return { label:'Key fehlt', cls:'bad', detail:'OPENAI_API_KEY fehlt oder wurde nicht geladen.' };
+      }
+      if (!enabled) {
+        return { label:'Provider aus', cls:'bad', detail:'Der gewählte Provider ist nicht aktiv oder nicht erreichbar konfiguriert.' };
+      }
+      if (verdict === 'ERROR' || /error|fehler|timeout|abgelehnt|failed|exception/.test(message)) {
+        return { label:'Fehler', cls:'bad', detail: layer?.message || layer?.advice || 'LLM-Lauf ist fehlgeschlagen.' };
+      }
+      if (roleCount > 0 && trace) {
+        return { label:'Antwort erhalten', cls:'good', detail:'Rollenberichte und CEO/Judge-Auswertung liegen vor.' };
+      }
+      if (trace && roleCount === 0) {
+        return { label:'Keine Rollenberichte', cls:'wait', detail:'Eingabedaten sind vorhanden, aber es liegen noch keine Rollenberichte vor.' };
+      }
+      return { label:'Wartet auf Kandidat', cls:'wait', detail:'Noch kein Trade-Kandidat wurde an das LLM-Rollenteam übergeben.' };
+    }
+    function renderLlmConversation(layer) {
+      const roles = Array.isArray(layer?.roles) ? layer.roles : [];
+      const judge = layer?.judge || {};
+      const trace = layer?.context_trace || layer?.input_context || {};
+      const roleInputs = trace?.role_inputs && typeof trace.role_inputs === 'object' ? trace.role_inputs : {};
+      const judgeInput = trace?.judge_input && typeof trace.judge_input === 'object' ? trace.judge_input : {};
+      const inputForRole = role => {
+        const key = String(role?.role_key || '').trim();
+        if (key && roleInputs[key]) return roleInputs[key];
+        const roleName = String(role?.role || '').toLowerCase();
+        return Object.values(roleInputs).find(item => String(item?.role || '').toLowerCase() === roleName) || {};
+      };
+      const roleCards = roles.map(role => {
+        const decision = String(role.decision || role.signal || '-').toUpperCase();
+        const cls = decision.includes('APPROVE') ? 'approve' : (decision.includes('BLOCK') ? 'block' : (decision.includes('WAIT') ? 'wait' : 'neutral'));
+        const reasons = Array.isArray(role.reasons) ? role.reasons : [role.reason || role.message || '-'];
+        const roleInput = inputForRole(role);
+        const reportNames = Array.isArray(roleInput.technical_reports) ? roleInput.technical_reports.map(displaySourceName).filter(Boolean) : [];
+        const snapshotKeys = Array.isArray(roleInput.snapshot_keys) ? roleInput.snapshot_keys : [];
+        const promptExtra = String(roleInput.prompt_extra || '').trim();
+        return `<div class="llmTalkCard">
+          <div class="llmTalkHead"><strong>${escapeHtml(role.role || role.role_key || '-')}</strong><span class="llmDecisionPill ${cls}">${escapeHtml(decision)}</span></div>
+          <div class="llmTalkMeta"><span>Prompt</span><p>${escapeHtml(promptExtra || roleInput.focus || 'Default-Rollenprompt aktiv.')}</p></div>
+          <div class="llmTalkMeta"><span>Daten</span><p>${escapeHtml(reportNames.slice(0, 6).join(', ') || 'Keine zugeordneten Quellen')}${reportNames.length > 6 ? ` +${reportNames.length - 6}` : ''}${snapshotKeys.length ? ` | ${escapeHtml(snapshotKeys.slice(0, 4).join(', '))}` : ''}</p></div>
+          <div class="llmTalkMeta answer"><span>Antwort</span><p>${escapeHtml(reasons.filter(Boolean).join(' | ') || '-')}</p></div>
+          <small>Confidence ${fmt(Number(role.confidence ?? role.score ?? 0), 0)} | Hard Block ${role.hard_block || role.blocking ? 'Ja' : 'Nein'}</small>
+        </div>`;
+      }).join('');
+      return `<div class="llmTalkPanel">
+        <div class="llmTalkTitle">LLM Gespräch / Rollenberichte <span>Prompt | Daten | Antwort</span></div>
+        <div class="llmTalkJudge">
+          <span>CEO/Judge</span>
+          <strong>${escapeHtml(judge.decision || layer?.decision || '-')}</strong>
+          <div class="llmTalkMeta"><span>Prompt</span><p>${escapeHtml(judgeInput.prompt_extra || 'Default CEO/Judge Prompt aktiv.')}</p></div>
+          <p>${escapeHtml(judge.summary || layer?.risk_note || layer?.message || 'Noch keine finale Rollen-Zusammenfassung.')}</p>
+          <small>${escapeHtml(judge.conflict_note || layer?.conflict_note || '-')} | ${escapeHtml(judge.advice || layer?.advice || '-')}</small>
+        </div>
+        <div class="llmTalkGrid">${roleCards || '<div class="llmAuditItem fullWidth"><div class="llmNote">Noch keine Rollenberichte. Sie erscheinen nach dem nächsten abgeschlossenen LLM-Rollenlauf.</div></div>'}</div>
+      </div>`;
+    }
+    function renderLlmRoleTable(layer) {
+      const roles = Array.isArray(layer?.roles) ? layer.roles : [];
+      const rows = roles.map(role => {
+        const decision = String(role.decision || role.signal || '-').toUpperCase();
+        const cls = decision.includes('APPROVE') ? 'approve' : (decision.includes('BLOCK') ? 'block' : (decision.includes('WAIT') ? 'wait' : 'neutral'));
+        const reasons = Array.isArray(role.reasons) ? role.reasons.join(' | ') : (role.reason || role.message || '-');
+        return `<tr>
+          <td>${escapeHtml(role.role || role.role_key || '-')}</td>
+          <td><span class="llmDecisionPill ${cls}">${escapeHtml(decision)}</span></td>
+          <td>${fmt(Number(role.confidence ?? role.score ?? 0), 0)}</td>
+          <td>${role.hard_block || role.blocking ? 'Ja' : 'Nein'}</td>
+          <td>${escapeHtml(reasons)}</td>
+        </tr>`;
+      }).join('');
+      return `<div class="llmRoleStatusTable">
+        <table>
+          <thead><tr><th>Rolle</th><th>Entscheid</th><th>Conf</th><th>Block</th><th>Grund</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5">Noch keine Rollenberichte im aktuellen Status.</td></tr>'}</tbody>
+        </table>
+      </div>`;
+    }
+    function renderLlmAnalysisHistory(history) {
+      const rows = Array.isArray(history) ? history.slice(-8).reverse() : [];
+      const cards = rows.map(item => {
+        const usage = item?.usage_estimate || {};
+        const cost = usage.cost_usd === null || usage.cost_usd === undefined ? 'lokal' : `$${Number(usage.cost_usd || 0).toFixed(5)}`;
+        const type = String(item?.type || '-');
+        const cls = type === 'completed' ? 'good' : type === 'skipped' ? 'wait' : 'neutral';
+        const sources = Array.isArray(item?.active_sources) ? item.active_sources : [];
+        const lock = item?.active_order_lock || {};
+        const detail = type === 'skipped' && lock.order_id
+          ? `Order ${lock.order_id} (${lock.order_status || '-'})`
+          : (item?.summary || item?.reason || '-');
+        return `<div class="llmHistoryItem">
+          <div class="llmHistoryTop">
+            <strong>${escapeHtml(item?.symbol || '-')}</strong>
+            <span class="llmDecisionPill ${cls}">${escapeHtml(type)}</span>
+          </div>
+          <div class="llmHistoryDecision">${escapeHtml(item?.decision || '-')} <small>${escapeHtml(item?.provider || '-')} / ${escapeHtml(item?.model || '-')}</small></div>
+          <p>${escapeHtml(detail)}</p>
+          <small>${escapeHtml(item?.time_utc || '-')} | Rollen ${fmt(item?.role_count || 0, 0)} | Tokens ~${fmt(usage.total_tokens || 0, 0)} | Kosten ${escapeHtml(cost)}${Number(item?.repeat_count || 1) > 1 ? ` | x${fmt(item.repeat_count, 0)}` : ''}</small>
+          <small>${escapeHtml(sources.slice(0, 5).join(', ') || 'Keine Quellen im Trace')}${sources.length > 5 ? ` +${sources.length - 5}` : ''}</small>
+        </div>`;
+      }).join('');
+      return `<details class="llmAnalysisHistory" ${detailsAttrs('llm-analysis-history')}>
+        <summary>LLM Analyse-Historie anzeigen</summary>
+        <div class="llmHistoryGrid">${cards || '<div class="llmAuditItem fullWidth"><div class="llmNote">Noch keine LLM-Analyse-Historie vorhanden.</div></div>'}</div>
+      </details>`;
+    }
+    function renderLlmContextTrace(trace) {
+      if (!trace || typeof trace !== 'object') {
+        return '<div class="llmAuditItem fullWidth"><div class="label">LLM Eingabedaten</div><div class="llmNote">Noch kein Kontext-Trace vorhanden. Er erscheint nach dem nächsten abgeschlossenen LLM-Rollenlauf.</div></div>';
+      }
+      const candidate = trace.candidate || {};
+      const gate = trace.economic_gate || {};
+      const reports = Array.isArray(trace.technical_reports) ? trace.technical_reports : [];
+      const roleInputs = trace.role_inputs || {};
+      const snapshot = trace.indicator_snapshot || {};
+      const activeSources = Array.isArray(trace.active_sources) ? trace.active_sources : [];
+      const inactiveCount = Number(trace.inactive_source_count || 0);
+      const snapshotKeys = Object.keys(snapshot).filter(key => snapshot[key] !== null && snapshot[key] !== undefined);
+      const reportRows = reports.slice(0, 8).map(report => `
+        <tr>
+          <td>${escapeHtml(displaySourceName(report.agent_name))}</td>
+          <td>${escapeHtml(report.role || '-')}</td>
+          <td>${escapeHtml(report.signal || '-')}</td>
+          <td>${fmt(report.score)}</td>
+          <td>${escapeHtml(report.reads || report.message || '-')}</td>
+        </tr>
+      `).join('');
+      const roleRows = Object.entries(roleInputs).map(([key, value]) => `
+        <tr>
+          <td>${escapeHtml(value.role || key)}</td>
+          <td>${escapeHtml((value.snapshot_keys || []).join(', ') || '-')}</td>
+          <td>${escapeHtml((value.technical_reports || []).join(', ') || '-')}</td>
+          <td>${escapeHtml(value.prompt_extra || value.focus || '-')}</td>
+        </tr>
+      `).join('');
+      const compactJson = escapeHtml(JSON.stringify({
+        symbol: trace.symbol,
+        timeframe_seconds: trace.timeframe_seconds,
+        pipeline_decision: trace.pipeline_decision,
+        candidate,
+        economic_gate: gate,
+        active_sources: activeSources,
+        inactive_source_count: inactiveCount,
+        technical_summary: trace.technical_summary,
+        indicator_snapshot: snapshot,
+      }, null, 2));
+      return `<div class="llmAuditItem fullWidth llmTraceBox">
+        <details ${detailsAttrs('llm-context-trace')}>
+          <summary>LLM Eingabedaten anzeigen</summary>
+          <div class="llmTraceSummary">
+            <span>${escapeHtml(trace.symbol || '-')}</span>
+            <span>${escapeHtml(trace.pipeline_decision || '-')}</span>
+            <span>Side ${escapeHtml(candidate.side || '-')}</span>
+            <span>Gate ${escapeHtml(gate.reason || '-')}</span>
+            <span>Aktive Quellen ${escapeHtml(activeSources.slice(0, 6).join(', ') || '-')}${activeSources.length > 6 ? ` +${activeSources.length - 6}` : ''}</span>
+            <span>Inaktiv ${escapeHtml(inactiveCount)}</span>
+            <span>Snapshot ${escapeHtml(snapshotKeys.join(', ') || '-')}</span>
+          </div>
+          <div class="llmTraceTables">
+            <div>
+              <div class="label">Rollen-Ausschnitte</div>
+              <table><thead><tr><th>Rolle</th><th>Daten</th><th>Reports</th><th>Prompt</th></tr></thead><tbody>${roleRows || '<tr><td colspan="4">Keine Rollen-Ausschnitte.</td></tr>'}</tbody></table>
+            </div>
+            <div>
+              <div class="label">Technische Reports</div>
+              <table><thead><tr><th>Quelle</th><th>Typ</th><th>Signal</th><th>Score</th><th>Reads</th></tr></thead><tbody>${reportRows || '<tr><td colspan="5">Keine technischen Reports.</td></tr>'}</tbody></table>
+            </div>
+          </div>
+          <pre class="llmTraceJson">${compactJson}</pre>
+        </details>
       </div>`;
     }
     function llmAuditEnabled(cfg) {
-      return !!cfg?.brain_llm_layer_enabled && !!cfg?.ollama_enabled;
+      const provider = cfg?.llm_provider || 'openai';
+      if (!cfg?.llm_role_team_enabled) return false;
+      if (provider === 'ollama') return !!cfg?.ollama_enabled;
+      return !!cfg?.openai_enabled && !!latestEnvSettings?.openai_key_present;
+    }
+    function llmAuditStatus(cfg) {
+      const provider = cfg?.llm_provider || 'openai';
+      if (!cfg?.llm_role_team_enabled) return { badge:'Aus', main:'LLM-Rollenteam deaktiviert', detail:'Aktivierung über Strategie Setup.', cls:'off' };
+      if (provider === 'openai') {
+        if (!cfg?.openai_enabled) return { badge:'Aus', main:'OpenAI deaktiviert', detail:'OpenAI aktiv im Strategie Setup einschalten.', cls:'off' };
+        if (!latestEnvSettings?.openai_key_present) return { badge:'Key fehlt', main:'OPENAI_API_KEY fehlt', detail:'API Connection öffnen und OpenAI Key speichern.', cls:'bad' };
+        return { badge:'Aktiv', main:'Wartet auf Kontext', detail:'OpenAI und Rollen steuern diesen Schritt.', cls:'warn' };
+      }
+      if (!cfg?.ollama_enabled) return { badge:'Aus', main:'Ollama deaktiviert', detail:'Ollama aktiv im Strategie Setup einschalten.', cls:'off' };
+      return { badge:'Aktiv', main:'Wartet auf Kontext', detail:'Ollama und Rollen steuern diesen Schritt.', cls:'warn' };
+    }
+    function liveFlowClass(kind, active=false) {
+      const value = String(kind || '').toUpperCase();
+      if (!active) return 'off';
+      if (['OK', 'APPROVE', 'LONG', 'SHORT', 'READY', 'ACTIVE'].includes(value)) return 'good';
+      if (['BLOCK', 'BLOCKED', 'REJECT', 'ERROR'].includes(value)) return 'bad';
+      return 'warn';
+    }
+    function liveFlowStep(title, badge, main, detail, cls) {
+      return `<div class="liveFlowStep ${escapeHtml(cls || 'warn')}">
+        <div class="liveFlowTop"><span class="liveFlowTitle">${escapeHtml(title)}</span><span class="liveFlowBadge ${escapeHtml(cls || 'warn')}">${escapeHtml(badge || '-')}</span></div>
+        <div class="liveFlowMain">${escapeHtml(main || '-')}</div>
+        <div class="liveFlowDetail">${escapeHtml(detail || '-')}</div>
+      </div>`;
+    }
+    function renderLiveAnalysisFlowSummary(data, cfg) {
+      const panel = document.getElementById('liveAnalysisFlow');
+      const section = document.getElementById('liveAnalysisFlowSection') || panel?.closest('section');
+      if (!panel) return;
+      const activeSymbols = cfg?.symbols || [];
+      const symbol = selectedAgentAsset || selectedAsset || activeSymbols[0] || 'BTCUSDT';
+      const board = data?.cycle?.agents?.[symbol] || data?.cycle?.symbols?.[symbol]?.agents || null;
+      const brainState = data?.cycle?.brains?.[symbol] || data?.cycle?.symbols?.[symbol]?.brain || {};
+      if (!board && !brainState?.brain && !brainState?.candidate) {
+        const llmState = llmAuditStatus(cfg);
+        if (section) section.style.display = '';
+        panel.innerHTML = `<div class="liveFlowGrid">
+          ${liveFlowStep('Signalquellen', 'Wartet', symbol, 'Noch kein abgeschlossener Analysezyklus für dieses Asset.', 'warn')}
+          ${liveFlowStep('Trade Planner', 'Wartet', 'Kein Kandidat', 'Scanner starten oder nächsten Zyklus abwarten.', 'warn')}
+          ${liveFlowStep('LLM Rollen', llmState.badge, llmState.main, llmState.detail, llmState.cls)}
+          ${liveFlowStep('CEO/Judge', 'Wartet', 'Keine Entscheidung', 'Finale Freigabe entsteht erst nach Rollen- und Planner-Kontext.', 'warn')}
+          ${liveFlowStep('Economic Gate', 'Pending', 'Noch nicht geprüft', 'Gebühren, RR, SL-Abstand und offene Trades werden live geprüft.', 'warn')}
+        </div>`;
+        return;
+      }
+      const reports = board?.reports || [];
+      const visibleReports = cfg?.agent_show_offline_agents === false ? reports.filter(report => !isOfflineAgentReport(report)) : reports;
+      const structureCount = visibleReports.filter(report => agentRole(report) === 'structure').length;
+      const momentumCount = visibleReports.filter(report => agentRole(report) === 'momentum').length;
+      const riskCount = visibleReports.filter(report => agentRole(report) === 'risk').length;
+      const blockingCount = visibleReports.filter(report => report?.blocking).length;
+      const brain = board?.brain || brainState.brain || null;
+      const tradePlan = board?.trade_plan || brainState.candidate || null;
+      const gate = board?.economic_gate || brainState.economic_gate || null;
+      const llmLayer = board?.llm_layer || brainState.llm_layer || llmLayerForSymbol(data, cfg, symbol);
+      const ceo = board?.ceo || {};
+      const plannerBadge = tradePlan ? String(tradePlan.decision || tradePlan.side || 'Plan') : brain ? String(brain.signal || 'WAIT') : 'Wartet';
+      const plannerDetail = tradePlan
+        ? `Entry ${fmt(tradePlan.entry_price)} | SL ${fmt(tradePlan.sl_price)} | TP ${fmt(tradePlan.tp_price)}`
+        : (brain?.message || 'Kein freigegebener Trade-Kandidat.');
+      const llmEnabled = llmAuditEnabled(cfg);
+      const llmState = llmAuditStatus(cfg);
+      const llmDecision = llmLayer?.decision || llmLayer?.judge?.decision || llmLayer?.verdict || (llmEnabled ? 'NO_DATA' : 'Aus');
+      const llmProvider = llmLayer?.provider || cfg?.llm_provider || 'openai';
+      const ceoDecision = ceo?.details?.decision || ceo?.signal || 'NEUTRAL';
+      const ceoMessage = ceo?.message || 'Noch keine finale CEO/Judge-Aussage.';
+      const gateAllowed = gate?.trade_allowed === true;
+      const gateBadge = gate ? (gateAllowed ? 'OK' : 'BLOCK') : 'Pending';
+      const gateMain = gate ? (gateAllowed ? 'Trade darf weiter' : 'Trade blockiert') : 'Noch nicht geprüft';
+      const gateDetail = gate?.reason || 'Wartet auf Trade-Kandidat und Live-Kontext.';
+      panel.innerHTML = `<div class="liveFlowGrid">
+        ${liveFlowStep('Signalquellen', `${visibleReports.length} Reports`, symbol, `Struktur ${structureCount} | Momentum ${momentumCount} | Risk ${riskCount} | Blocker ${blockingCount}`, blockingCount ? 'bad' : visibleReports.length ? 'good' : 'warn')}
+        ${liveFlowStep('Trade Planner', plannerBadge, tradePlan ? 'Kandidat gebaut' : 'Kein Kandidat', plannerDetail, liveFlowClass(plannerBadge, !!brain || !!tradePlan))}
+        ${liveFlowStep('LLM Rollen', llmEnabled ? llmDecision : llmState.badge, llmEnabled ? `Provider ${llmProvider}` : llmState.main, llmLayer?.advice || llmLayer?.message || llmState.detail, llmEnabled ? liveFlowClass(llmDecision, true) : llmState.cls)}
+        ${liveFlowStep('CEO/Judge', ceoDecision, ceoDecision === 'NEUTRAL' ? 'Beobachten' : 'Finale Entscheidung', ceoMessage, liveFlowClass(ceoDecision, !!ceo?.message))}
+        ${liveFlowStep('Economic Gate', gateBadge, gateMain, gateDetail, gate ? (gateAllowed ? 'good' : 'bad') : 'warn')}
+      </div>`;
+      if (section) section.style.display = '';
     }
     function renderLlmAuditSummary(data, cfg) {
       const panel = document.getElementById('llmAuditSummary');
@@ -1431,6 +1884,30 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     function agentRoleLabel(role) {
       const map = { structure:'Struktur', momentum:'Momentum', risk:'Risk / Pipeline', ceo:'CEO / Brain', other:'Sonstige' };
       return map[role] || 'Sonstige';
+    }
+    function displaySourceName(name) {
+      const raw = String(name || '-').trim();
+      const map = {
+        'Brain / Lernschicht': 'Trade Planner / Memory',
+        'CEO Trader': 'CEO / Judge',
+        'Risk Agent': 'Risk Gate',
+        'Volume Agent': 'Volume',
+        'Volatility Regime Agent': 'Volatility Regime',
+        'Breakout / Fakeout Agent': 'Breakout / Fakeout',
+        'RSI Agent': 'RSI',
+        'VWAP Agent': 'VWAP',
+        'HMA Agent': 'HMA',
+        'SMA Agent': 'SMA',
+        'MFI Agent': 'MFI',
+        'MACD Agent': 'MACD',
+      };
+      if (map[raw]) return map[raw];
+      return raw
+        .replace(/\s+Agent$/i, '')
+        .replace(/\s+Agenten$/i, '')
+        .replace(/Agenten-/gi, '')
+        .replace(/Agent-/gi, '')
+        .trim() || raw;
     }
     function agentSortValue(report, mode) {
       const roleOrder = { structure:1, momentum:2, risk:3, ceo:4, other:5 };
@@ -1491,14 +1968,14 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         blocking_count: fallback.blocking,
         consensus: fallback.consensus,
         strength: Math.max(fallback.longScore, fallback.shortScore),
-        agents: fallback.items.map(report => report.agent_name || '-'),
+        agents: fallback.items.map(report => displaySourceName(report.agent_name)),
       };
     }
     function roleConsensusText(group) {
       const consensus = String(group?.consensus || 'NEUTRAL').toUpperCase();
       const long = `${fmt(group?.long_count, 0)} / ${fmt(group?.long_score, 0)}`;
       const short = `${fmt(group?.short_count, 0)} / ${fmt(group?.short_score, 0)}`;
-      return `${consensus} · L ${long} · S ${short}`;
+      return `${consensus} | L ${long} | S ${short}`;
     }
     function renderAgentDecisionCenter(board, reports, brain, gate, tradePlan) {
       const ceo = board?.ceo || {};
@@ -1524,8 +2001,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         .slice(0, 4);
       const agentNote = report => {
         const quality = agentQualityProfile(report);
-        if (report?.blocking) return ['Blockierender Agent', 'bad'];
-        if (String(quality.quality).toUpperCase() === 'OFFLINE') return ['Agent offline', 'bad'];
+        if (report?.blocking) return ['Blockierende Quelle', 'bad'];
+        if (String(quality.quality).toUpperCase() === 'OFFLINE') return ['Quelle offline', 'bad'];
         if (String(quality.quality).toUpperCase() === 'WEAK') return ['Schwache Daten-/Signalqualität', 'warn'];
         return [report?.message || 'Daten ok', 'muted'];
       };
@@ -1539,23 +2016,23 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const summaryRows = [
         ['shield', 'Blockierende Priorität', priorityLabel, priorityClass],
         ['db', 'Datenqualität', `${fmt(blockingReports.length, 0)} ${blockingReports.length ? 'blockierend' : 'ok'}`, blockingReports.length ? 'bad' : 'good'],
-        ['signal', 'Agent Signal', priorityBlocked ? 'blockiert' : 'beobachten', priorityBlocked ? 'bad' : 'watch'],
-        ['user', 'CEO', `${ceo?.signal || 'NEUTRAL'} · ${fmt(ceo?.score, 0)}`, signalClass(ceo?.signal)],
+        ['signal', 'Signalquellen', priorityBlocked ? 'blockiert' : 'beobachten', priorityBlocked ? 'bad' : 'watch'],
+        ['user', 'CEO', `${ceo?.signal || 'NEUTRAL'} | ${fmt(ceo?.score, 0)}`, signalClass(ceo?.signal)],
         ['brain', 'Brain Score', `${fmt(brainScore, 0)} / min ${fmt(minBrainScore, 0)}`, brainScore >= minBrainScore ? 'good' : 'warn'],
-        ['gate', 'Economic Gate', gate ? `${gateLabel}${gateAllowed ? '' : ' · ' + gateReason}` : 'pending', gateAllowed ? 'good' : gate ? 'bad' : 'watch'],
+        ['gate', 'Economic Gate', gate ? `${gateLabel}${gateAllowed ? '' : ' | ' + gateReason}` : 'pending', gateAllowed ? 'good' : gate ? 'bad' : 'watch'],
       ];
       const agentRows = visibleAgents.map(report => {
         const [note, noteClass] = agentNote(report);
         const role = agentRoleLabel(agentRole(report));
         const signal = String(report?.signal || 'NEUTRAL').toUpperCase();
         return `<div class="priorityAgentRow">
-          <div class="priorityAgentName"><span class="priorityAvatar">${escapeHtml(initials(report?.agent_name))}</span><strong>${escapeHtml(report?.agent_name || '-')}</strong></div>
+          <div class="priorityAgentName"><span class="priorityAvatar">${escapeHtml(initials(displaySourceName(report?.agent_name)))}</span><strong>${escapeHtml(displaySourceName(report?.agent_name))}</strong></div>
           <div>${escapeHtml(role)}</div>
           <div>${statusChip(signal, signal.toLowerCase())}</div>
           <div><strong>${fmt(report?.score, 0)}</strong></div>
           <div><span class="priorityNote ${escapeHtml(noteClass)}">${escapeHtml(note)}</span></div>
         </div>`;
-      }).join('') || '<div class="priorityEmpty">Keine Risk-/Momentum-Agenten sichtbar.</div>';
+      }).join('') || '<div class="priorityEmpty">Keine Risk-/Momentum-Berichte sichtbar.</div>';
       return `<div class="agentDecisionCenter priorityDecisionCenter">
         <div class="priorityHeader">
           <div class="priorityTitle">Prioritätsansicht</div>
@@ -1575,7 +2052,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
             </div>`).join('')}
           </div>
           <div class="priorityAgentTable">
-            <div class="priorityAgentHead"><span>Agent</span><span>Fokus</span><span>Status</span><span>Score</span><span>Hinweis</span></div>
+            <div class="priorityAgentHead"><span>Quelle</span><span>Fokus</span><span>Status</span><span>Score</span><span>Hinweis</span></div>
             ${agentRows}
           </div>
         </div>
@@ -1585,18 +2062,43 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const breakdown = brain?.details?.score_breakdown || candidate?.features?.brain_score_breakdown || {};
       if (!Object.keys(breakdown).length) return '';
       const items = [
-        ['Richtung', `${fmt(breakdown.direction)} · Gap ${fmt(breakdown.score_gap)}`],
+        ['Richtung', `${fmt(breakdown.direction)} | Gap ${fmt(breakdown.score_gap)}`],
         ['Basis', fmt(breakdown.raw_direction_average)],
-        ['Memory', `${Number(breakdown.memory_adjustment ?? 0) >= 0 ? '+' : ''}${fmt(breakdown.memory_adjustment ?? 0)} · Count ${fmt(breakdown.memory_count, 0)}`],
-        ['Replay', `${Number(breakdown.replay_adjustment ?? 0) >= 0 ? '+' : ''}${fmt(breakdown.replay_adjustment ?? 0)} · ${fmt(breakdown.replay_rule_quality)}`],
-        ['Datenqualität', `-${fmt(breakdown.quality_penalty ?? 0)} · schwach ${fmt(breakdown.weak_count ?? 0)} · offline ${fmt(breakdown.offline_count ?? 0)}`],
+        ['Memory', `${Number(breakdown.memory_adjustment ?? 0) >= 0 ? '+' : ''}${fmt(breakdown.memory_adjustment ?? 0)} | Count ${fmt(breakdown.memory_count, 0)}`],
+        ['Datenqualität', `-${fmt(breakdown.quality_penalty ?? 0)} | schwach ${fmt(breakdown.weak_count ?? 0)} | offline ${fmt(breakdown.offline_count ?? 0)}`],
         ['Final', `${fmt(breakdown.final_score, 0)} / min ${fmt(breakdown.min_score, 0)}`],
       ];
       return `<div class="agentScoreBreakdown">${items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
     }
     function renderAgentRoleGroup(title, reports, role) {
       if (!reports.length) return '';
-      return `<div class="agentRoleGroup ${escapeHtml(role)}"><div class="agentRoleGroupTitle">${escapeHtml(title)} <span>${fmt(reports.length, 0)} Agenten</span></div><div class="agentGrid">${reports.map(report => renderAgentCard(report)).join('')}</div></div>`;
+      return `<div class="agentRoleGroup ${escapeHtml(role)}">
+        <div class="agentRoleGroupTitle">${escapeHtml(title)} <span>${fmt(reports.length, 0)} Quellen</span></div>
+        ${renderSourceReportTable(reports)}
+      </div>`;
+    }
+    function renderSourceReportTable(reports) {
+      const rows = (reports || []).map(report => {
+        const cls = signalClass(report?.signal);
+        const quality = agentQualityProfile(report);
+        const roleLabel = agentRoleLabel(agentRole(report));
+        const note = report?.blocking ? 'blockierend' : report?.conflict ? 'Konflikt' : (report?.message || '-');
+        const reads = report?.reads || report?.function || '-';
+        return `<tr class="${cls}${report?.blocking ? ' blocking' : ''}">
+          <td><strong>${escapeHtml(displaySourceName(report?.agent_name))}</strong><small>${escapeHtml(roleLabel)}</small></td>
+          <td><span class="agentSignal ${cls}">${escapeHtml(report?.signal || 'NEUTRAL')}</span></td>
+          <td>${fmt(report?.score, 0)}</td>
+          <td><span class="agentQualityPill ${escapeHtml(String(quality.quality).toLowerCase())}">${escapeHtml(agentQualityLabel(quality.quality))}</span></td>
+          <td>${escapeHtml(reads)}</td>
+          <td>${escapeHtml(note)}</td>
+        </tr>`;
+      }).join('');
+      return `<div class="sourceReportTable">
+        <table>
+          <thead><tr><th>Quelle</th><th>Signal</th><th>Score</th><th>Qualität</th><th>Liest</th><th>Hinweis</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6">Keine sichtbaren Berichte.</td></tr>'}</tbody>
+        </table>
+      </div>`;
     }
     function agentConflictBucket(reports) {
       const active = (reports || []).filter(report => {
@@ -1613,11 +2115,11 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const role = agentRole(report);
       const signal = String(report?.signal || 'NEUTRAL').toUpperCase();
       const score = Math.max(0, Math.min(100, Number(report?.score || 0)));
-      const flags = [report?.blocking ? 'BLOCKING' : '', report?.conflict ? 'KONFLIKT' : ''].filter(Boolean).join(' · ');
+      const flags = [report?.blocking ? 'BLOCKING' : '', report?.conflict ? 'KONFLIKT' : ''].filter(Boolean).join(' | ');
       return `<div class="agentConflictRow ${signal.toLowerCase()}">
-        <span>${escapeHtml(report?.agent_name || '-')}</span>
+        <span>${escapeHtml(displaySourceName(report?.agent_name))}</span>
         <span>${escapeHtml(agentRoleLabel(role))}</span>
-        <span>${escapeHtml(signal)} · ${score}</span>
+        <span>${escapeHtml(signal)} | ${score}</span>
         <span>${escapeHtml(flags || '-')}</span>
       </div>`;
     }
@@ -1649,13 +2151,12 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         .sort((a, b) => Number(!!b?.blocking) - Number(!!a?.blocking) || Number(!!b?.conflict) - Number(!!a?.conflict) || Number(b?.score || 0) - Number(a?.score || 0))
         .map(agentConflictRow)
         .join('');
-      const summary = `LONG ${bucket.longReports.length} · SHORT ${bucket.shortReports.length} · Blocking ${bucket.blockingReports.length} · Konflikte ${bucket.conflictReports.length}`;
-      return `<div class="agentConflictPanel ${panelClass}">
-        <div class="agentConflictTitle">Konflikt-Matrix</div>
-        <div class="agentConflictSummary">${escapeHtml(summary)}</div>
+      const summary = `LONG ${bucket.longReports.length} | SHORT ${bucket.shortReports.length} | Blocking ${bucket.blockingReports.length} | Konflikte ${bucket.conflictReports.length}`;
+      return `<details class="agentConflictPanel ${panelClass}" ${detailsAttrs('agent-conflict-matrix')}>
+        <summary><span class="agentConflictTitle">Konflikt-Matrix</span><span class="agentConflictSummary">${escapeHtml(summary)}</span></summary>
         <div class="agentConflictMatrix">${matrixRows}</div>
         ${rows ? `<div class="agentConflictRows">${rows}</div>` : '<div class="agentTextBox">Keine aktiven LONG/SHORT- oder Blocking-Konflikte.</div>'}
-      </div>`;
+      </details>`;
     }
     function ceoDecisionParts(ceo, reports, brain, gate) {
       const signal = String(ceo?.signal || 'NEUTRAL').toUpperCase();
@@ -1674,9 +2175,9 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         { label:'Entscheidung', value:decisionLabel },
         { label:'CEO liest', value:reads },
         { label:'Richtung', value:`LONG ${longReports.length} / SHORT ${shortReports.length}` },
-        { label:'Blocking', value:blockingReports.length ? blockingReports.map(report => report.agent_name || '-').join(', ') : 'keine Blocking-Agenten' },
-        { label:'Brain', value:brain ? `${brain.signal || 'NEUTRAL'} · Score ${fmt(brain.score, 0)}` : 'kein Brain-Report' },
-        { label:'Economic Gate', value:gate ? `${gateAllowed ? 'OK' : 'BLOCK'} · ${gateReason}` : 'noch nicht geprüft' },
+        { label:'Blocking', value:blockingReports.length ? blockingReports.map(report => displaySourceName(report.agent_name)).join(', ') : 'keine blockierenden Quellen' },
+        { label:'Brain', value:brain ? `${brain.signal || 'NEUTRAL'} | Score ${fmt(brain.score, 0)}` : 'kein Brain-Report' },
+        { label:'Economic Gate', value:gate ? `${gateAllowed ? 'OK' : 'BLOCK'} | ${gateReason}` : 'noch nicht geprüft' },
         { label:'Begründung', value:message },
       ];
     }
@@ -1696,29 +2197,15 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const memoryCount = memoryMatch?.count ?? features.memory_match_count ?? 0;
       const memoryWinRate = memoryMatch?.win_rate ?? features.memory_win_rate ?? null;
       const memoryAvgR = memoryMatch?.avg_r ?? features.memory_avg_r ?? null;
-      const replayRule = features.replay_rule_weight || {};
-      const replayRuleEnabled = features.replay_rule_weight_enabled ?? replayRule.enabled ?? false;
-      const replayRuleMatched = features.replay_rule_weight_matched ?? replayRule.matched ?? false;
-      const replayRuleAdjustment = features.replay_rule_weight_adjustment ?? replayRule.adjustment ?? 0;
-      const replayRuleQuality = features.replay_rule_weight_quality ?? replayRule.quality ?? (replayRuleEnabled ? 'WATCH' : 'OFF');
-      const replayRuleKey = features.replay_rule_weight_key ?? replayRule.key ?? memoryMatch?.pattern_key ?? candidate?.pattern_key ?? features.brain_pattern_key ?? '-';
-      const replayRuleSymbol = features.replay_rule_weight_symbol ?? replayRule.symbol ?? candidate?.symbol ?? '-';
-      const replayRuleScope = features.replay_rule_weight_scope ?? replayRule.scope ?? latestConfig?.replay_rule_scope ?? 'asset';
-      const replayRuleCount = replayRule.count ?? '-';
-      const replayRuleReason = replayRule.reason || (replayRuleMatched ? 'Replay-Regel trifft Pattern-Key.' : replayRuleEnabled ? 'Keine passende Replay-Regel.' : 'Replay-Gewichtung ist deaktiviert.');
       return [
-        { label:'Brain Signal', value:brain ? `${brain.signal || 'NEUTRAL'} · Score ${fmt(brain.score, 0)}` : 'kein Brain-Report' },
-        { label:'Replay-Lernregel', value:`${replayRuleEnabled ? 'aktiv' : 'aus'} · ${replayRuleMatched ? 'Treffer' : 'kein Treffer'} · ${replayRuleQuality} · ${Number(replayRuleAdjustment) >= 0 ? '+' : ''}${fmt(replayRuleAdjustment, 0)}` },
-        { label:'Replay-Key', value:replayRuleKey },
-        { label:'Replay-Scope', value:`${replayRuleScope} · ${replayRuleSymbol}` },
-        { label:'Replay-Lernregel-Daten', value:`Count ${fmt(replayRuleCount)} · ${replayRuleReason}` },
+        { label:'Brain Signal', value:brain ? `${brain.signal || 'NEUTRAL'} | Score ${fmt(brain.score, 0)}` : 'kein Brain-Report' },
         { label:'Entry-Methode', value:candidate?.entry_method || features.entry_method || 'kein Candidate' },
         { label:'SL-Methode', value:features.stop_loss_mode || features.sl_method || features.stop_method || 'nicht angegeben' },
         { label:'TP-Methode', value:candidate?.target_method || features.target_method || 'nicht angegeben' },
-        { label:'Memory', value:`Matches ${fmt(memoryCount, 0)} · Winrate ${pct(memoryWinRate)} · AvgR ${fmt(memoryAvgR)}` },
+        { label:'Memory', value:`Matches ${fmt(memoryCount, 0)} | Winrate ${pct(memoryWinRate)} | AvgR ${fmt(memoryAvgR)}` },
         { label:'Pattern', value:memoryMatch?.pattern_key || candidate?.pattern_key || features.brain_pattern_key || '-' },
         { label:'Entry / SL / TP', value:candidate ? `${fmt(candidate.entry_price)} / ${fmt(candidate.sl_price)} / ${fmt(candidate.tp_price)}` : '-' },
-        { label:'Economic Gate', value:gate ? `${gateAllowed ? 'OK' : 'BLOCK'} · ${gateReason}` : 'noch nicht geprüft' },
+        { label:'Economic Gate', value:gate ? `${gateAllowed ? 'OK' : 'BLOCK'} | ${gateReason}` : 'noch nicht geprüft' },
         { label:'Brain Grund', value:brain?.message || candidate?.reason || '-' },
       ];
     }
@@ -1737,13 +2224,13 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const active = details.active_trades || {};
       const gate = details.economic_gate || {};
       const broker = details.broker || {};
-      const hardBlocks = Array.isArray(details.hard_blocks) ? details.hard_blocks.join(' · ') : '-';
-      const warnings = Array.isArray(details.warnings) ? details.warnings.join(' · ') : '-';
+      const hardBlocks = Array.isArray(details.hard_blocks) ? details.hard_blocks.join(' | ') : '-';
+      const warnings = Array.isArray(details.warnings) ? details.warnings.join(' | ') : '-';
       const rows = [
-        ['Gate', gate.trade_allowed === true ? 'OK' : gate.trade_allowed === false ? `BLOCK · ${gate.reason || '-'}` : 'pending'],
-        ['Broker', broker.allowed === true ? 'OK' : broker.allowed === false ? `BLOCK · ${broker.reason || '-'}` : 'pending'],
-        ['Offen', `${fmt(active.total, 0)} gesamt · ${fmt(active.same_asset, 0)} gleiches Asset`],
-        ['Korrelation', `${fmt(active.correlation_group)} · gleiche Richtung ${fmt(active.correlated_same_direction, 0)}`],
+        ['Gate', gate.trade_allowed === true ? 'OK' : gate.trade_allowed === false ? `BLOCK | ${gate.reason || '-'}` : 'pending'],
+        ['Broker', broker.allowed === true ? 'OK' : broker.allowed === false ? `BLOCK | ${broker.reason || '-'}` : 'pending'],
+        ['Offen', `${fmt(active.total, 0)} gesamt | ${fmt(active.same_asset, 0)} gleiches Asset`],
+        ['Korrelation', `${fmt(active.correlation_group)} | gleiche Richtung ${fmt(active.correlated_same_direction, 0)}`],
         ['SL-Distanz', details.risk_fraction === null || details.risk_fraction === undefined ? '-' : `${percentDisplay(details.risk_fraction)} / max ${percentDisplay(details.max_sl_distance_fraction)}`],
         ['RR', `${fmt(details.rr)} / min ${fmt(details.min_rr)}`],
         ['Netto', details.net_profit_fraction === null || details.net_profit_fraction === undefined ? '-' : `${percentDisplay(details.net_profit_fraction)} / min ${percentDisplay(details.min_net_profit_fraction)}`],
@@ -1785,33 +2272,51 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const brainScore = brain?.score ?? tradePlan?.score ?? '-';
       const gateText = gate?.trade_allowed === true ? 'OK' : gate?.trade_allowed === false ? 'BLOCK' : 'wartet';
       const gateClass = gate?.trade_allowed === true ? 'good' : gate?.trade_allowed === false ? 'bad' : 'neutral';
-      const planText = tradePlan ? `${tradePlan.decision || '-'} · Entry ${fmt(tradePlan.entry_price)}` : 'kein Trade-Plan';
+      const planText = tradePlan ? `${tradePlan.decision || '-'} | Entry ${fmt(tradePlan.entry_price)}` : 'kein Trade-Plan';
       const rows = activeReports.slice(0, 8).map(report => {
         const quality = agentQualityProfile(report);
         const [note, noteCls] = compactAgentNote(report);
         const role = agentRole(report);
         return `<div class="agentCompactRow">
-          <div class="agentCompactName"><span class="agentCompactAvatar">${escapeHtml(compactAgentInitials(report?.agent_name))}</span><strong>${escapeHtml(report?.agent_name || '-')}</strong></div>
+          <div class="agentCompactName"><span class="agentCompactAvatar">${escapeHtml(compactAgentInitials(displaySourceName(report?.agent_name)))}</span><strong>${escapeHtml(displaySourceName(report?.agent_name))}</strong></div>
           <div>${escapeHtml(agentRoleLabel(role))}</div>
           <div><span class="agentCompactBadge ${escapeHtml(compactAgentStatusClass(report))}">${escapeHtml(report?.signal || 'NEUTRAL')}</span></div>
           <div>${fmt(report?.score, 0)}</div>
           <div><span class="agentQualityPill ${escapeHtml(String(quality.quality).toLowerCase())}">${escapeHtml(agentQualityLabel(quality.quality))}</span></div>
           <div class="agentCompactNote ${escapeHtml(noteCls)}">${escapeHtml(note)}</div>
         </div>`;
-      }).join('') || '<div class="priorityEmpty">Keine Agentenberichte vorhanden.</div>';
+      }).join('') || '<div class="priorityEmpty">Keine Rollenberichte vorhanden.</div>';
       return `<div class="agentCompactBoard">
         <div class="agentCompactTop">
           <div class="agentCompactKpi"><span>CEO</span><strong>${escapeHtml(ceoSignal)}</strong><small>${escapeHtml(board?.ceo?.message || '-')}</small></div>
-          <div class="agentCompactKpi"><span>Agenten</span><strong>${fmt(activeReports.length, 0)} aktiv</strong><small>LONG ${fmt(longCount, 0)} · SHORT ${fmt(shortCount, 0)} · Ø ${fmt(avgScore, 0)}</small></div>
-          <div class="agentCompactKpi"><span>Qualität</span><strong>${fmt(weakCount, 0)} schwach · ${fmt(offlineCount, 0)} offline</strong><small>Blocking ${fmt(blockingCount, 0)}</small></div>
-          <div class="agentCompactKpi"><span>Brain / Gate</span><strong>${escapeHtml(fmt(brainScore))} · <span class="${escapeHtml(gateClass)}">${escapeHtml(gateText)}</span></strong><small>${escapeHtml(planText)}</small></div>
+          <div class="agentCompactKpi"><span>Quellen</span><strong>${fmt(activeReports.length, 0)} aktiv</strong><small>LONG ${fmt(longCount, 0)} | SHORT ${fmt(shortCount, 0)} | Avg ${fmt(avgScore, 0)}</small></div>
+          <div class="agentCompactKpi"><span>Qualität</span><strong>${fmt(weakCount, 0)} schwach | ${fmt(offlineCount, 0)} offline</strong><small>Blocking ${fmt(blockingCount, 0)}</small></div>
+          <div class="agentCompactKpi"><span>Brain / Gate</span><strong>${escapeHtml(fmt(brainScore))} | <span class="${escapeHtml(gateClass)}">${escapeHtml(gateText)}</span></strong><small>${escapeHtml(planText)}</small></div>
         </div>
         <div class="agentCompactTable">
-          <div class="agentCompactHead"><div>Agent</div><div>Rolle</div><div>Signal</div><div>Score</div><div>Qualität</div><div>Hinweis</div></div>
+          <div class="agentCompactHead"><div>Quelle</div><div>Rolle</div><div>Signal</div><div>Score</div><div>Qualität</div><div>Hinweis</div></div>
           ${rows}
         </div>
-        <div class="agentCompactFooter"><span class="agentCompactBadge ${escapeHtml(gateClass)}">Economic Gate ${escapeHtml(gateText)}</span><span>kompakte Prioritätsansicht · detaillierte Karten darunter</span></div>
+        <div class="agentCompactFooter"><span class="agentCompactBadge ${escapeHtml(gateClass)}">Economic Gate ${escapeHtml(gateText)}</span><span>kompakte Prioritätsansicht | Details einklappbar</span></div>
       </div>`;
+    }
+    function renderAgentDecisionDetails(board, reports, brain, tradePlan, memoryMatch, gate, flowInfo) {
+      const ceo = board?.ceo || {};
+      return `<details class="agentDecisionDetails" ${detailsAttrs('agent-decision-details')}>
+        <summary>Entscheidungsdetails anzeigen</summary>
+        <div class="agentDecisionDetailsGrid">
+          ${renderCeoDecisionExplanation(ceo, reports, brain, gate)}
+          ${renderBrainDecisionExplanation(brain, tradePlan, memoryMatch, gate)}
+        </div>
+        ${brain ? renderAgentCard(brain, true) : ''}
+        ${flowInfo}
+      </details>`;
+    }
+    function renderEmptyAgentDecisionDetails(symbol) {
+      return `<details class="agentDecisionDetails" ${detailsAttrs('agent-decision-details')}>
+        <summary>Entscheidungsdetails anzeigen</summary>
+        <div class="agentTextBox">Noch keine Entscheidungsdetails für ${escapeHtml(symbol)}. Scanner starten oder nächsten Zyklus abwarten.</div>
+      </details>`;
     }
 
     function renderAgentCard(report, ceo=false) {
@@ -1820,17 +2325,17 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const score = Math.max(0, Math.min(100, Number(report?.score || 0)));
       const reads = escapeHtml(report?.reads || '-');
       const message = escapeHtml(report?.message || '-');
-      const name = escapeHtml(report?.agent_name || '-');
+      const name = escapeHtml(displaySourceName(report?.agent_name));
       const fn = escapeHtml(report?.function || '-');
       const role = agentRole(report, ceo);
       const roleLabel = agentRoleLabel(role);
       const quality = agentQualityProfile(report);
-      const blocking = report?.blocking ? ' · BLOCKING' : '';
+      const blocking = report?.blocking ? ' | BLOCKING' : '';
       const riskDetails = role === 'risk' ? renderRiskDetailRows(report?.details || null) : '';
       const agentColor = ceo ? '' : agentColorForName(report?.agent_name);
       return `<div class="${ceo ? 'agentCeoCard' : 'agentCube'} ${cls}${conflict}" data-agent-role="${escapeHtml(role)}" style="--agent-card-color:${escapeHtml(agentColor)}">
-        <div class="agentHead"><div class="agentName">${name}<div class="agentFunction">${fn}</div></div><div class="agentHeadBadges"><span class="agentQualityPill ${escapeHtml(String(quality.quality).toLowerCase())}">${escapeHtml(agentQualityLabel(quality.quality))} · ${fmt(quality.reliability, 0)}</span><span class="agentSignal ${cls}">${escapeHtml(report?.signal || 'NEUTRAL')} · ${score}</span></div></div>
-        <div class="agentFunction">Rolle: ${escapeHtml(roleLabel)}${blocking} · Daten ${escapeHtml(quality.data)} · Stärke ${escapeHtml(quality.strength)}</div>
+        <div class="agentHead"><div class="agentName">${name}<div class="agentFunction">${fn}</div></div><div class="agentHeadBadges"><span class="agentQualityPill ${escapeHtml(String(quality.quality).toLowerCase())}">${escapeHtml(agentQualityLabel(quality.quality))} | ${fmt(quality.reliability, 0)}</span><span class="agentSignal ${cls}">${escapeHtml(report?.signal || 'NEUTRAL')} | ${score}</span></div></div>
+        <div class="agentFunction">Rolle: ${escapeHtml(roleLabel)}${blocking} | Daten ${escapeHtml(quality.data)} | Stärke ${escapeHtml(quality.strength)}</div>
         <div class="agentScore"><span style="width:${score}%"></span></div>
         <div class="agentTextBox">Liest: ${reads}
 Rueckmeldung: ${message}</div>
@@ -1843,25 +2348,28 @@ Rueckmeldung: ${message}</div>
       const agentRiskGrid = document.getElementById('agentRiskGrid');
       const agentCeo = document.getElementById('agentCeoCard');
       const agentLlmAudit = document.getElementById('agentLlmAuditCard');
+      const agentLlmTeamSection = document.getElementById('agentLlmTeamSection');
       const agentConflictPanel = document.getElementById('agentConflictPanel');
       if (!agentStatus || !agentGrid || !agentRiskGrid || !agentCeo) return;
       const symbol = activeAgentSymbol();
       const board = data?.cycle?.agents?.[symbol] || data?.cycle?.symbols?.[symbol]?.agents || null;
       if (!board) {
-        agentStatus.textContent = `${symbol} | noch keine Agenten-Daten`;
-        agentCeo.innerHTML = renderAgentCard({agent_name:'CEO Agent', function:'Wartet auf Agentenberichte', signal:'NEUTRAL', score:0, reads:'keine Daten', message:'Scanner starten oder Reload abwarten.'}, true);
+        agentStatus.textContent = `${symbol} | noch keine Rollen-Daten`;
+        const waitingBoard = { symbol, ceo: { agent_name:'CEO / Judge', function:'Wartet auf Rollenberichte', signal:'NEUTRAL', score:0, reads:'keine Daten', message:'Scanner starten oder Reload abwarten.' } };
+        agentCeo.innerHTML = `${renderAgentDecisionCenter(waitingBoard, [], null, null, null)}${renderEmptyAgentDecisionDetails(symbol)}`;
         if (agentLlmAudit) {
           if (llmAuditEnabled(cfg)) {
+            if (agentLlmTeamSection) agentLlmTeamSection.style.display = '';
             agentLlmAudit.style.display = '';
-            agentLlmAudit.innerHTML = `<h3>Ollama Audit</h3>${renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg)}`;
+            agentLlmAudit.innerHTML = renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg);
           } else {
-            agentLlmAudit.style.display = 'none';
+            if (agentLlmTeamSection) agentLlmTeamSection.style.display = 'none';
             agentLlmAudit.innerHTML = '';
           }
         }
         if (agentConflictPanel) agentConflictPanel.innerHTML = renderAgentConflictPanel([], {});
-        agentGrid.innerHTML = '<div class="agentTextBox">Keine Indikator-Agenten geladen.</div>';
-        agentRiskGrid.innerHTML = '<div class="agentTextBox">Keine Risk-/Pipeline-Agenten geladen.</div>';
+        agentGrid.innerHTML = '<div class="agentTextBox">Keine Indikator-Quellen geladen.</div>';
+        agentRiskGrid.innerHTML = '<div class="agentTextBox">Keine Risk-/Pipeline-Berichte geladen.</div>';
         return;
       }
       const reports = board.reports || [];
@@ -1883,14 +2391,15 @@ Rueckmeldung: ${message}</div>
       const offlineInfo = hiddenOfflineCount > 0 ? ` | ${hiddenOfflineCount} Offline ausgeblendet` : '';
       const sortLabel = document.getElementById('agentSortMode')?.selectedOptions?.[0]?.textContent || 'Score hoch';
       const roleLabel = document.getElementById('agentRoleFilter')?.selectedOptions?.[0]?.textContent || 'Alle Rollen';
-      agentStatus.textContent = `${board.symbol || symbol} | ${timeframeLabel(board.timeframe_seconds || cfg?.signal_timeframe_seconds || 0)} | ${indicatorReports.length} Indikator / ${riskReports.length} Risk${offlineInfo} | Sort: ${sortLabel} | Rolle: ${roleLabel} | ${board.ceo?.message || '-'}`;
-      agentCeo.innerHTML = `${renderAgentCompactDashboard(board, sortedReports, brain, gate, tradePlan)}${renderAgentDecisionCenter(board, visibleReports, brain, gate, tradePlan)}${renderAgentCard(board.ceo || {}, true)}${renderCeoDecisionExplanation(board.ceo || {}, visibleReports, brain, gate)}${renderBrainDecisionExplanation(brain, tradePlan, memoryMatch, gate)}${brain ? renderAgentCard(brain, true) : ''}${flowInfo}`;
+      agentStatus.textContent = `${board.symbol || symbol} | ${timeframeLabel(board.timeframe_seconds || cfg?.signal_timeframe_seconds || 0)} | ${indicatorReports.length} Signalquellen / ${riskReports.length} Risk-Berichte${offlineInfo} | Sort: ${sortLabel} | Rolle: ${roleLabel} | ${board.ceo?.message || '-'}`;
+      agentCeo.innerHTML = `${renderAgentDecisionCenter(board, visibleReports, brain, gate, tradePlan)}${renderAgentDecisionDetails(board, visibleReports, brain, tradePlan, memoryMatch, gate, flowInfo)}`;
       if (agentLlmAudit) {
         if (llmAuditEnabled(cfg)) {
+          if (agentLlmTeamSection) agentLlmTeamSection.style.display = '';
           agentLlmAudit.style.display = '';
-          agentLlmAudit.innerHTML = `<h3>Ollama Audit</h3>${renderLlmAuditContent(llmLayer || llmLayerForSymbol(data, cfg, symbol), cfg)}`;
+          agentLlmAudit.innerHTML = renderLlmAuditContent(llmLayer || llmLayerForSymbol(data, cfg, symbol), cfg);
         } else {
-          agentLlmAudit.style.display = 'none';
+          if (agentLlmTeamSection) agentLlmTeamSection.style.display = 'none';
           agentLlmAudit.innerHTML = '';
         }
       }
@@ -1899,11 +2408,11 @@ Rueckmeldung: ${message}</div>
       const momentumReports = indicatorReports.filter(report => agentRole(report) === 'momentum');
       const otherReports = indicatorReports.filter(report => !['structure', 'momentum'].includes(agentRole(report)));
       agentGrid.innerHTML = [
-        renderAgentRoleGroup('Struktur-Agenten', structureReports, 'structure'),
-        renderAgentRoleGroup('Momentum-Agenten', momentumReports, 'momentum'),
-        renderAgentRoleGroup('Weitere Signal-Agenten', otherReports, 'other'),
-      ].filter(Boolean).join('') || '<div class="agentTextBox">Keine sichtbaren Indikator-Agenten.</div>';
-      agentRiskGrid.innerHTML = renderAgentRoleGroup('Risk / Pipeline', riskReports, 'risk') || '<div class="agentTextBox">Keine sichtbaren Risk-/Pipeline-Agenten.</div>';
+        renderAgentRoleGroup('Struktur-Quellen', structureReports, 'structure'),
+        renderAgentRoleGroup('Momentum-Quellen', momentumReports, 'momentum'),
+        renderAgentRoleGroup('Weitere Signalquellen', otherReports, 'other'),
+      ].filter(Boolean).join('') || '<div class="agentTextBox">Keine sichtbaren Indikator-Quellen.</div>';
+      agentRiskGrid.innerHTML = renderAgentRoleGroup('Risk / Pipeline', riskReports, 'risk') || '<div class="agentTextBox">Keine sichtbaren Risk-/Pipeline-Berichte.</div>';
     }
     function isOfflineAgentReport(report) {
       const reads = String(report?.reads || '').toLowerCase();
@@ -2021,7 +2530,7 @@ Rueckmeldung: ${message}</div>
         fvg: Number.isFinite(Number(entryZoneLow)) && Number.isFinite(Number(entryZoneHigh)) ? { low: Number(entryZoneLow), high: Number(entryZoneHigh), label: scan.has_fvg ? 'FVG Entry-Zone' : 'Entry-Zone' } : null,
         markers: [
           scan.signal_candle_time ? { time: Number(scan.signal_candle_time), label: scan.setup_found ? 'Zone + Setup' : 'Zone-Check', color: scan.setup_found ? '#0f766e' : '#d97706', lineColor: scan.setup_found ? 'rgba(15,118,110,.28)' : 'rgba(217,119,6,.28)' } : null,
-          scan.confirmation_candle_time ? { time: Number(scan.confirmation_candle_time), label: 'Entry-Bestaetigung', color: '#2357c6', lineColor: 'rgba(35,87,198,.28)' } : null,
+          scan.confirmation_candle_time ? { time: Number(scan.confirmation_candle_time), label: 'Entry-Bestätigung', color: '#2357c6', lineColor: 'rgba(35,87,198,.28)' } : null,
         ].filter(Boolean)
       };
     }
@@ -2292,8 +2801,8 @@ Rueckmeldung: ${message}</div>
       const breaks = indicatorData?.break_lines?.length || 0;
       const boxes = indicatorData?.boxes?.length || 0;
       const srLevels = indicatorData?.support_resistance?.length || 0;
-      const lines = (indicatorData?.lines || []).map(line => `${line.label}: ${line.series?.length || 0}`).join(' · ');
-      el.textContent = `Indikatoren: BOS/CHoCH ${breaks} (${cfg.bosChochLookbackDays}T) · Boxen ${boxes} (${cfg.boxesLookbackDays}T) · Swing Labels ${labels} (${cfg.swingLabelsLookbackDays}T) · S/R ${srLevels} · Box Auslauf ${cfg.boxExtendCandles} Kerzen${lines ? ' · ' + lines : ''}`;
+      const lines = (indicatorData?.lines || []).map(line => `${line.label}: ${line.series?.length || 0}`).join(' | ');
+      el.textContent = `Indikatoren: BOS/CHoCH ${breaks} (${cfg.bosChochLookbackDays}T) | Boxen ${boxes} (${cfg.boxesLookbackDays}T) | Swing Labels ${labels} (${cfg.swingLabelsLookbackDays}T) | S/R ${srLevels} | Box Auslauf ${cfg.boxExtendCandles} Kerzen${lines ? ' | ' + lines : ''}`;
     }
     async function loadCustomIndicatorData(asset, resolution, limit) {
       const cfg = indicatorConfig();
@@ -2718,7 +3227,7 @@ Rueckmeldung: ${message}</div>
       applyChartSettingsToForm(data);
       bindChartSetupPreviewInputs();
       updateChartSetupPreview();
-      document.getElementById('chartSetupStatus').textContent = 'Chart View Setup: Vorschau zeigt Koerper, Docht, Rand, Grid und Hintergrund.';
+      document.getElementById('chartSetupStatus').textContent = 'Chart View Setup: Vorschau zeigt Körper, Docht, Rand, Grid und Hintergrund.';
       openModal('chartSetupModal');
     }
     async function saveChartSetupSettings() {
@@ -2746,21 +3255,21 @@ Rueckmeldung: ${message}</div>
       await saveAgentSettings();
     }
     const AGENT_SETTING_DEFS = [
-      ['bos_choch', 'BOS / CHoCH Agent', 'liest BOS / CHoCH aus den Break-Lines', 'indicator_show_bos_choch', null],
-      ['box', 'LL / HH Box Agent', 'liest aktive Strukturboxen', 'indicator_show_boxes', null],
-      ['support_resistance', 'Support / Resistance Agent', 'liest dynamische Support-/Resistance-Level', 'indicator_show_support_resistance', null],
-      ['swing_labels', 'HH / LH / HL / LL Agent', 'liest Swing Labels', 'indicator_show_swing_labels', null],
-      ['hma', 'HMA Agent', 'liest HMA Trend / Momentum', 'indicator_show_hma', null],
-      ['sma', 'SMA Agent', 'liest Preisposition und SMA-Neigung', 'indicator_show_sma', null],
-      ['triple_ema', 'Triple EMA Agent', 'liest Fast / Slow Triple EMA', 'indicator_show_triple_ema', null],
-      ['macd', 'MACD Agent', 'liest MACD Linie, Signal und Histogramm', 'indicator_show_macd', null],
-      ['mfi', 'MFI Agent', 'liest Money Flow Index und Kapitalfluss', 'indicator_show_mfi', null],
-      ['rsi', 'RSI Agent', 'liest RSI Momentum und Ueberdehnung', null, { id:'cfgAgentRsiPeriod', key:'agent_rsi_period', label:'RSI Period', fallback:14, help:'Anzahl Kerzen fuer die RSI-Berechnung.' }],
-      ['vwap', 'VWAP Agent', 'liest Preis relativ zum VWAP-Fair-Value', null, { id:'cfgAgentVwapLookback', key:'agent_vwap_lookback_candles', label:'VWAP Lookback Kerzen', fallback:96, help:'Anzahl Kerzen fuer den VWAP-Kontext.' }],
-      ['breakout_fakeout', 'Breakout / Fakeout Agent', 'liest Range-Ausbruch und Fakeout-Rejection', null, { id:'cfgAgentBreakoutFakeoutLookback', key:'agent_breakout_fakeout_lookback', label:'Range Lookback', fallback:20, help:'Anzahl Kerzen fuer die lokale Breakout-/Fakeout-Range.' }],
-      ['volume', 'Volume Agent', 'liest Kerzenvolumen', null, { id:'cfgAgentVolumePeriod', key:'agent_volume_period', label:'Volume Period', fallback:20, help:'Anzahl Kerzen fuer den Volumen-Durchschnitt des Volume Agents.' }],
-      ['volatility_regime', 'Volatility Regime Agent', 'liest ATR-Regime und Risiko-Umfeld', null, { id:'cfgAgentVolatilityAtrPeriod', key:'agent_volatility_atr_period', label:'ATR Period', fallback:14, help:'Anzahl Kerzen fuer die ATR-Berechnung des Volatilitaets-Agenten.' }],
-      ['risk', 'Risk Agent', 'liest Pipeline- und Gate-Kontext', null, null],
+      ['bos_choch', 'BOS / CHoCH', 'Struktur-Daten für den Market Structure Analyst', 'indicator_show_bos_choch', null],
+      ['box', 'LL / HH Box', 'Strukturbox-Daten für den Market Structure Analyst', 'indicator_show_boxes', null],
+      ['support_resistance', 'Support / Resistance', 'Support-/Resistance-Daten für den Market Structure Analyst', 'indicator_show_support_resistance', null],
+      ['swing_labels', 'HH / LH / HL / LL', 'Swing-Daten für den Market Structure Analyst', 'indicator_show_swing_labels', null],
+      ['hma', 'HMA', 'Trend-/Momentum-Daten für den Momentum Analyst', 'indicator_show_hma', null],
+      ['sma', 'SMA', 'Preisposition und SMA-Neigung für den Momentum Analyst', 'indicator_show_sma', null],
+      ['triple_ema', 'Triple EMA', 'Fast-/Slow-EMA-Daten für den Momentum Analyst', 'indicator_show_triple_ema', null],
+      ['macd', 'MACD', 'MACD Linie, Signal und Histogramm für den Momentum Analyst', 'indicator_show_macd', null],
+      ['mfi', 'MFI', 'Money Flow Index und Kapitalfluss für den Momentum Analyst', 'indicator_show_mfi', null],
+      ['rsi', 'RSI', 'RSI Momentum und Überdehnung für den Momentum Analyst', null, { id:'cfgAgentRsiPeriod', key:'agent_rsi_period', label:'RSI Period', fallback:14, help:'Anzahl Kerzen für die RSI-Berechnung.' }],
+      ['vwap', 'VWAP', 'Preis relativ zum VWAP-Fair-Value für den Momentum Analyst', null, { id:'cfgAgentVwapLookback', key:'agent_vwap_lookback_candles', label:'VWAP Lookback Kerzen', fallback:96, help:'Anzahl Kerzen für den VWAP-Kontext.' }],
+      ['breakout_fakeout', 'Breakout / Fakeout', 'Range-Ausbruch und Fakeout-Rejection für Kontext/Risiko', null, { id:'cfgAgentBreakoutFakeoutLookback', key:'agent_breakout_fakeout_lookback', label:'Range Lookback', fallback:20, help:'Anzahl Kerzen für die lokale Breakout-/Fakeout-Range.' }],
+      ['volume', 'Volume', 'Kerzenvolumen für den Momentum Analyst', null, { id:'cfgAgentVolumePeriod', key:'agent_volume_period', label:'Volume Period', fallback:20, help:'Anzahl Kerzen für den Volumen-Durchschnitt.' }],
+      ['volatility_regime', 'Volatility Regime', 'ATR-Regime und Risiko-Umfeld für den Risk Officer', null, { id:'cfgAgentVolatilityAtrPeriod', key:'agent_volatility_atr_period', label:'ATR Period', fallback:14, help:'Anzahl Kerzen für die ATR-Berechnung.' }],
+      ['risk', 'Risk Gate', 'Pipeline- und Gate-Kontext für den Risk Officer', null, null],
     ];
     function indicatorShowInputId(configKey) {
       return {
@@ -2852,6 +3361,20 @@ Rueckmeldung: ${message}</div>
         });
       });
     }
+    function markAgentSettingsDirty() {
+      if (agentSettingsRendering || agentSettingsSaving) return;
+      agentSettingsDirty = true;
+      const status = document.getElementById('agentSettingsStatus');
+      if (status) status.textContent = 'Nicht gespeicherte Aenderungen.';
+    }
+    function bindAgentSettingsDirtyTracking(root = document) {
+      root.querySelectorAll('input, select, textarea').forEach(input => {
+        if (input.dataset.agentDirtyBound === 'true') return;
+        input.dataset.agentDirtyBound = 'true';
+        input.addEventListener('change', markAgentSettingsDirty);
+        input.addEventListener('input', markAgentSettingsDirty);
+      });
+    }
     function prepareAgentGroupHeaders(root = document) {
       root.querySelectorAll('.agentIndicatorGroup, .agentDirectGroup, .agentUtilityGroup').forEach(group => {
         if (group.dataset.agentGroupPrepared === 'true') return;
@@ -2862,7 +3385,7 @@ Rueckmeldung: ${message}</div>
         const header = document.createElement('div');
         header.className = 'agentGroupHeader';
         const stateLabel = group.classList.contains('agentUtilityGroup') ? 'SETUP' : 'Bereit';
-        header.innerHTML = `<div><h3>${escapeHtml(title.textContent)}</h3><div class="label agentGroupState" data-agent-group-state="${escapeHtml(sectionKey)}">${stateLabel}</div></div><button class="agentGroupToggle" type="button" data-agent-group-toggle="${escapeHtml(sectionKey)}" aria-expanded="false">${indicatorButton ? 'Indikator' : 'Ausblenden'}</button>`;
+        header.innerHTML = `<div><h3>${escapeHtml(title.textContent)}</h3><div class="label agentGroupState" data-agent-group-state="${escapeHtml(sectionKey)}">${stateLabel}</div></div><button class="agentGroupToggle" type="button" data-agent-group-toggle="${escapeHtml(sectionKey)}" aria-expanded="false">${indicatorButton ? 'Indikator' : 'Einklappen'}</button>`;
         title.replaceWith(header);
         group.dataset.agentGroupPrepared = 'true';
       });
@@ -2879,13 +3402,13 @@ Rueckmeldung: ${message}</div>
             const open = !group.classList.contains('indicator-settings-open');
             group.classList.toggle('indicator-settings-open', open);
             button.setAttribute('aria-expanded', open ? 'true' : 'false');
-            button.textContent = open ? 'Indikator ▲' : 'Indikator';
+            button.textContent = open ? 'Indikator ^' : 'Indikator';
             return;
           }
           const collapsed = !group.classList.contains('agent-group-collapsed');
           group.classList.toggle('agent-group-collapsed', collapsed);
           button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-          button.textContent = collapsed ? 'Einblenden' : 'Ausblenden';
+          button.textContent = collapsed ? 'Aufklappen' : 'Einklappen';
         });
       });
     }
@@ -2908,37 +3431,37 @@ Rueckmeldung: ${message}</div>
     }
     function syncUtilityAgentGroupStates() {
       const brainActive = document.getElementById('cfgBrainEnabled')?.checked !== false;
-      const ollamaActive = !!document.getElementById('cfgOllamaEnabled')?.checked || !!document.getElementById('cfgBrainLlmLayer')?.checked;
+      const ollamaActive = !!document.getElementById('cfgLlmRoleTeamEnabled')?.checked || !!document.getElementById('cfgOpenAiEnabled')?.checked || !!document.getElementById('cfgOllamaEnabled')?.checked || !!document.getElementById('cfgBrainLlmLayer')?.checked;
       setAgentGroupState('brain_ceo', brainActive);
       setAgentGroupState('ollama_audit', ollamaActive);
     }
     function agentControlMarkup(key, title, info, linked, period, data) {
       const prefix = `agent_${key}`;
-      const linkedText = linked ? 'Chart-Indikator folgt Agent aktiv' : 'Direkter Agent ohne Chart-Indikator-Pflicht';
+      const linkedText = linked ? 'Chart-Indikator folgt diesem Daten-Schalter' : 'Datenquelle ohne eigenes Chart-Pane';
       const safeKey = key.replace(/[^a-zA-Z0-9]/g, '_');
       const periodField = period
         ? `<div><label class="fieldLabel" for="${period.id}">${escapeHtml(period.label)} <button class="helpButton" type="button" data-help-target="agent_${safeKey}_period_help">?</button></label><input id="${period.id}" type="number" min="2" max="500" step="1" value="${Number(data[period.key] ?? period.fallback)}"><div id="agent_${safeKey}_period_help" class="helpText">${escapeHtml(period.help)}</div></div>`
         : '';
-      const collapseHint = linked ? '<div class="agentCollapsedHint fullWidth">Agent und Chart-Indikator sind aus.</div>' : '';
+      const collapseHint = linked ? '<div class="agentCollapsedHint fullWidth">Diese Datenquelle und der gekoppelte Chart-Indikator sind aus.</div>' : '';
       const color = agentColorValue(data, key);
       return `
         <div id="cfgAgent${key}ColorLine" class="agentCardColorLine fullWidth" style="background:${escapeHtml(color)}"></div>
         <div class="agentControlHeader fullWidth">
-          <div><div class="switchLine"><input id="cfgAgent${key}Enabled" data-agent-enabled="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Enabled">Agent aktiv <button class="helpButton" type="button" data-help-target="agent_${safeKey}_enabled_help">?</button></label><span id="cfgAgent${key}EnabledState" class="switchState">Aus</span></div><div id="agent_${safeKey}_enabled_help" class="helpText">Schaltet diesen Agenten ein oder aus. Bei Aus liefert er keine aktive Bewertung.</div></div>
-          <button class="agentSetupToggle" type="button" data-agent-setup-toggle="agentSetupPanel_${safeKey}" aria-expanded="false" aria-label="Setup öffnen" title="Setup öffnen"><span class="agentSetupIcon" aria-hidden="true">⚙</span></button>
+          <div class="agentControlMain"><div class="switchLine"><input id="cfgAgent${key}Enabled" data-agent-enabled="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Enabled">Datenquelle aktiv <button class="helpButton" type="button" data-help-target="agent_${safeKey}_enabled_help">?</button></label><span id="cfgAgent${key}EnabledState" class="switchState">Aus</span></div><div id="agent_${safeKey}_enabled_help" class="helpText">Schaltet diese technische Datenquelle ein oder aus. Nur aktive Datenquellen werden an die zuständige Analystenrolle und das LLM-Rollenteam übergeben.</div></div>
+          <button class="agentSetupToggle" type="button" data-agent-setup-toggle="agentSetupPanel_${safeKey}" aria-expanded="false" aria-label="Setup" title="Setup"><span class="agentSetupIcon" aria-hidden="true">&#9881;</span></button>
         </div>
         <div id="agentSetupPanel_${safeKey}" class="agentSetupPanel fullWidth" style="--agent-card-color:${escapeHtml(color)}">
-          <div class="agentSetupPopupHeader"><strong>${escapeHtml(title)} Setup</strong><button class="agentSetupClose" type="button" data-agent-setup-close>Schließen</button></div>
+          <div class="agentSetupPopupHeader"><strong>${escapeHtml(title)} Datenquelle</strong><button class="agentSetupClose" type="button" data-agent-setup-close>Schließen</button></div>
           ${collapseHint}
-          <div><label class="fieldLabel" for="cfgAgent${key}Weight">Gewichtung <button class="helpButton" type="button" data-help-target="agent_${safeKey}_weight_help">?</button></label><input id="cfgAgent${key}Weight" type="number" min="0" max="5" step="0.1"><div id="agent_${safeKey}_weight_help" class="helpText">Multiplikator fuer den Agenten-Score. 1 = normal, 0 = keine Wirkung, ueber 1 = staerkerer Einfluss.</div></div>
-          <div><label class="fieldLabel" for="cfgAgent${key}MinScore">Mindestscore <button class="helpButton" type="button" data-help-target="agent_${safeKey}_min_help">?</button></label><input id="cfgAgent${key}MinScore" type="number" min="0" max="100" step="1"><div id="agent_${safeKey}_min_help" class="helpText">Unter diesem Score wird das Agentensignal auf neutral gesetzt.</div></div>
+          <div><label class="fieldLabel" for="cfgAgent${key}Weight">Datengewicht <button class="helpButton" type="button" data-help-target="agent_${safeKey}_weight_help">?</button></label><input id="cfgAgent${key}Weight" type="number" min="0" max="5" step="0.1"><div id="agent_${safeKey}_weight_help" class="helpText">Multiplikator für diese Datenquelle. 1 = normal, 0 = keine Wirkung, über 1 = stärkerer Einfluss.</div></div>
+          <div><label class="fieldLabel" for="cfgAgent${key}MinScore">Mindestscore <button class="helpButton" type="button" data-help-target="agent_${safeKey}_min_help">?</button></label><input id="cfgAgent${key}MinScore" type="number" min="0" max="100" step="1"><div id="agent_${safeKey}_min_help" class="helpText">Unter diesem Score wird das technische Signal auf neutral gesetzt.</div></div>
           ${periodField}
-          <div class="fullWidth"><div class="switchLine"><input id="cfgAgent${key}Blocking" data-agent-blocking="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Blocking">blockierend wenn keine Freigabe <button class="helpButton" type="button" data-help-target="agent_${safeKey}_blocking_help">?</button></label><span id="cfgAgent${key}BlockingState" class="switchState">Info</span></div><div id="agent_${safeKey}_blocking_help" class="helpText">Wenn aktiv, kann dieser Agent einen Trade blockieren, sobald seine Mindestanforderung nicht erfuellt ist.</div></div>
+          <div class="fullWidth"><div class="switchLine"><input id="cfgAgent${key}Blocking" data-agent-blocking="${prefix}" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgAgent${key}Blocking">Kann blockieren <button class="helpButton" type="button" data-help-target="agent_${safeKey}_blocking_help">?</button></label><span id="cfgAgent${key}BlockingState" class="switchState">Info</span></div><div id="agent_${safeKey}_blocking_help" class="helpText">Wenn aktiv, darf diese Datenquelle einen Kandidaten sperren. Das sollte nur bei klaren Qualitätsfiltern genutzt werden.</div></div>
           <div class="agentColorRow fullWidth">
-            <div><label class="fieldLabel" for="cfgAgent${key}Color">Agent-Farbe</label><input id="cfgAgent${key}Color" type="color" value="${escapeHtml(color)}"></div>
+            <div><label class="fieldLabel" for="cfgAgent${key}Color">Quellen-Farbe</label><input id="cfgAgent${key}Color" type="color" value="${escapeHtml(color)}"></div>
             <div class="agentColorPreview" id="cfgAgent${key}ColorPreview"></div>
           </div>
-          <div class="label fullWidth">${escapeHtml(info)} · ${escapeHtml(linkedText)}</div>
+          <div class="label fullWidth">${escapeHtml(info)} | ${escapeHtml(linkedText)}</div>
         </div>`;
     }
     function prepareAgentIndicatorGroups() {
@@ -2974,6 +3497,8 @@ Rueckmeldung: ${message}</div>
       syncUtilityAgentGroupStates();
     }
     function renderAgentSettingsGroups(data) {
+      agentSettingsRendering = true;
+      const renderRevision = String(++agentSettingsRenderRevision);
       const wrap = document.getElementById('agentSettingsGroups');
       renderInlineAgentSettings(data);
       const directAgentHtml = AGENT_SETTING_DEFS
@@ -2988,8 +3513,12 @@ Rueckmeldung: ${message}</div>
           </div>`;
         })
         .join('');
-      wrap.innerHTML = directAgentHtml ? `<div class="settingsGroup"><h3>Direkte Agenten ohne Chart-Indikator</h3><div class="label">Diese Agenten bleiben sichtbar, weil sie keinen eigenen Preis-Indikator im Chart haben.</div></div>${directAgentHtml}` : '';
+      wrap.innerHTML = directAgentHtml ? `<div class="settingsGroup"><h3>Datenquellen ohne Chart-Indikator</h3><div class="label">Diese Quellen bleiben in der passenden Analystenrolle und liefern nur Kontextdaten.</div></div>${directAgentHtml}` : '';
       for (const [key] of AGENT_SETTING_DEFS) {
+        const enabledInput = document.getElementById(`cfgAgent${key}Enabled`);
+        const group = enabledInput?.closest('.settingsGroup, .agentIndicatorGroup, .agentDirectGroup, .agentUtilityGroup');
+        if (group) group.dataset.agentRenderRevision = renderRevision;
+        if (enabledInput) enabledInput.dataset.agentRenderRevision = renderRevision;
         document.getElementById(`cfgAgent${key}Enabled`).checked = data[`agent_${key}_enabled`] !== false;
         document.getElementById(`cfgAgent${key}Weight`).value = data[`agent_${key}_weight`] ?? 1;
         document.getElementById(`cfgAgent${key}MinScore`).value = data[`agent_${key}_min_score`] ?? 0;
@@ -3027,24 +3556,53 @@ Rueckmeldung: ${message}</div>
           syncAllSwitchStates();
         });
       });
-      bindHelpButtons(document.getElementById('agentSetupView') || document);
-      bindAgentSetupToggles(document.getElementById('agentSetupView') || document);
-      bindAgentGroupToggles(document.getElementById('agentSetupView') || document);
+      const root = document.getElementById('agentSetupView') || document;
+      bindHelpButtons(root);
+      bindAgentSetupToggles(root);
+      bindAgentGroupToggles(root);
+      bindAgentSettingsDirtyTracking(root);
       syncUtilityAgentGroupStates();
+      agentSettingsRendering = false;
+      document.dispatchEvent(new CustomEvent('agent-settings-rendered'));
     }
-    async function loadAgentSettings() {
+    async function loadAgentSettings(options = {}) {
+      const force = !!options.force;
+      if (!force && agentSettingsDirty && currentView === 'agent_setup') {
+        return;
+      }
       const response = await fetch('/api/settings', { cache: 'no-store' });
       const data = await response.json();
-      latestConfig = data;
-      applyIndicatorSettingsToForm(data);
+      mergeConfigState(data);
+      try {
+        applyIndicatorSettingsToForm(data);
+      } catch (error) {
+        console.warn('Indicator settings konnten nicht vollständig geladen werden:', error);
+      }
       document.getElementById('cfgBrainEnabled').checked = data.brain_enabled !== false;
       document.getElementById('cfgBrainMinScore').value = data.brain_min_score ?? 58;
       document.getElementById('cfgBrainMinScoreGap').value = data.brain_min_score_gap ?? 18;
       document.getElementById('cfgBrainMinAlignment').value = data.brain_min_agent_alignment ?? 2;
       document.getElementById('cfgBrainMemoryMinCount').value = data.brain_memory_min_count ?? 3;
       document.getElementById('cfgBrainEntryBoxOffset').value = data.brain_entry_box_offset ?? 0.35;
-      document.getElementById('cfgBrainRequireBox').checked = data.brain_require_box_for_trade === true;
       document.getElementById('cfgBrainLlmLayer').checked = data.brain_llm_layer_enabled === true;
+      document.getElementById('cfgLlmRoleTeamEnabled').checked = data.llm_role_team_enabled === true;
+      document.getElementById('cfgLlmProvider').value = data.llm_provider || 'openai';
+      document.getElementById('cfgOpenAiEnabled').checked = data.openai_enabled === true;
+      document.getElementById('cfgOpenAiModel').value = data.openai_model || 'gpt-4.1-mini';
+      document.getElementById('openAiAgentTestStatus').textContent = 'Noch nicht geprüft.';
+      document.getElementById('cfgLlmRoleTemperature').value = data.llm_role_temperature ?? 0;
+      document.getElementById('cfgLlmRoleRequired').checked = data.llm_role_required_for_trade === true;
+      document.getElementById('cfgLlmRoleMarketStructure').checked = data.llm_role_market_structure_enabled !== false;
+      document.getElementById('cfgLlmRoleMomentum').checked = data.llm_role_momentum_enabled !== false;
+      document.getElementById('cfgLlmRoleRiskOfficer').checked = data.llm_role_risk_officer_enabled !== false;
+      document.getElementById('cfgLlmRoleSkeptic').checked = data.llm_role_skeptic_enabled !== false;
+      document.getElementById('cfgLlmRoleExecution').checked = data.llm_role_execution_enabled !== false;
+      document.getElementById('cfgLlmRoleMarketStructurePrompt').value = rolePromptValue(data, 'llm_role_market_structure_prompt_extra');
+      document.getElementById('cfgLlmRoleMomentumPrompt').value = rolePromptValue(data, 'llm_role_momentum_prompt_extra');
+      document.getElementById('cfgLlmRoleRiskOfficerPrompt').value = rolePromptValue(data, 'llm_role_risk_officer_prompt_extra');
+      document.getElementById('cfgLlmRoleSkepticPrompt').value = rolePromptValue(data, 'llm_role_skeptic_prompt_extra');
+      document.getElementById('cfgLlmRoleExecutionPrompt').value = rolePromptValue(data, 'llm_role_execution_prompt_extra');
+      document.getElementById('cfgLlmRoleJudgePrompt').value = rolePromptValue(data, 'llm_role_judge_prompt_extra');
       document.getElementById('cfgOllamaEnabled').checked = data.ollama_enabled === true;
       document.getElementById('cfgOllamaBaseUrl').value = data.ollama_base_url || 'http://127.0.0.1:11434';
       document.getElementById('cfgOllamaModel').value = data.ollama_model || 'qwen2.5:3b';
@@ -3052,15 +3610,36 @@ Rueckmeldung: ${message}</div>
       document.getElementById('cfgOllamaMaxPrompt').value = data.ollama_max_prompt_chars ?? 4000;
       document.getElementById('cfgOllamaTemperature').value = data.ollama_temperature ?? 0;
       document.getElementById('cfgOllamaBlockHint').checked = data.ollama_block_hint_enabled === true;
+      document.getElementById('ollamaTestStatus').textContent = 'Noch nicht geprüft.';
       document.getElementById('cfgAgentShowOffline').checked = data.agent_show_offline_agents !== false;
       renderAgentSettingsGroups(data);
       syncLinkedIndicatorInputsFromAgents();
       syncAllSwitchStates();
+      syncLlmProviderVisibility();
       bindAgentGroupToggles(document.getElementById('agentSetupView') || document);
       syncUtilityAgentGroupStates();
+      agentSettingsDirty = false;
       document.getElementById('agentSettingsStatus').textContent = '';
     }
+    async function testOllamaConnection() {
+      const status = document.getElementById('ollamaTestStatus');
+      if (!status) return;
+      status.textContent = 'Teste Ollama...';
+      try {
+        const response = await fetch('/api/ollama-test', { cache: 'no-store' });
+        const result = await response.json();
+        status.textContent = result.reason || (result.ok ? 'Ollama Verbindung erfolgreich.' : 'Ollama Test fehlgeschlagen.');
+        if (!result.ok && ['not_running', 'model_missing', 'timeout', 'invalid_json'].includes(result.status)) {
+          window.alert(result.reason || 'Ollama Test fehlgeschlagen.');
+        }
+      } catch (error) {
+        status.textContent = 'Ollama Test fehlgeschlagen.';
+        window.alert('Ollama Test fehlgeschlagen. Die lokale App konnte den Test-Endpunkt nicht erreichen.');
+      }
+    }
     async function saveAgentSettings() {
+      if (agentSettingsSaving) return;
+      agentSettingsSaving = true;
       syncLinkedIndicatorInputsFromAgents();
       const parsed = {
         ...indicatorSettingsPayload(),
@@ -3071,8 +3650,25 @@ Rueckmeldung: ${message}</div>
         brain_min_agent_alignment: Number(document.getElementById('cfgBrainMinAlignment').value),
         brain_memory_min_count: Number(document.getElementById('cfgBrainMemoryMinCount').value),
         brain_entry_box_offset: Number(document.getElementById('cfgBrainEntryBoxOffset').value),
-        brain_require_box_for_trade: document.getElementById('cfgBrainRequireBox').checked,
         brain_llm_layer_enabled: document.getElementById('cfgBrainLlmLayer').checked,
+        llm_role_team_enabled: document.getElementById('cfgLlmRoleTeamEnabled').checked,
+        llm_provider: document.getElementById('cfgLlmProvider').value,
+        openai_enabled: document.getElementById('cfgOpenAiEnabled').checked,
+        openai_model: document.getElementById('cfgOpenAiModel').value.trim(),
+        llm_role_timeout_seconds: Number(latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || currentPhemexPollSeconds()),
+        llm_role_temperature: Number(document.getElementById('cfgLlmRoleTemperature').value),
+        llm_role_required_for_trade: document.getElementById('cfgLlmRoleRequired').checked,
+        llm_role_market_structure_enabled: document.getElementById('cfgLlmRoleMarketStructure').checked,
+        llm_role_momentum_enabled: document.getElementById('cfgLlmRoleMomentum').checked,
+        llm_role_risk_officer_enabled: document.getElementById('cfgLlmRoleRiskOfficer').checked,
+        llm_role_skeptic_enabled: document.getElementById('cfgLlmRoleSkeptic').checked,
+        llm_role_execution_enabled: document.getElementById('cfgLlmRoleExecution').checked,
+        llm_role_market_structure_prompt_extra: document.getElementById('cfgLlmRoleMarketStructurePrompt').value.trim(),
+        llm_role_momentum_prompt_extra: document.getElementById('cfgLlmRoleMomentumPrompt').value.trim(),
+        llm_role_risk_officer_prompt_extra: document.getElementById('cfgLlmRoleRiskOfficerPrompt').value.trim(),
+        llm_role_skeptic_prompt_extra: document.getElementById('cfgLlmRoleSkepticPrompt').value.trim(),
+        llm_role_execution_prompt_extra: document.getElementById('cfgLlmRoleExecutionPrompt').value.trim(),
+        llm_role_judge_prompt_extra: document.getElementById('cfgLlmRoleJudgePrompt').value.trim(),
         ollama_enabled: document.getElementById('cfgOllamaEnabled').checked,
         ollama_base_url: document.getElementById('cfgOllamaBaseUrl').value.trim(),
         ollama_model: document.getElementById('cfgOllamaModel').value.trim(),
@@ -3098,20 +3694,26 @@ Rueckmeldung: ${message}</div>
       parsed.indicator_enabled = AGENT_SETTING_DEFS.some(([key, _title, _info, linked]) => linked && parsed[`agent_${key}_enabled`]);
       parsed.agent_sma_period = parsed.indicator_sma_period;
       parsed.agent_mfi_period = parsed.indicator_mfi_period;
-      const response = await fetch('/api/config-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed)
-      });
-      const result = await response.json();
-      document.getElementById('agentSettingsStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
-      if (response.ok) {
-        latestConfig = { ...latestConfig, ...parsed };
-        updateChartSetupPreview();
-        updateKlineChartStyles();
-        lastChartKey = '';
-        await refresh();
-        if (currentView === 'chart') await loadChartData(true);
+      try {
+        const response = await fetch('/api/config-json', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+        const result = await response.json();
+        document.getElementById('agentSettingsStatus').textContent = response.ok ? 'Gespeichert.' : (result.error || 'Fehler');
+        if (response.ok) {
+          latestConfig = { ...latestConfig, ...parsed };
+          agentSettingsDirty = false;
+          updateChartSetupPreview();
+          updateKlineChartStyles();
+          lastChartKey = '';
+          await refresh();
+          if (currentView === 'agent_setup') document.dispatchEvent(new CustomEvent('agent-settings-rendered'));
+          if (currentView === 'chart') await loadChartData(true);
+        }
+      } finally {
+        agentSettingsSaving = false;
       }
     }
     async function saveSettings() {
@@ -3141,8 +3743,8 @@ Rueckmeldung: ${message}</div>
       const resetLabel = resetSymbol || 'Gesamt';
       if (action === 'reset') {
         const scopeText = resetSymbol
-          ? `nur fuer ${resetSymbol}`
-          : 'fuer alle Assets';
+          ? `nur für ${resetSymbol}`
+          : 'für alle Assets';
         const ok = window.confirm(`Reset ${scopeText} wirklich ausfuehren? Das loescht Paper-Trades und Lernspeicher ${scopeText} und setzt den Scanner auf Stop.`);
         if (!ok) return;
       }
@@ -3161,7 +3763,7 @@ Rueckmeldung: ${message}</div>
       const doneLabels = {
         start: 'Scanner gestartet',
         stop: 'Scanner gestoppt',
-        reset: `Speicher ${resetLabel} zurueckgesetzt`
+        reset: `Speicher ${resetLabel} zurückgesetzt`
       };
       setControlMessage(response.ok ? (doneLabels[action] || 'Aktion ausgefuehrt') : (result.error || 'Fehler'), response.ok ? 'ok' : 'warn');
       await refresh();
@@ -3220,7 +3822,7 @@ Rueckmeldung: ${message}</div>
     async function loadTradingSettings() {
       const response = await fetch('/api/status', { cache: 'no-store' });
       const data = await response.json();
-      latestConfig = data.config || {};
+      mergeConfigState(data.config || {});
       document.getElementById('paperToggle').checked = !!latestConfig.paper_trading_enabled;
       syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
@@ -3248,29 +3850,51 @@ Rueckmeldung: ${message}</div>
       if (panel) panel.classList.add('active');
     }
     function openReplayView() {
-      syncReplayAssetOptions(latestConfig || {});
-      renderReplayRuleWeightStatus();
-      switchReplayTab('overview');
-      setView(currentView === 'replay' ? 'dashboard' : 'replay');
-      if (currentView === 'replay') loadReplayHistory();
+      setView('dashboard');
     }
     function closeModal(id) { document.getElementById(id).classList.remove('open'); }
     async function loadApiSettings() {
       const response = await fetch('/api/env-settings', { cache: 'no-store' });
       const data = await response.json();
+      if (!Object.prototype.hasOwnProperty.call(data, 'openai_key_present')) data.openai_key_present = false;
+      latestEnvSettings = data;
       document.getElementById('apiBaseUrl').value = data.base_url || 'https://api.phemex.com';
       document.getElementById('apiKey').value = '';
       document.getElementById('apiSecret').value = '';
+      document.getElementById('openAiApiKey').value = '';
       document.getElementById('apiPreview').textContent =
         `Key: ${data.api_key_present ? data.api_key_preview : 'nicht gesetzt'} | Secret: ${data.api_secret_present ? data.api_secret_preview : 'nicht gesetzt'}`;
+      document.getElementById('openAiApiPreview').textContent =
+        `OPENAI_API_KEY: ${data.openai_key_present ? data.openai_key_preview : 'nicht gesetzt'}`;
+      document.getElementById('openAiTestStatus').textContent = data.openai_key_present ? 'Bereit zum Test.' : 'Kein OpenAI Key gesetzt.';
       document.getElementById('apiStatus').textContent = '';
       openModal('apiModal');
+    }
+    async function testOpenAiConnection(statusId = 'openAiTestStatus') {
+      const status = document.getElementById(statusId);
+      if (!status) return;
+      status.textContent = 'Teste OpenAI...';
+      try {
+        const response = await fetch('/api/openai-test', { cache: 'no-store' });
+        const result = await response.json();
+        status.textContent = result.reason || (result.ok ? 'OpenAI Verbindung erfolgreich.' : 'OpenAI Test fehlgeschlagen.');
+        if (!result.ok && result.popup !== false) {
+          window.alert(result.reason || 'OpenAI Test fehlgeschlagen.');
+          if (result.status === 'insufficient_quota') {
+            window.open('https://platform.openai.com/settings/organization/billing/overview', '_blank', 'noopener');
+          }
+        }
+      } catch (error) {
+        status.textContent = 'OpenAI Test fehlgeschlagen.';
+        window.alert('OpenAI Test fehlgeschlagen. Die lokale App konnte den Test-Endpunkt nicht erreichen.');
+      }
     }
     async function saveApiSettings() {
       const payload = {
         base_url: document.getElementById('apiBaseUrl').value,
         api_key: document.getElementById('apiKey').value,
-        api_secret: document.getElementById('apiSecret').value
+        api_secret: document.getElementById('apiSecret').value,
+        openai_api_key: document.getElementById('openAiApiKey').value
       };
       const response = await fetch('/api/env-settings', {
         method: 'POST',
@@ -3278,12 +3902,18 @@ Rueckmeldung: ${message}</div>
         body: JSON.stringify(payload)
       });
       const result = await response.json();
+      if (!Object.prototype.hasOwnProperty.call(result, 'openai_key_present')) result.openai_key_present = false;
+      if (response.ok) latestEnvSettings = result;
       document.getElementById('apiStatus').textContent = response.ok ? 'Gespeichert und im laufenden Bot aktualisiert.' : (result.error || 'Fehler');
       if (response.ok) {
         document.getElementById('apiPreview').textContent =
           `Key: ${result.api_key_present ? result.api_key_preview : 'nicht gesetzt'} | Secret: ${result.api_secret_present ? result.api_secret_preview : 'nicht gesetzt'}`;
+        document.getElementById('openAiApiPreview').textContent =
+          `OPENAI_API_KEY: ${result.openai_key_present ? result.openai_key_preview : 'nicht gesetzt'}`;
+        document.getElementById('openAiTestStatus').textContent = result.openai_key_present ? 'Bereit zum Test.' : 'Kein OpenAI Key gesetzt.';
         document.getElementById('apiKey').value = '';
         document.getElementById('apiSecret').value = '';
+        document.getElementById('openAiApiKey').value = '';
         await refresh();
       }
     }
@@ -3298,7 +3928,7 @@ Rueckmeldung: ${message}</div>
     async function loadConfigSettings() {
       const response = await fetch('/api/config-json', { cache: 'no-store' });
       const data = await response.json();
-      latestConfig = data;
+      mergeConfigState(data);
       document.getElementById('cfgUiTheme').value = data.ui_theme === 'dark' ? 'dark' : 'light';
       document.getElementById('cfgAssetMode').value = data.observer_asset_mode || 'single';
       localMinProfitFractions = {};
@@ -3315,10 +3945,11 @@ Rueckmeldung: ${message}</div>
       document.getElementById('cfgCorrelationBlock').checked = data.block_same_direction_correlated_trades !== false;
       renderConfigWatchlist(data);
       document.getElementById('cfgSignalTf').value = String(data.signal_timeframe_seconds ?? 900);
-      document.getElementById('cfgConfirmTf').value = String(data.confirmation_timeframe_seconds ?? 300);
+      document.getElementById('cfgConfirmTf').value = String(data.signal_timeframe_seconds ?? 900);
+      syncSingleTradeTimeframeFields();
       updateMultiAssetVisibility();
-      document.getElementById('cfgPhemexPoll').value = data.phemex_poll_seconds ?? data.poll_seconds ?? 20;
-      document.getElementById('cfgSystemLoop').value = data.system_loop_seconds ?? 1;
+      syncPhemexPollPreset(data.phemex_poll_seconds ?? data.poll_seconds ?? 30);
+      document.getElementById('cfgSystemLoop').value = 1;
       document.getElementById('cfgKlineLimit').value = data.kline_limit ?? 500;
       const riskUnit = data.risk_unit ?? 1;
       document.getElementById('cfgRiskUnit').value = riskUnit;
@@ -3338,7 +3969,7 @@ Rueckmeldung: ${message}</div>
     async function loadStrategyConfigSettings() {
       const response = await fetch('/api/config-json', { cache: 'no-store' });
       const data = await response.json();
-      latestConfig = data;
+      mergeConfigState(data);
       document.getElementById('cfgEntryMode').value = data.entry_mode || 'edge';
       document.getElementById('cfgStopMode').value = data.stop_loss_mode === 'atr' ? 'atr' : 'structure';
       document.getElementById('cfgStopPercent').value = data.stop_loss_percent ?? 0.25;
@@ -3453,7 +4084,7 @@ Rueckmeldung: ${message}</div>
       if (mode === 'asset') {
         const notional = Number.isFinite(price) && price > 0 && asset > 0 ? asset * price : null;
         return {
-          label: `${valueGateNumber(asset, 8)} Asset${notional !== null ? ` ≈ ${valueGateNumber(notional, 2)} USDT` : ''}`,
+          label: `${valueGateNumber(asset, 8)} Asset${notional !== null ? ` ‰ˆ ${valueGateNumber(notional, 2)} USDT` : ''}`,
           notional,
         };
       }
@@ -3481,9 +4112,9 @@ Rueckmeldung: ${message}</div>
       const maxSlText = maxSlMove !== null ? valueGateNumber(maxSlMove, 8) : '-';
       const profitText = minProfit !== null ? valueGateNumber(minProfit, 4) : '-';
       const status = error ? `<br><span class="dangerText">${escapeHtml(error)}</span>` : (loading ? '<br>aktueller Preis wird geladen...' : '');
-      box.innerHTML = `<strong>${escapeHtml(symbol || '-')}</strong> · aktueller Preis <strong>${priceText}</strong> · <strong>${valueGateNumber(percent, 2)} %</strong> = <strong>${moveText} USDT</strong> Mindestbewegung<br>` +
-        `Position <strong>${escapeHtml(tradeSize.label)}</strong> · <strong>${valueGateNumber(percent, 2)} %</strong> = <strong>${profitText} USDT</strong> Mindest-Netto-Profit<br>` +
-        `Max SL Abstand · aktueller Preis <strong>${priceText}</strong> · <strong>${valueGateNumber(maxSlPercent, 2)} %</strong> = <strong>${maxSlText} USDT</strong> maximaler SL-Abstand${status}`;
+      box.innerHTML = `<strong>${escapeHtml(symbol || '-')}</strong> | aktueller Preis <strong>${priceText}</strong> | <strong>${valueGateNumber(percent, 2)} %</strong> = <strong>${moveText} USDT</strong> Mindestbewegung<br>` +
+        `Position <strong>${escapeHtml(tradeSize.label)}</strong> | <strong>${valueGateNumber(percent, 2)} %</strong> = <strong>${profitText} USDT</strong> Mindest-Netto-Profit<br>` +
+        `Max SL Abstand | aktueller Preis <strong>${priceText}</strong> | <strong>${valueGateNumber(maxSlPercent, 2)} %</strong> = <strong>${maxSlText} USDT</strong> maximaler SL-Abstand${status}`;
     }
     async function updateMinNetProfitPreview(forcePriceReload = false) {
       const symbol = selectedConfigProfitSymbol();
@@ -3502,7 +4133,7 @@ Rueckmeldung: ${message}</div>
         const candles = data.candles || [];
         const last = candles[candles.length - 1] || null;
         const price = Number(last?.close);
-        if (!Number.isFinite(price) || price <= 0) throw new Error('kein gueltiger letzter Close');
+        if (!Number.isFinite(price) || price <= 0) throw new Error('kein gültiger letzter Close');
         valueGatePriceCache[symbol] = { price, at: Date.now() };
         if (token === valueGatePreviewToken && selectedConfigProfitSymbol() === symbol) {
           renderMinNetProfitPreview(symbol, price);
@@ -3541,10 +4172,11 @@ Rueckmeldung: ${message}</div>
         max_open_trades_per_asset: Number(document.getElementById('cfgMaxOpenAsset').value),
         block_same_direction_correlated_trades: document.getElementById('cfgCorrelationBlock').checked,
         signal_timeframe_seconds: Number(document.getElementById('cfgSignalTf').value),
-        confirmation_timeframe_seconds: Number(document.getElementById('cfgConfirmTf').value),
-        poll_seconds: Number(document.getElementById('cfgPhemexPoll').value),
-        phemex_poll_seconds: Number(document.getElementById('cfgPhemexPoll').value),
-        system_loop_seconds: Number(document.getElementById('cfgSystemLoop').value),
+        confirmation_timeframe_seconds: Number(document.getElementById('cfgSignalTf').value),
+        llm_role_timeout_seconds: currentPhemexPollSeconds(),
+        poll_seconds: currentPhemexPollSeconds(),
+        phemex_poll_seconds: currentPhemexPollSeconds(),
+        system_loop_seconds: 1,
         kline_limit: Number(document.getElementById('cfgKlineLimit').value),
         reward_risk: Number(document.getElementById('cfgRewardRisk').value) / Number(document.getElementById('cfgRiskUnit').value || 1),
         risk_unit: Number(document.getElementById('cfgRiskUnit').value || 1),
@@ -3561,6 +4193,7 @@ Rueckmeldung: ${message}</div>
           : percentOutputValue(localMaxSlDistanceFractions[symbols[0]] ?? document.getElementById('cfgMaxSlDistanceFraction').value),
         max_sl_distance_fraction_by_symbol: document.getElementById('cfgAssetMode').value === 'multi' ? maxSlBySymbol : {},
         estimated_taker_fee_rate: 0.0006,
+        max_fee_to_risk_fraction: Number(latestConfig.max_fee_to_risk_fraction ?? 0.25),
         min_net_profit_fraction: document.getElementById('cfgAssetMode').value === 'single'
           ? percentOutputValue(document.getElementById('cfgMinNetProfitFraction').value)
           : percentOutputValue(localMinProfitFractions[symbols[0]] ?? document.getElementById('cfgMinNetProfitFraction').value),
@@ -3629,12 +4262,11 @@ Rueckmeldung: ${message}</div>
     }
     function updateEntrySearchHelp() {
       const signalTf = timeframeLabel(document.getElementById('cfgSignalTf').value || 300);
-      const entrySeconds = Number(document.getElementById('cfgConfirmTf').value || 60);
-      const entryTf = timeframeLabel(entrySeconds);
+      const entrySeconds = Number(document.getElementById('cfgSignalTf').value || 300);
       const candles = Number(document.getElementById('cfgEntrySearchCandles').value || 20);
       const minutes = Math.round(candles * entrySeconds / 60);
       const help = document.getElementById('entrySearchHelp');
-      help.innerHTML = `Der Bot prueft die letzten ${candles} ${signalTf}-Kerzen auf Reaktion an einem Swing High / Swing Low.<br><br>Gueltig ist:<br>- Liquidity Sweep + Reclaim<br>- Dip / Abpraller<br><br>Kein Supply/Demand, kein FVG-Zwang, kein Volumenfilter.`;
+      help.innerHTML = `Der Bot prüft die letzten ${candles} ${signalTf}-Kerzen auf Reaktion an einem Swing High / Swing Low.<br><br>Gültig ist:<br>- Liquidity Sweep + Reclaim<br>- Dip / Abpraller<br><br>Kein Supply/Demand, kein FVG-Zwang, kein Volumenfilter.`;
     }
     function updateStopLossVisibility() {
       const ecoMode = document.getElementById('cfgEcoStopMode');
@@ -3700,7 +4332,7 @@ Rueckmeldung: ${message}</div>
     document.getElementById('paperToggle').addEventListener('change', () => syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox'));
     document.getElementById('cfgCorrelationBlock').addEventListener('change', () => syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState'));
     document.getElementById('cfgTrendFilter').addEventListener('change', () => syncSwitchState('cfgTrendFilter', 'cfgTrendState'));
-    document.getElementById('cfgIndicatorEnabled').addEventListener('change', () => syncSwitchState('cfgIndicatorEnabled', 'cfgIndicatorEnabledState', 'Aktiv', 'Aus'));
+    document.getElementById('cfgIndicatorEnabled')?.addEventListener('change', () => syncSwitchState('cfgIndicatorEnabled', 'cfgIndicatorEnabledState', 'Aktiv', 'Aus'));
     document.getElementById('cfgIndicatorShowBosChoch').addEventListener('change', () => syncSwitchState('cfgIndicatorShowBosChoch', 'cfgIndicatorShowBosChochState', 'Aktiv', 'Aus'));
     document.getElementById('cfgIndicatorShowBoxes').addEventListener('change', () => syncSwitchState('cfgIndicatorShowBoxes', 'cfgIndicatorShowBoxesState', 'Aktiv', 'Aus'));
     document.getElementById('cfgIndicatorShowSwingLabels').addEventListener('change', () => syncSwitchState('cfgIndicatorShowSwingLabels', 'cfgIndicatorShowSwingLabelsState', 'Aktiv', 'Aus'));
@@ -3709,10 +4341,15 @@ Rueckmeldung: ${message}</div>
     document.getElementById('cfgIndicatorShowTripleEma').addEventListener('change', () => syncSwitchState('cfgIndicatorShowTripleEma', 'cfgIndicatorShowTripleEmaState', 'Aktiv', 'Aus'));
     document.getElementById('cfgIndicatorShowMfi').addEventListener('change', () => syncSwitchState('cfgIndicatorShowMfi', 'cfgIndicatorShowMfiState', 'Aktiv', 'Aus'));
     document.getElementById('cfgIndicatorShowSupportResistance').addEventListener('change', () => syncSwitchState('cfgIndicatorShowSupportResistance', 'cfgIndicatorShowSupportResistanceState', 'Aktiv', 'Aus'));
-    ['cfgBrainEnabled', 'cfgBrainRequireBox', 'cfgBrainLlmLayer', 'cfgOllamaEnabled', 'cfgOllamaBlockHint', 'cfgAgentShowOffline'].forEach(id => {
+    ['cfgBrainEnabled', 'cfgBrainLlmLayer', 'cfgLlmRoleTeamEnabled', 'cfgOpenAiEnabled', 'cfgLlmRoleRequired', 'cfgLlmRoleMarketStructure', 'cfgLlmRoleMomentum', 'cfgLlmRoleRiskOfficer', 'cfgLlmRoleSkeptic', 'cfgLlmRoleExecution', 'cfgOllamaEnabled', 'cfgOllamaBlockHint', 'cfgAgentShowOffline'].forEach(id => {
       const input = document.getElementById(id);
       if (input) input.addEventListener('change', () => { syncAllSwitchStates(); syncUtilityAgentGroupStates(); });
     });
+    document.getElementById('cfgLlmProvider')?.addEventListener('change', () => {
+      syncLlmProviderVisibility();
+      markAgentSettingsDirty();
+    });
+    syncLlmProviderVisibility();
     document.getElementById('cfgTrendMode').addEventListener('change', updateEmaConfigVisibility);
     document.getElementById('cfgTrendEmaSource').addEventListener('change', updateEmaConfigVisibility);
     document.getElementById('cfgRewardRisk').addEventListener('input', updateRewardRiskHint);
@@ -3720,10 +4357,23 @@ Rueckmeldung: ${message}</div>
     document.getElementById('cfgStopMode').addEventListener('change', updateStopLossVisibility);
     document.getElementById('cfgEcoStopMode').addEventListener('change', updateStopLossVisibility);
     document.getElementById('cfgSignalTf').addEventListener('change', () => {
+      syncSingleTradeTimeframeFields();
       updateEntrySearchHelp();
       updateMinNetProfitPreview(true);
     });
-    document.getElementById('cfgConfirmTf').addEventListener('change', updateEntrySearchHelp);
+    document.addEventListener('click', event => {
+      const button = event.target.closest('[data-phemex-poll-preset]');
+      if (button) {
+        event.preventDefault();
+        syncPhemexPollInputFromPreset(button.dataset.phemexPollPreset || 'custom');
+        markSettingsDirty();
+      }
+    });
+    document.getElementById('cfgPhemexPollPreset')?.addEventListener('change', event => {
+      syncPhemexPollInputFromPreset(event.target.value || 'custom');
+      markSettingsDirty();
+    });
+    document.getElementById('cfgPhemexPoll')?.addEventListener('input', markSettingsDirty);
     document.getElementById('cfgEntrySearchCandles').addEventListener('input', updateEntrySearchHelp);
     document.getElementById('cfgUiTheme').addEventListener('change', event => applyUiTheme(event.target.value));
     document.getElementById('cfgAssetMode').addEventListener('change', () => {
@@ -3767,10 +4417,7 @@ Rueckmeldung: ${message}</div>
     document.getElementById('chartViewButton').addEventListener('click', () => setView(currentView === 'chart' ? 'dashboard' : 'chart'));
     document.getElementById('agentViewButton').addEventListener('click', () => setView(currentView === 'agents' ? 'dashboard' : 'agents'));
     document.getElementById('agentSetupViewButton')?.addEventListener('click', () => setView(currentView === 'agent_setup' ? 'dashboard' : 'agent_setup'));
-    document.getElementById('replayViewButton')?.addEventListener('click', openReplayView);
-    document.querySelectorAll('[data-replay-tab]').forEach(button => {
-      button.addEventListener('click', () => switchReplayTab(button.dataset.replayTab || 'overview'));
-    });
+    document.getElementById('replayView')?.remove();
     document.getElementById('reloadAgents').addEventListener('click', refresh);
     document.getElementById('agentAsset').addEventListener('change', event => {
       selectedAgentAsset = event.target.value;
@@ -3784,28 +4431,6 @@ Rueckmeldung: ${message}</div>
       agentRoleFilter = event.target.value;
       renderAgentViewer(latestStatusData || {}, latestConfig || {});
     });
-    document.getElementById('replayAsset')?.addEventListener('change', () => {
-      lastReplayPreviewData = null;
-      loadReplayHistory();
-    });
-    document.getElementById('runReplayPreview')?.addEventListener('click', runReplayPreview);
-    document.getElementById('exportReplayJson')?.addEventListener('click', () => exportReplayPreview('json'));
-    document.getElementById('exportReplayCsv')?.addEventListener('click', () => exportReplayPreview('csv'));
-    document.getElementById('clearReplayAssetHistory')?.addEventListener('click', async () => {
-      try { await clearReplayHistory('asset'); } catch (error) { alert(String(error.message || error)); }
-    });
-    document.getElementById('clearReplayAllHistory')?.addEventListener('click', async () => {
-      try { await clearReplayHistory(null); } catch (error) { alert(String(error.message || error)); }
-    });
-    document.getElementById('applyReplayRuleWeights')?.addEventListener('click', async () => {
-      try { await saveReplayRuleWeights(true); } catch (error) { renderReplayRuleWeightStatus(String(error.message || error), 'warn'); }
-    });
-    document.getElementById('disableReplayRuleWeights')?.addEventListener('click', async () => {
-      try { await saveReplayRuleWeights(false); } catch (error) { renderReplayRuleWeightStatus(String(error.message || error), 'warn'); }
-    });
-    document.getElementById('replayFilterDecision')?.addEventListener('change', refreshReplayFilters);
-    document.getElementById('replayFilterGate')?.addEventListener('change', refreshReplayFilters);
-    document.getElementById('replayFilterResult')?.addEventListener('change', refreshReplayFilters);
     document.getElementById('reloadChart').addEventListener('click', () => loadChartData(true));
     document.getElementById('chartSetupButton').addEventListener('click', loadChartSetupSettings);
 
@@ -3826,6 +4451,9 @@ Rueckmeldung: ${message}</div>
       await loadConfigSettings();
     });
     document.getElementById('saveApiSettings').addEventListener('click', saveApiSettings);
+    document.getElementById('testOpenAiConnection').addEventListener('click', testOpenAiConnection);
+    document.getElementById('testOpenAiAgentConnection')?.addEventListener('click', () => testOpenAiConnection('openAiAgentTestStatus'));
+    document.getElementById('testOllamaConnection')?.addEventListener('click', testOllamaConnection);
     document.getElementById('saveConfigSettings').addEventListener('click', saveConfigSettings);
     document.getElementById('saveStrategyConfigSettings').addEventListener('click', saveStrategyConfigSettings);
     document.getElementById('saveAgentSettings').addEventListener('click', saveAgentSettings);
@@ -3849,5 +4477,4 @@ Rueckmeldung: ${message}</div>
       }
     });
     refresh();
-    loadReplayHistory();
     setInterval(refresh, 5000);

@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-24-tradingview-overlay-v1';
+  const PATCH_VERSION = '2026-06-02-tradingview-overlay-v3-top-controls-hud';
   const OVERLAY_GROUP = 'tv_strategy_overlay';
   let overlayIds = [];
   let overlaysRegistered = false;
@@ -241,15 +241,17 @@
   function ensureHud() {
     const chart = document.getElementById('klineChart');
     const wrap = chart?.closest('.chartCanvasWrap');
-    if (!wrap) return null;
-    wrap.classList.add('tvOverlayCanvasWrap');
+    const topControls = document.getElementById('chartViewTopControls');
+    if (!wrap && !topControls) return null;
+    if (wrap) wrap.classList.add('tvOverlayCanvasWrap');
     let hud = document.getElementById('tvStrategyHud');
     if (!hud) {
       hud = document.createElement('div');
       hud.id = 'tvStrategyHud';
       hud.className = 'tvStrategyHud';
-      wrap.appendChild(hud);
     }
+    if (topControls && hud.parentElement !== topControls) topControls.appendChild(hud);
+    else if (!topControls && wrap && hud.parentElement !== wrap) wrap.appendChild(hud);
     return hud;
   }
 
@@ -263,7 +265,7 @@
       ? Math.abs(prices.tp - prices.entry) / Math.max(Math.abs(prices.entry - prices.stop), 1e-12)
       : null;
     const direction = prices.side === 'short' ? 'short' : prices.side === 'long' ? 'long' : 'neutral';
-    const diagnostics = (data.diagnostics || []).slice(0, 4).map(item => `
+    const diagnostics = (data.diagnostics || []).slice(0, 2).map(item => `
       <span class="tvHudCheck ${escapeHtml(item.state || 'neutral')}">
         <b>${escapeHtml(item.label || '-')}</b>
         <em>${escapeHtml(item.detail || '')}</em>
@@ -295,18 +297,21 @@
     style.textContent = `
       #chartView .tvOverlayCanvasWrap { position:relative !important; }
       #chartView .tvStrategyHud {
-        position:absolute !important;
-        top:54px !important;
-        left:12px !important;
-        z-index:30 !important;
-        width:min(440px, calc(100% - 24px)) !important;
-        padding:10px 11px !important;
+        position:relative !important;
+        top:auto !important;
+        left:auto !important;
+        z-index:3 !important;
+        width:100% !important;
+        min-width:0 !important;
+        align-self:stretch !important;
+        padding:8px 9px !important;
         border:1px solid rgba(148,163,184,.26) !important;
         border-radius:6px !important;
-        background:rgba(2,6,23,.74) !important;
-        box-shadow:0 10px 28px rgba(0,0,0,.28) !important;
-        backdrop-filter:blur(9px) !important;
-        pointer-events:none !important;
+        background:rgba(15,23,42,.22) !important;
+        box-shadow:none !important;
+        backdrop-filter:none !important;
+        pointer-events:auto !important;
+        overflow:hidden !important;
       }
       body[data-theme="light"] #chartView .tvStrategyHud { background:rgba(255,255,255,.82) !important; box-shadow:0 10px 24px rgba(15,23,42,.14) !important; }
       #chartView .tvHudTop { display:flex !important; align-items:center !important; gap:8px !important; min-width:0 !important; }
@@ -316,13 +321,13 @@
       #chartView .tvHudPill.short { background:#b42318 !important; }
       #chartView .tvHudPill.neutral { background:#475569 !important; }
       #chartView .tvHudMuted { margin-left:auto !important; color:var(--muted) !important; font:700 11px Arial,sans-serif !important; }
-      #chartView .tvHudPrices { display:grid !important; grid-template-columns:repeat(4, minmax(0, 1fr)) !important; gap:6px !important; margin-top:9px !important; }
-      #chartView .tvHudPrices span { min-height:38px !important; padding:6px 7px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:5px !important; background:rgba(15,23,42,.35) !important; color:var(--ink) !important; font:800 12px Arial,sans-serif !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
+      #chartView .tvHudPrices { display:grid !important; grid-template-columns:repeat(4, minmax(0, 1fr)) !important; gap:4px !important; margin-top:7px !important; }
+      #chartView .tvHudPrices span { min-height:30px !important; padding:4px 5px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:4px !important; background:rgba(15,23,42,.32) !important; color:var(--ink) !important; font:800 11px Arial,sans-serif !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
       body[data-theme="light"] #chartView .tvHudPrices span { background:rgba(241,245,249,.78) !important; }
       #chartView .tvHudPrices b { display:block !important; margin-bottom:3px !important; color:var(--muted) !important; font-size:9px !important; font-weight:900 !important; text-transform:uppercase !important; }
-      #chartView .tvHudStatus { margin-top:8px !important; color:var(--ink) !important; font:800 12px/1.35 Arial,sans-serif !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
-      #chartView .tvHudChecks { display:grid !important; grid-template-columns:repeat(2, minmax(0, 1fr)) !important; gap:6px !important; margin-top:8px !important; }
-      #chartView .tvHudCheck { min-height:42px !important; padding:6px 7px !important; border-left:3px solid #64748b !important; border-radius:4px !important; background:rgba(15,23,42,.30) !important; overflow:hidden !important; }
+      #chartView .tvHudStatus { margin-top:6px !important; color:var(--ink) !important; font:800 11px/1.3 Arial,sans-serif !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
+      #chartView .tvHudChecks { display:grid !important; grid-template-columns:repeat(2, minmax(0, 1fr)) !important; gap:4px !important; margin-top:6px !important; }
+      #chartView .tvHudCheck { min-height:32px !important; padding:4px 5px !important; border-left:3px solid #64748b !important; border-radius:4px !important; background:rgba(15,23,42,.26) !important; overflow:hidden !important; }
       body[data-theme="light"] #chartView .tvHudCheck { background:rgba(241,245,249,.70) !important; }
       #chartView .tvHudCheck.ok { border-left-color:#22c55e !important; }
       #chartView .tvHudCheck.fail { border-left-color:#ef4444 !important; }
@@ -330,7 +335,7 @@
       #chartView .tvHudCheck b { display:block !important; color:var(--ink) !important; font:900 10px Arial,sans-serif !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
       #chartView .tvHudCheck em { display:block !important; margin-top:2px !important; color:var(--muted) !important; font:700 10px/1.25 Arial,sans-serif !important; font-style:normal !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
       @media (max-width:760px) {
-        #chartView .tvStrategyHud { top:48px !important; left:8px !important; width:calc(100% - 16px) !important; }
+        #chartView .tvStrategyHud { width:100% !important; }
         #chartView .tvHudPrices { grid-template-columns:repeat(2, minmax(0, 1fr)) !important; }
         #chartView .tvHudChecks { grid-template-columns:1fr !important; }
       }

@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-18-chart-status-layout-fix-v1';
+  const PATCH_VERSION = '2026-06-02-chart-status-layout-fix-v14-compact-height';
 
   function chartPaneCountFromStatus() {
     const text = String(document.getElementById('chartPluginStatus')?.textContent || '').toLowerCase();
@@ -18,11 +18,12 @@
     if (!chart || !wrap) return;
 
     const paneCount = chartPaneCountFromStatus();
-    const height = Math.max(1120, Math.min(1840, 860 + paneCount * 210));
+    const height = Math.max(820, Math.min(1220, 680 + paneCount * 130));
     wrap.style.height = `${height}px`;
     wrap.style.minHeight = `${height}px`;
     wrap.style.maxHeight = 'none';
-    wrap.style.overflow = 'hidden';
+    wrap.style.overflow = 'visible';
+    wrap.style.marginBottom = '90px';
     chart.style.height = `${height}px`;
     chart.style.minHeight = `${height}px`;
     chart.style.maxHeight = 'none';
@@ -46,8 +47,13 @@
     if (!chartCard || !wrap || !panel) return;
 
     panel.classList.add('chartStatusPanelDetached');
+    panel.style.display = '';
+    panel.style.position = '';
+    panel.style.top = '';
+    panel.style.left = '';
+    panel.style.transform = '';
+    panel.style.marginTop = '';
     if (panel.previousElementSibling !== wrap) {
-      chartCard.insertBefore(panel, meta || wrap.nextSibling);
       chartCard.insertBefore(panel, wrap.nextSibling);
     }
     if (meta && meta.previousElementSibling !== panel) {
@@ -62,12 +68,11 @@
     style.id = 'chart-status-layout-fix-style';
     style.textContent = `
       #chartView .chartCanvasWrap {
-        display:block !important;
         position:relative !important;
         width:100% !important;
-        margin:0 0 26px !important;
+        margin:0 0 90px !important;
         border-bottom:1px solid var(--line) !important;
-        overflow:hidden !important;
+        overflow:visible !important;
       }
       #chartView #klineChart {
         display:block !important;
@@ -76,11 +81,13 @@
       #chartView #directAgentChartStatusPanel.chartStatusPanelDetached {
         display:block !important;
         position:relative !important;
+        inset:auto !important;
+        transform:none !important;
         z-index:5 !important;
         clear:both !important;
         width:100% !important;
-        margin:0 0 18px !important;
-        padding:14px !important;
+        margin:0 0 10px !important;
+        padding:10px !important;
         border:1px solid var(--line) !important;
         border-left:6px solid #a78bfa !important;
         border-radius:9px !important;
@@ -91,9 +98,9 @@
         display:flex !important;
         align-items:flex-start !important;
         justify-content:space-between !important;
-        gap:14px !important;
-        margin:0 0 12px !important;
-        padding:0 0 10px !important;
+        gap:10px !important;
+        margin:0 0 8px !important;
+        padding:0 0 8px !important;
         border-bottom:1px solid rgba(148,163,184,.18) !important;
       }
       #chartView #directAgentChartStatusPanel .directAgentChartStatusHead strong {
@@ -112,11 +119,11 @@
       #chartView #directAgentChartStatusPanel .directAgentChartGrid {
         display:grid !important;
         grid-template-columns:repeat(3, minmax(0, 1fr)) !important;
-        gap:12px !important;
+        gap:8px !important;
       }
       #chartView #directAgentChartStatusPanel .directAgentChartTile {
-        min-height:118px !important;
-        padding:14px !important;
+        min-height:74px !important;
+        padding:10px !important;
         border:1px solid var(--line) !important;
         border-radius:8px !important;
         background:rgba(30,41,59,.72) !important;

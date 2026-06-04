@@ -107,7 +107,7 @@
     if (status) {
       const chart = chartInstance();
       const methods = ['scrollToRealTime', 'zoomAtCoordinate', 'resize', 'createIndicator', 'createOverlay'].filter(name => typeof chart?.[name] === 'function');
-      status.textContent = `KLineCharts · ${methods.length ? methods.join(' / ') : 'Basis'}`;
+      status.textContent = `KLineCharts | ${methods.length ? methods.join(' / ') : 'Basis'}`;
     }
   }
 

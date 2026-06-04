@@ -125,6 +125,26 @@ class TradeValueGate:
             entry_notional = entry * quantity
             gross_profit_usd = reward * quantity
             estimated_fees_usd = (entry * quantity + tp * quantity) * fee_rate
+            risk_usd = risk * quantity
+            fee_to_risk_fraction = estimated_fees_usd / risk_usd if risk_usd > 0 else None
+            max_fee_to_risk_fraction = float(self.config.get("max_fee_to_risk_fraction", 0.25))
+            if (
+                max_fee_to_risk_fraction > 0
+                and fee_to_risk_fraction is not None
+                and fee_to_risk_fraction > max_fee_to_risk_fraction
+            ):
+                return {
+                    "trade_allowed": False,
+                    "reason": "fee_to_risk_too_high",
+                    "risk_usd": round(risk_usd, 8),
+                    "gross_profit_usd": round(gross_profit_usd, 8),
+                    "estimated_fees_usd": round(estimated_fees_usd, 8),
+                    "fee_to_risk_fraction": round(fee_to_risk_fraction, 8),
+                    "max_fee_to_risk_fraction": max_fee_to_risk_fraction,
+                    "estimated_taker_fee_rate": fee_rate,
+                    "planned_quantity_asset": quantity,
+                    "entry_notional_usd": round(entry_notional, 8),
+                }
             net_profit_usd = gross_profit_usd - estimated_fees_usd
             net_profit_fraction = net_profit_usd / entry_notional if entry_notional > 0 else 0.0
             min_net_profit_usd = entry_notional * min_net_profit_fraction
@@ -165,6 +185,9 @@ class TradeValueGate:
                 {
                     "gross_profit_usd": round(float(gross_profit_usd), 8),
                     "estimated_fees_usd": round(float(estimated_fees_usd), 8),
+                    "risk_usd": round(float(risk_usd), 8),
+                    "fee_to_risk_fraction": round(float(fee_to_risk_fraction), 8) if fee_to_risk_fraction is not None else None,
+                    "max_fee_to_risk_fraction": float(self.config.get("max_fee_to_risk_fraction", 0.25)),
                     "net_profit_usd": round(float(net_profit_usd), 8),
                     "net_profit_fraction": round(float(net_profit_fraction), 8),
                     "min_net_profit_fraction": min_net_profit_fraction,

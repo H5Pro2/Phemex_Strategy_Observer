@@ -5,12 +5,12 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-18-chart-view-controls-v1';
+  const PATCH_VERSION = '2026-05-24-chart-view-controls-v2-removed-panel';
   const CONTROL_DEFS = [
-    ['structure', 'Struktur', 'BOS/CHoCH · Boxen · Swing · Support/Resistance'],
-    ['price', 'Preislinien', 'VWAP · HMA/SMA/Triple EMA · Breakout Range'],
-    ['panes', 'Indikator Panes', 'MACD · MFI · RSI · Volume'],
-    ['status', 'Status Agenten', 'Breakout · Volatility · Risk'],
+    ['structure', 'Struktur', 'BOS/CHoCH | Boxen | Swing | Support/Resistance'],
+    ['price', 'Preislinien', 'VWAP | HMA/SMA/Triple EMA | Breakout Range'],
+    ['panes', 'Indikator Panes', 'MACD | MFI | RSI | Volume'],
+    ['status', 'Status Quellen', 'Breakout | Volatility | Risk'],
     ['debug', 'Plugin Debug', 'erkannte KLineCharts-Funktionen']
   ];
 
@@ -75,38 +75,12 @@
   }
 
   function upsertControlPanel() {
-    const chartView = document.getElementById('chartView');
-    const card = chartView?.querySelector(':scope > .card');
-    const modeToolbar = document.getElementById('chartViewModeToolbar');
-    if (!card || !modeToolbar) return;
-
-    let panel = document.getElementById('chartViewControlPanel');
-    if (!panel) {
-      panel = document.createElement('div');
-      panel.id = 'chartViewControlPanel';
-      panel.className = 'chartViewControlPanel';
-      modeToolbar.insertAdjacentElement('afterend', panel);
-    }
-
-    panel.innerHTML = `
-      <div class="chartViewControlHeader">
-        <strong>Chart-Schalter</strong>
-        <span>sichtbare Gruppen direkt im Chart View steuern</span>
-      </div>
-      <div class="chartViewControlGrid">
-        ${CONTROL_DEFS.map(([key, title, detail]) => `
-          <button type="button" class="chartViewControlToggle ${controlEnabled(key) ? 'active' : ''}" data-chart-control="${key}">
-            <span>${title}</span>
-            <small>${detail}</small>
-          </button>
-        `).join('')}
-      </div>
-    `;
+    document.getElementById('chartViewControlPanel')?.remove();
   }
 
   function setBodyFlags() {
     CONTROL_DEFS.forEach(([key]) => {
-      document.body.dataset[`chartControl${key.charAt(0).toUpperCase()}${key.slice(1)}`] = controlEnabled(key) ? '1' : '0';
+      document.body.dataset[`chartControl${key.charAt(0).toUpperCase()}${key.slice(1)}`] = '1';
     });
   }
 
@@ -121,14 +95,11 @@
     setBodyFlags();
     syncButtonStates();
 
-    if (!controlEnabled('price')) removeKnownPriceOverlays();
-    if (!controlEnabled('panes')) removeKnownPaneIndicators();
-
     const statusPanel = document.getElementById('directAgentChartStatusPanel');
-    if (statusPanel) statusPanel.hidden = !controlEnabled('status');
+    if (statusPanel) statusPanel.hidden = false;
 
     const capabilityPanel = document.getElementById('chartViewCapabilityPanel');
-    if (capabilityPanel) capabilityPanel.hidden = !controlEnabled('debug');
+    if (capabilityPanel) capabilityPanel.hidden = true;
 
     const legend = document.getElementById('chartViewLegendPanel');
     if (legend) legend.classList.toggle('chartViewLegendFiltered', true);
@@ -143,7 +114,7 @@
     style.id = 'chart-view-controls-style';
     style.textContent = `
       #chartView .chartViewControlPanel {
-        display:block !important;
+        display:none !important;
         margin:0 0 14px !important;
         padding:12px 14px !important;
         border:1px solid var(--line) !important;
@@ -250,6 +221,11 @@
       if (!(target instanceof Element)) return;
       const button = target.closest('[data-chart-control]');
       if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      button.closest('#chartViewControlPanel')?.remove();
+      return;
       const key = button.getAttribute('data-chart-control');
       setControlEnabled(key, !controlEnabled(key));
       if (key === 'panes' || key === 'price') {
@@ -262,7 +238,7 @@
       document.addEventListener(type, event => {
         const target = event.target;
         if (!(target instanceof Element)) return;
-        if (target.closest('#chartViewButton, #reloadChart, #chartAsset, #chartTimeframe, #chartCandleLimit, #chartSetupButton, [data-chart-view-mode]')) {
+        if (target.closest('#chartViewButton, #reloadChart, #chartAsset, #chartTimeframe, #chartCandleLimit, #chartSetupButton')) {
           window.setTimeout(refreshControls, 160);
           window.setTimeout(refreshControls, 600);
           window.setTimeout(refreshControls, 1400);

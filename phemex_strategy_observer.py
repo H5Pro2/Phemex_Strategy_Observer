@@ -23,6 +23,7 @@ from trade_value_gate import TradeValueGate
 from indikator import build_indicator_response
 from agent_runtime import build_agent_board, refresh_risk_agent_report
 from brain_runtime import apply_economic_gate_to_brain_decision, build_brain_decision, refresh_llm_layer_after_economic_gate
+from llm_roles import default_role_team_response, estimate_llm_usage
 
 
 Side = Literal["long", "short"]
@@ -60,6 +61,14 @@ AGENT_DEFAULT_COLORS = {
     "agent_volume_color": "#94a3b8",
     "agent_volatility_regime_color": "#fb923c",
     "agent_risk_color": "#f87171",
+}
+DEFAULT_LLM_ROLE_PROMPT_EXTRAS = {
+    "llm_role_market_structure_prompt_extra": "Bewerte nur die Marktstruktur. Achte besonders auf Trendkontext, frische BOS/CHoCH Signale, HH/LL Sequenz, Range-Gefahr und ob der Kandidat nahe an relevanten Strukturzonen liegt. Bei unklarer Range oder widersprüchlicher Struktur eher WAIT statt APPROVE.",
+    "llm_role_momentum_prompt_extra": "Bewerte nur Momentum und technische Bestätigung. Achte auf RSI/MFI, MACD, EMA/HMA/VWAP Lage, Volumenimpuls und Divergenzen. APPROVE nur, wenn Momentum die geplante Richtung nachvollziehbar unterstützt; bei spätem oder erschöpftem Move eher WAIT.",
+    "llm_role_risk_officer_prompt_extra": "Bewerte Risiko strikt. Prüfe RR, SL-Distanz, Fee/R, Volatilität, offene Trades, Positionsgröße und Overtrading. Setze hard_block=true, wenn Kosten, Stop-Abstand, offene Exponierung oder Volatilität den Trade ungünstig machen.",
+    "llm_role_skeptic_prompt_extra": "Suche zuerst aktiv Gründe gegen den Trade. Markiere schwache Annahmen, Datenlücken, Fallback-Setups, zu wenig Live-Historie, Seitwärtsphasen und Widersprüche zwischen Signalquellen. Nur APPROVE, wenn keine wesentlichen Gegenargumente bleiben.",
+    "llm_role_execution_prompt_extra": "Bewerte Ausführung und Timing. Prüfe, ob Limit oder Market sinnvoll ist, ob der Entry zu spät kommt, ob der Preis dem Ziel schon zu nahe ist und ob der geplante Entry noch ein gutes Chance/Risiko-Verhältnis bietet.",
+    "llm_role_judge_prompt_extra": "Entscheide konservativ als CEO/Judge. Risk Officer und Skeptic Hard-Blocks haben Vorrang. Bei Rollen-Konflikt, schwacher Datenlage oder fehlender klarer Übereinstimmung WAIT. APPROVE nur, wenn Struktur, Momentum, Risiko und Ausführung zusammenpassen.",
 }
 
 
@@ -209,6 +218,8 @@ class PhemexClient:
 
 
 class MemoryAgent:
+    LIVE_MEMORY_SOURCE = "paper_trade_close"
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,8 +227,13 @@ class MemoryAgent:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {"version": 1, "completed_trades": [], "buckets": {}}
-        return json.loads(self.path.read_text(encoding="utf-8"))
+            return {"version": 2, "source": "live_paper", "completed_trades": [], "buckets": {}}
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data.setdefault("version", 2)
+        data.setdefault("source", "live_paper")
+        data.setdefault("completed_trades", [])
+        data.setdefault("buckets", {})
+        return data
 
     def save(self) -> None:
         self.path.write_text(json.dumps(self.memory, indent=2), encoding="utf-8")
@@ -251,6 +267,8 @@ class MemoryAgent:
             "closed_at": trade.closed_at,
             "status": trade.status,
             "result_r": trade.result_r,
+            "source": self.LIVE_MEMORY_SOURCE,
+            "learned_from": "paper_broker",
             "setup": setup_data,
         }
         self.memory.setdefault("completed_trades", []).append(record)
@@ -282,6 +300,8 @@ class MemoryAgent:
             )
         top_buckets.sort(key=lambda item: (item["count"], item["avg_r"]), reverse=True)
         return {
+            "source": self.memory.get("source", "live_paper"),
+            "mode": "live_paper_only",
             "completed_trades": len(self.memory.get("completed_trades", [])),
             "bucket_count": len(buckets),
             "top_buckets": top_buckets[:20],
@@ -478,11 +498,11 @@ class PaperBroker:
 
         stage_order = {"pending": 1, "open": 2, "tp": 3, "sl": 3, "expired": 3}
         stage_label = {
-            "pending": "Pending → wartet auf Entry",
-            "open": "Open → TP/SL aktiv",
-            "tp": "Closed → Take Profit",
-            "sl": "Closed → Stop Loss",
-            "expired": "Closed → Expired",
+            "pending": "Pending -> wartet auf Entry",
+            "open": "Open -> TP/SL aktiv",
+            "tp": "Closed -> Take Profit",
+            "sl": "Closed -> Stop Loss",
+            "expired": "Closed -> Expired",
         }.get(trade.status, str(trade.status))
         if trade.status == "pending":
             detail = f"Entry {trade.setup.entry} bis Ablauf {trade.expires_at}"
@@ -642,6 +662,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("observer_asset_mode", "single")
     config.setdefault("max_open_trades_total", 3)
     config.setdefault("max_open_trades_per_asset", 1)
+    config.setdefault("pause_entry_search_while_order_active", True)
     config.setdefault("block_same_direction_correlated_trades", True)
     config.setdefault("stop_loss_mode", "structure")
     config.setdefault("stop_loss_percent", 0.25)
@@ -654,10 +675,11 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("max_sl_distance_fraction", 0.0)
     config.setdefault("max_sl_distance_fraction_by_symbol", {})
     config.setdefault("estimated_taker_fee_rate", 0.0006)
+    config.setdefault("max_fee_to_risk_fraction", 0.25)
     config.setdefault("min_net_profit_fraction", 0.001)
     config.setdefault("min_net_profit_fraction_by_symbol", {})
-    config.setdefault("poll_seconds", 20)
-    config.setdefault("phemex_poll_seconds", config.get("poll_seconds", 20))
+    config.setdefault("poll_seconds", 30)
+    config.setdefault("phemex_poll_seconds", config.get("poll_seconds", 30))
     config.setdefault("system_loop_seconds", 1)
     config.setdefault("single_timeframe_mode", True)
     if config.get("single_timeframe_mode", True):
@@ -698,6 +720,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("web_host", "127.0.0.1")
     config.setdefault("web_port", 8787)
     config.setdefault("ui_theme", "dark")
+    config.setdefault("ui_language", "de")
     config.setdefault("indicator_enabled", True)
     config.setdefault("indicator_show_bos_choch", True)
     config.setdefault("indicator_show_boxes", True)
@@ -844,13 +867,28 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("brain_min_agent_alignment", 2)
     config.setdefault("brain_memory_min_count", 3)
     config.setdefault("brain_entry_box_offset", 0.35)
-    config.setdefault("brain_require_box_for_trade", False)
     config.setdefault("brain_target_lookback_candles", 36)
     config.setdefault("brain_stop_lookback_candles", 8)
     config.setdefault("brain_allow_rr_target_fallback", False)
     config.setdefault("brain_cap_target_to_max_rr", True)
     config.setdefault("brain_max_target_rr", float(config.get("reward_risk", 1.5)))
     config.setdefault("brain_llm_layer_enabled", True)
+    config.setdefault("llm_role_team_enabled", True)
+    config.setdefault("llm_provider", "openai")
+    config.setdefault("openai_enabled", False)
+    config.setdefault("openai_model", "gpt-4.1-mini")
+    config.setdefault("openai_timeout_seconds", 30)
+    config["llm_role_timeout_seconds"] = int(config.get("phemex_poll_seconds", config.get("poll_seconds", 30)))
+    config.setdefault("llm_role_temperature", 0.0)
+    config.setdefault("llm_role_required_for_trade", False)
+    config.setdefault("llm_role_market_structure_enabled", True)
+    config.setdefault("llm_role_momentum_enabled", True)
+    config.setdefault("llm_role_risk_officer_enabled", True)
+    config.setdefault("llm_role_skeptic_enabled", True)
+    config.setdefault("llm_role_execution_enabled", True)
+    for key, default_prompt in DEFAULT_LLM_ROLE_PROMPT_EXTRAS.items():
+        if not str(config.get(key, "")).strip():
+            config[key] = default_prompt
     config.setdefault("ollama_enabled", True)
     config.setdefault("ollama_base_url", "http://127.0.0.1:11434")
     config.setdefault("ollama_model", "qwen2.5:3b")
@@ -906,6 +944,7 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "max_sl_distance_fraction",
         "max_sl_distance_fraction_by_symbol",
         "estimated_taker_fee_rate",
+        "max_fee_to_risk_fraction",
         "min_net_profit_fraction",
         "min_net_profit_fraction_by_symbol",
         "trade_size_mode",
@@ -940,6 +979,7 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "supply_demand_zone_padding_fraction",
         "supply_demand_rejection_wick_ratio",
         "ui_theme",
+        "ui_language",
         "indicator_enabled",
         "indicator_show_bos_choch",
         "indicator_show_boxes",
@@ -1098,13 +1138,31 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "brain_min_agent_alignment",
         "brain_memory_min_count",
         "brain_entry_box_offset",
-        "brain_require_box_for_trade",
         "brain_target_lookback_candles",
         "brain_stop_lookback_candles",
         "brain_allow_rr_target_fallback",
         "brain_cap_target_to_max_rr",
         "brain_max_target_rr",
         "brain_llm_layer_enabled",
+        "llm_role_team_enabled",
+        "llm_provider",
+        "openai_enabled",
+        "openai_model",
+        "openai_timeout_seconds",
+        "llm_role_timeout_seconds",
+        "llm_role_temperature",
+        "llm_role_required_for_trade",
+        "llm_role_market_structure_enabled",
+        "llm_role_momentum_enabled",
+        "llm_role_risk_officer_enabled",
+        "llm_role_skeptic_enabled",
+        "llm_role_execution_enabled",
+        "llm_role_market_structure_prompt_extra",
+        "llm_role_momentum_prompt_extra",
+        "llm_role_risk_officer_prompt_extra",
+        "llm_role_skeptic_prompt_extra",
+        "llm_role_execution_prompt_extra",
+        "llm_role_judge_prompt_extra",
         "ollama_enabled",
         "ollama_base_url",
         "ollama_model",
@@ -1187,6 +1245,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "max_sl_distance_fraction",
         "max_sl_distance_fraction_by_symbol",
         "estimated_taker_fee_rate",
+        "max_fee_to_risk_fraction",
         "min_net_profit_fraction",
         "min_net_profit_fraction_by_symbol",
         "structure_lookback_candles",
@@ -1200,6 +1259,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "supply_demand_zone_padding_fraction",
         "supply_demand_rejection_wick_ratio",
         "ui_theme",
+        "ui_language",
         "indicator_enabled",
         "indicator_show_bos_choch",
         "indicator_show_boxes",
@@ -1358,13 +1418,31 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "brain_min_agent_alignment",
         "brain_memory_min_count",
         "brain_entry_box_offset",
-        "brain_require_box_for_trade",
         "brain_target_lookback_candles",
         "brain_stop_lookback_candles",
         "brain_allow_rr_target_fallback",
         "brain_cap_target_to_max_rr",
         "brain_max_target_rr",
         "brain_llm_layer_enabled",
+        "llm_role_team_enabled",
+        "llm_provider",
+        "openai_enabled",
+        "openai_model",
+        "openai_timeout_seconds",
+        "llm_role_timeout_seconds",
+        "llm_role_temperature",
+        "llm_role_required_for_trade",
+        "llm_role_market_structure_enabled",
+        "llm_role_momentum_enabled",
+        "llm_role_risk_officer_enabled",
+        "llm_role_skeptic_enabled",
+        "llm_role_execution_enabled",
+        "llm_role_market_structure_prompt_extra",
+        "llm_role_momentum_prompt_extra",
+        "llm_role_risk_officer_prompt_extra",
+        "llm_role_skeptic_prompt_extra",
+        "llm_role_execution_prompt_extra",
+        "llm_role_judge_prompt_extra",
         "ollama_enabled",
         "ollama_base_url",
         "ollama_model",
@@ -1469,6 +1547,11 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 if value not in ("light", "dark"):
                     raise ValueError("ui_theme must be light or dark")
                 clean[key] = value
+            elif key == "ui_language":
+                value = str(value).lower()
+                if value not in ("de", "en"):
+                    raise ValueError("ui_language must be de or en")
+                clean[key] = value
             elif key == "indicator_sr_source":
                 value = str(value)
                 if value not in ("High/Low", "Close/Open"):
@@ -1489,7 +1572,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 if value not in ("target_swing", "reward_risk"):
                     raise ValueError("take_profit_mode must be target_swing or reward_risk")
                 clean[key] = value
-            elif key in ("use_trend_filter", "block_same_direction_correlated_trades", "single_timeframe_mode", "daily_bias_blocks_against_direction", "allow_reward_risk_fallback_tp", "indicator_enabled", "indicator_show_bos_choch", "indicator_show_boxes", "indicator_show_swing_labels", "indicator_show_hma", "indicator_show_sma", "indicator_show_triple_ema", "indicator_show_mfi", "indicator_show_macd", "indicator_show_support_resistance", "agent_show_offline_agents", "agent_bos_choch_enabled", "agent_bos_choch_blocking", "agent_box_enabled", "agent_box_blocking", "agent_support_resistance_enabled", "agent_support_resistance_blocking", "agent_swing_labels_enabled", "agent_swing_labels_blocking", "agent_hma_enabled", "agent_hma_blocking", "agent_sma_enabled", "agent_sma_blocking", "agent_triple_ema_enabled", "agent_triple_ema_blocking", "agent_macd_enabled", "agent_macd_blocking", "agent_mfi_enabled", "agent_mfi_blocking", "agent_rsi_enabled", "agent_rsi_blocking", "agent_vwap_enabled", "agent_vwap_blocking", "agent_breakout_fakeout_enabled", "agent_breakout_fakeout_blocking", "agent_volume_enabled", "agent_volume_blocking", "agent_volatility_regime_enabled", "agent_volatility_regime_blocking", "agent_risk_enabled", "agent_risk_blocking", "brain_enabled", "brain_require_box_for_trade", "brain_allow_rr_target_fallback", "brain_cap_target_to_max_rr", "brain_llm_layer_enabled", "ollama_enabled", "ollama_block_hint_enabled", "replay_rule_weight_enabled"):
+            elif key in ("use_trend_filter", "block_same_direction_correlated_trades", "single_timeframe_mode", "daily_bias_blocks_against_direction", "allow_reward_risk_fallback_tp", "indicator_enabled", "indicator_show_bos_choch", "indicator_show_boxes", "indicator_show_swing_labels", "indicator_show_hma", "indicator_show_sma", "indicator_show_triple_ema", "indicator_show_mfi", "indicator_show_macd", "indicator_show_support_resistance", "agent_show_offline_agents", "agent_bos_choch_enabled", "agent_bos_choch_blocking", "agent_box_enabled", "agent_box_blocking", "agent_support_resistance_enabled", "agent_support_resistance_blocking", "agent_swing_labels_enabled", "agent_swing_labels_blocking", "agent_hma_enabled", "agent_hma_blocking", "agent_sma_enabled", "agent_sma_blocking", "agent_triple_ema_enabled", "agent_triple_ema_blocking", "agent_macd_enabled", "agent_macd_blocking", "agent_mfi_enabled", "agent_mfi_blocking", "agent_rsi_enabled", "agent_rsi_blocking", "agent_vwap_enabled", "agent_vwap_blocking", "agent_breakout_fakeout_enabled", "agent_breakout_fakeout_blocking", "agent_volume_enabled", "agent_volume_blocking", "agent_volatility_regime_enabled", "agent_volatility_regime_blocking", "agent_risk_enabled", "agent_risk_blocking", "brain_enabled", "brain_allow_rr_target_fallback", "brain_cap_target_to_max_rr", "brain_llm_layer_enabled", "llm_role_team_enabled", "llm_role_required_for_trade", "openai_enabled", "llm_role_market_structure_enabled", "llm_role_momentum_enabled", "llm_role_risk_officer_enabled", "llm_role_skeptic_enabled", "llm_role_execution_enabled", "ollama_enabled", "ollama_block_hint_enabled", "replay_rule_weight_enabled"):
                 clean[key] = bool(value)
             elif key == "trade_decision_mode":
                 value = str(value).lower()
@@ -1516,6 +1599,19 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 if not value:
                     raise ValueError("ollama_model must not be empty")
                 clean[key] = value
+            elif key == "llm_provider":
+                value = str(value).strip().lower()
+                if value not in ("openai", "ollama"):
+                    raise ValueError("llm_provider must be openai or ollama")
+                clean[key] = value
+            elif key == "openai_model":
+                value = str(value).strip()
+                if not value:
+                    raise ValueError("openai_model must not be empty")
+                clean[key] = value
+            elif key in DEFAULT_LLM_ROLE_PROMPT_EXTRAS:
+                prompt = str(value or "").strip()
+                clean[key] = (prompt or DEFAULT_LLM_ROLE_PROMPT_EXTRAS[key])[:1600]
             elif key == "sweep_rejection_mode":
                 value = str(value).lower()
                 if value not in ("close", "wick"):
@@ -1533,7 +1629,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 if value < 0:
                     raise ValueError(f"{key} must be non-negative")
                 clean[key] = value
-            elif key in ("signal_timeframe_seconds", "confirmation_timeframe_seconds", "poll_seconds", "phemex_poll_seconds", "system_loop_seconds", "kline_limit", "trend_ema_period", "max_open_trades_total", "max_open_trades_per_asset", "structure_lookback_candles", "structure_pivot_strength", "entry_search_confirmation_candles", "supply_demand_max_base_candles", "supply_demand_max_zone_retests", "swing_lookback_candles", "swing_pivot_strength", "swing_reaction_lookback_candles", "indicator_swing_size", "indicator_hhll_range", "indicator_hma_period", "indicator_sma_period", "indicator_triple_ema_period", "indicator_triple_ema_slow_period", "indicator_mfi_period", "indicator_macd_fast_period", "indicator_macd_slow_period", "indicator_macd_signal_period", "indicator_sr_pivot_period", "indicator_sr_max_pivots", "indicator_sr_channel_width_percent", "indicator_sr_max_levels", "indicator_sr_min_strength", "indicator_box_extend_candles", "agent_bos_choch_min_score", "agent_box_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_period", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_macd_min_score", "agent_mfi_period", "agent_mfi_min_score", "agent_rsi_period", "agent_rsi_min_score", "agent_vwap_lookback_candles", "agent_vwap_min_score", "agent_breakout_fakeout_lookback", "agent_breakout_fakeout_min_score", "agent_volume_period", "agent_volume_min_score", "agent_volatility_atr_period", "agent_volatility_lookback", "agent_volatility_regime_min_score", "agent_risk_min_score", "brain_min_score", "brain_min_score_gap", "brain_min_agent_alignment", "brain_memory_min_count", "brain_target_lookback_candles", "brain_stop_lookback_candles", "stop_loss_atr_period", "ollama_timeout_seconds", "ollama_max_prompt_chars", "replay_rule_weight_min_count", "replay_rule_good_bonus", "replay_rule_bad_penalty", "replay_rule_max_abs_adjustment", "replay_history_max_runs", "replay_max_steps", "replay_kline_limit_max", "replay_frame_display_limit", "replay_response_frame_limit"):
+            elif key in ("signal_timeframe_seconds", "confirmation_timeframe_seconds", "poll_seconds", "phemex_poll_seconds", "system_loop_seconds", "kline_limit", "trend_ema_period", "max_open_trades_total", "max_open_trades_per_asset", "structure_lookback_candles", "structure_pivot_strength", "entry_search_confirmation_candles", "supply_demand_max_base_candles", "supply_demand_max_zone_retests", "swing_lookback_candles", "swing_pivot_strength", "swing_reaction_lookback_candles", "indicator_swing_size", "indicator_hhll_range", "indicator_hma_period", "indicator_sma_period", "indicator_triple_ema_period", "indicator_triple_ema_slow_period", "indicator_mfi_period", "indicator_macd_fast_period", "indicator_macd_slow_period", "indicator_macd_signal_period", "indicator_sr_pivot_period", "indicator_sr_max_pivots", "indicator_sr_channel_width_percent", "indicator_sr_max_levels", "indicator_sr_min_strength", "indicator_box_extend_candles", "agent_bos_choch_min_score", "agent_box_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_period", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_macd_min_score", "agent_mfi_period", "agent_mfi_min_score", "agent_rsi_period", "agent_rsi_min_score", "agent_vwap_lookback_candles", "agent_vwap_min_score", "agent_breakout_fakeout_lookback", "agent_breakout_fakeout_min_score", "agent_volume_period", "agent_volume_min_score", "agent_volatility_atr_period", "agent_volatility_lookback", "agent_volatility_regime_min_score", "agent_risk_min_score", "brain_min_score", "brain_min_score_gap", "brain_min_agent_alignment", "brain_memory_min_count", "brain_target_lookback_candles", "brain_stop_lookback_candles", "stop_loss_atr_period", "openai_timeout_seconds", "llm_role_timeout_seconds", "ollama_timeout_seconds", "ollama_max_prompt_chars", "replay_rule_weight_min_count", "replay_rule_good_bonus", "replay_rule_bad_penalty", "replay_rule_max_abs_adjustment", "replay_history_max_runs", "replay_max_steps", "replay_kline_limit_max", "replay_frame_display_limit", "replay_response_frame_limit"):
                 value = int(value)
                 if key == "replay_rule_bad_penalty":
                     if value > 0:
@@ -1541,7 +1637,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
                 elif value < 0 or key not in ("agent_bos_choch_min_score", "agent_box_min_score", "agent_support_resistance_min_score", "agent_swing_labels_min_score", "agent_hma_min_score", "agent_sma_min_score", "agent_triple_ema_min_score", "agent_macd_min_score", "agent_mfi_min_score", "agent_rsi_min_score", "agent_vwap_min_score", "agent_breakout_fakeout_min_score", "agent_volume_min_score", "agent_volatility_regime_min_score", "agent_risk_min_score") and value <= 0:
                     raise ValueError(f"{key} must be positive")
                 clean[key] = value
-            elif key in ("agent_bos_choch_weight", "agent_box_weight", "agent_support_resistance_weight", "agent_swing_labels_weight", "agent_hma_weight", "agent_sma_weight", "agent_triple_ema_weight", "agent_macd_weight", "agent_mfi_weight", "agent_rsi_weight", "agent_vwap_weight", "agent_breakout_fakeout_weight", "agent_volume_weight", "agent_volatility_regime_weight", "agent_risk_weight", "stop_loss_atr_multiplier", "brain_entry_box_offset", "brain_max_target_rr", "ollama_temperature"):
+            elif key in ("agent_bos_choch_weight", "agent_box_weight", "agent_support_resistance_weight", "agent_swing_labels_weight", "agent_hma_weight", "agent_sma_weight", "agent_triple_ema_weight", "agent_macd_weight", "agent_mfi_weight", "agent_rsi_weight", "agent_vwap_weight", "agent_breakout_fakeout_weight", "agent_volume_weight", "agent_volatility_regime_weight", "agent_risk_weight", "stop_loss_atr_multiplier", "brain_entry_box_offset", "brain_max_target_rr", "llm_role_temperature", "ollama_temperature", "max_fee_to_risk_fraction"):
                 value = float(value)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"{key} must be a non-negative number")
@@ -1611,6 +1707,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
 
     if clean.get("single_timeframe_mode", config.get("single_timeframe_mode", True)):
         clean["confirmation_timeframe_seconds"] = int(clean.get("signal_timeframe_seconds", config.get("signal_timeframe_seconds", 300)))
+    clean["llm_role_timeout_seconds"] = int(clean.get("phemex_poll_seconds", clean.get("poll_seconds", config.get("phemex_poll_seconds", config.get("poll_seconds", 30)))))
 
     config.update(clean)
     path = Path(str(config["_config_path"]))
@@ -1630,6 +1727,45 @@ def env_secret(name: str) -> str | None:
     return value
 
 
+def openai_error_payload(response: requests.Response) -> dict[str, Any]:
+    status_code = int(response.status_code)
+    message = response.text.strip()[:500] if response.text else f"HTTP {status_code}"
+    error_type = ""
+    error_code = ""
+    try:
+        data = response.json()
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict):
+            message = str(error.get("message") or message)
+            error_type = str(error.get("type") or "")
+            error_code = str(error.get("code") or "")
+    except ValueError:
+        pass
+
+    status = "http_error"
+    user_reason = f"OpenAI Test fehlgeschlagen: HTTP {status_code}. {message}"
+    if status_code in (401, 403):
+        status = "auth_failed"
+        user_reason = f"OpenAI Key wurde abgelehnt: {message}"
+    elif status_code == 429 and (error_code == "insufficient_quota" or "quota" in message.lower()):
+        status = "insufficient_quota"
+        user_reason = "Kein OpenAI API-Guthaben oder Projekt-Budget verfügbar. Bitte Billing/Guthaben in der OpenAI Platform prüfen."
+    elif status_code == 429:
+        status = "rate_limited"
+        user_reason = f"OpenAI Rate Limit erreicht: {message}"
+
+    return {
+        "ok": False,
+        "reason": user_reason,
+        "status": status,
+        "http_status": status_code,
+        "api_message": message,
+        "api_error_type": error_type,
+        "api_error_code": error_code,
+        "popup": status in {"insufficient_quota", "auth_failed", "rate_limited", "http_error"},
+    }
+
+
 def strategy_path(config: dict[str, Any]) -> Path:
     return Path(str(config["_config_path"])).with_name("strategy.md")
 
@@ -1640,7 +1776,7 @@ def read_strategy_markdown(config: dict[str, Any]) -> dict[str, Any]:
         path.write_text(
             "# Strategie-Regelwerk\n\n"
             "## Setup\n\n"
-            "Die hoehere Zeiteinheit sucht Supply- und Demand-Zonen aus Base + impulsivem Abgang. "
+            "Die höhere Zeiteinheit sucht Supply- und Demand-Zonen aus Base + impulsivem Abgang. "
             "Der Einstieg entsteht erst auf der kleineren Zeiteinheit durch Break-Retest, Struktur-Pullback, optionales FVG oder klare Zonen-Rejection.\n",
             encoding="utf-8",
         )
@@ -1681,12 +1817,15 @@ def read_env_settings(config: dict[str, Any]) -> dict[str, Any]:
             values[key.strip()] = value.strip().strip('"').strip("'")
     api_key = values.get("PHEMEX_API_KEY", "")
     secret = values.get("PHEMEX_API_SECRET", "")
+    openai_key = values.get("OPENAI_API_KEY", "")
     return {
         "base_url": values.get("PHEMEX_BASE_URL", config.get("base_url", "https://api.phemex.com")),
         "api_key_present": bool(api_key),
         "api_key_preview": f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "",
         "api_secret_present": bool(secret),
         "api_secret_preview": f"{secret[:4]}...{secret[-4:]}" if len(secret) > 8 else "",
+        "openai_key_present": bool(openai_key),
+        "openai_key_preview": f"{openai_key[:7]}...{openai_key[-4:]}" if len(openai_key) > 12 else "",
     }
 
 
@@ -1695,6 +1834,7 @@ def save_env_settings(config: dict[str, Any], updates: dict[str, Any], client: P
     base_url = str(updates.get("base_url") or current["base_url"]).strip()
     api_key = str(updates.get("api_key") or "").strip()
     api_secret = str(updates.get("api_secret") or "").strip()
+    openai_key = str(updates.get("openai_api_key") or "").strip()
 
     existing: dict[str, str] = {}
     path = env_path(config)
@@ -1708,21 +1848,122 @@ def save_env_settings(config: dict[str, Any], updates: dict[str, Any], client: P
         existing["PHEMEX_API_KEY"] = api_key
     if api_secret:
         existing["PHEMEX_API_SECRET"] = api_secret
+    if openai_key:
+        existing["OPENAI_API_KEY"] = openai_key
     existing["PHEMEX_BASE_URL"] = base_url
 
-    ordered = ["PHEMEX_BASE_URL", "PHEMEX_API_KEY", "PHEMEX_API_SECRET"]
-    path.write_text("\n".join(f"{key}={existing.get(key, '')}" for key in ordered) + "\n", encoding="utf-8")
+    ordered = ["PHEMEX_BASE_URL", "PHEMEX_API_KEY", "PHEMEX_API_SECRET", "OPENAI_API_KEY"]
+    remaining = [key for key in existing.keys() if key not in ordered]
+    path.write_text("\n".join(f"{key}={existing.get(key, '')}" for key in ordered + remaining) + "\n", encoding="utf-8")
 
     os.environ["PHEMEX_BASE_URL"] = base_url
     if existing.get("PHEMEX_API_KEY"):
         os.environ["PHEMEX_API_KEY"] = existing["PHEMEX_API_KEY"]
     if existing.get("PHEMEX_API_SECRET"):
         os.environ["PHEMEX_API_SECRET"] = existing["PHEMEX_API_SECRET"]
+    if existing.get("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = existing["OPENAI_API_KEY"]
     config["base_url"] = base_url
     client.base_url = base_url.rstrip("/")
     client.api_key = env_secret("PHEMEX_API_KEY")
     client.api_secret = env_secret("PHEMEX_API_SECRET")
     return read_env_settings(config)
+
+
+def test_openai_connection(config: dict[str, Any]) -> dict[str, Any]:
+    key = env_secret("OPENAI_API_KEY")
+    if not key:
+        return {"ok": False, "reason": "OPENAI_API_KEY fehlt.", "status": "missing_key", "popup": True}
+    try:
+        model = str(config.get("openai_model", "gpt-4.1-mini"))
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": model,
+                "temperature": 0,
+                "max_tokens": 8,
+                "messages": [
+                    {"role": "system", "content": "Antworte kurz."},
+                    {"role": "user", "content": "Sag OK."},
+                ],
+            },
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return {"ok": True, "reason": f"OpenAI Verbindung erfolgreich ({model}).", "status": "ok", "popup": False}
+        return openai_error_payload(response)
+    except requests.RequestException as exc:
+        return {"ok": False, "reason": f"OpenAI nicht erreichbar: {type(exc).__name__}.", "status": "network_error", "popup": True}
+
+
+def test_ollama_connection(config: dict[str, Any]) -> dict[str, Any]:
+    base_url = str(config.get("ollama_base_url", "http://127.0.0.1:11434")).rstrip("/")
+    model = str(config.get("ollama_model", "qwen2.5:3b")).strip() or "qwen2.5:3b"
+    timeout = max(1.0, min(30.0, float(config.get("ollama_timeout_seconds", 10) or 10)))
+    try:
+        tags_response = requests.get(f"{base_url}/api/tags", timeout=min(5.0, timeout))
+        if tags_response.status_code != 200:
+            return {
+                "ok": False,
+                "reason": f"Ollama erreichbar, aber /api/tags meldet HTTP {tags_response.status_code}.",
+                "status": "http_error",
+                "base_url": base_url,
+                "model": model,
+            }
+        tags = tags_response.json()
+        models = [
+            str(item.get("name") or item.get("model") or "")
+            for item in (tags.get("models") if isinstance(tags, dict) else []) or []
+            if isinstance(item, dict)
+        ]
+        if models and model not in models:
+            return {
+                "ok": False,
+                "reason": f"Ollama läuft, aber Modell {model} ist nicht geladen. Verfügbar: {', '.join(models[:8])}.",
+                "status": "model_missing",
+                "base_url": base_url,
+                "model": model,
+                "available_models": models,
+            }
+        payload = {
+            "model": model,
+            "prompt": '{"task":"Antworte nur mit JSON: {\\"ok\\": true}"}',
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0},
+        }
+        response = requests.post(f"{base_url}/api/generate", json=payload, timeout=timeout)
+        if response.status_code != 200:
+            return {
+                "ok": False,
+                "reason": f"Ollama Generate fehlgeschlagen: HTTP {response.status_code}.",
+                "status": "generate_failed",
+                "base_url": base_url,
+                "model": model,
+            }
+        generated = response.json()
+        text = str(generated.get("response", "")).strip()
+        try:
+            parsed = json.loads(text or "{}")
+            if not isinstance(parsed, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            return {
+                "ok": False,
+                "reason": "Ollama antwortet, aber nicht als gültiges JSON. Modell/Format prüfen.",
+                "status": "invalid_json",
+                "base_url": base_url,
+                "model": model,
+                "api_message": text[:300],
+            }
+        return {"ok": True, "reason": f"Ollama Verbindung erfolgreich ({model}).", "status": "ok", "base_url": base_url, "model": model}
+    except requests.ConnectionError:
+        return {"ok": False, "reason": f"Ollama ist unter {base_url} nicht erreichbar. Ollama starten oder Base URL prüfen.", "status": "not_running", "base_url": base_url, "model": model}
+    except requests.Timeout:
+        return {"ok": False, "reason": f"Ollama Test Timeout nach {timeout:g}s. Modell {model} ist eventuell zu langsam oder lädt noch.", "status": "timeout", "base_url": base_url, "model": model}
+    except (requests.RequestException, ValueError) as exc:
+        return {"ok": False, "reason": f"Ollama Test fehlgeschlagen: {type(exc).__name__}: {exc}", "status": "error", "base_url": base_url, "model": model}
 
 
 def reset_persistent_data(config: dict[str, Any], memory: MemoryAgent, broker: PaperBroker, symbol: str | None = None) -> dict[str, Any]:
@@ -2310,7 +2551,29 @@ def replay_trade_from_candidate(candidate: dict[str, Any], config: dict[str, Any
             "entry_method": str(candidate.get("entry_method", "")),
             "pattern_key": str(candidate.get("pattern_key", "")),
         },
+        "llm_role_context": features.get("llm_role_context") if isinstance(features.get("llm_role_context"), dict) else {},
+        "llm_role_protocol": features.get("llm_role_protocol") if isinstance(features.get("llm_role_protocol"), dict) else {},
     }
+
+
+def replay_can_accept_trade(trades: list[dict[str, Any]], candidate_trade: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str | None]:
+    active = [trade for trade in trades if trade.get("status") in ("pending", "open")]
+    if len(active) >= int(config.get("max_open_trades_total", 3)):
+        return False, "max_open_trades_total"
+
+    symbol = str(candidate_trade.get("symbol", ""))
+    same_asset = [trade for trade in active if str(trade.get("symbol", "")) == symbol]
+    if len(same_asset) >= int(config.get("max_open_trades_per_asset", 1)):
+        return False, "max_open_trades_per_asset"
+
+    if config.get("block_same_direction_correlated_trades", True):
+        group = correlation_group(symbol)
+        side = str(candidate_trade.get("side", ""))
+        if group and side:
+            for trade in active:
+                if str(trade.get("side", "")) == side and correlation_group(str(trade.get("symbol", ""))) == group:
+                    return False, f"correlated_{group}_{side}"
+    return True, None
 
 
 def replay_result_r(trade: dict[str, Any], exit_price: float) -> float:
@@ -2432,7 +2695,6 @@ def update_replay_trades(trades: list[dict[str, Any]], candle: Candle) -> list[d
                 trade["status"] = "open"
                 trade["filled_at"] = candle.timestamp
                 events.append({"trade_id": trade.get("id"), "status": "open", "time": candle.timestamp, "price": entry})
-                continue
 
         if trade.get("status") == "open":
             side = str(trade.get("side", ""))
@@ -2765,6 +3027,8 @@ def replay_history_trade_results(replay_payload: dict[str, Any]) -> list[dict[st
                 "entry_method": trade.get("entry_method"),
                 "memory_key": trade.get("memory_key"),
                 "memory_features": trade.get("memory_features") if isinstance(trade.get("memory_features"), dict) else {},
+                "llm_role_protocol": trade.get("llm_role_protocol") if isinstance(trade.get("llm_role_protocol"), dict) else {},
+                "llm_role_context": trade.get("llm_role_context") if isinstance(trade.get("llm_role_context"), dict) else {},
             }
         )
     return results
@@ -2943,6 +3207,7 @@ def replay_history_asset_stats(runs: list[dict[str, Any]], config: dict[str, Any
                 trade_timestamp = int(trade.get("closed_at") or trade.get("filled_at") or trade.get("created_at") or 0)
                 if trade_timestamp >= int(item.get("latest_trade_timestamp") or 0):
                     item["latest_trade_timestamp"] = trade_timestamp
+                    item["display_side"] = str(trade.get("side") or "").upper() or None
                     item["display_tp_price"] = round(tp_number, 2)
                     item["display_sl_price"] = round(sl_number, 2)
                     if notional_number is not None and notional_number > 0:
@@ -2982,7 +3247,7 @@ def replay_history_asset_stats(runs: list[dict[str, Any]], config: dict[str, Any
         item["display_notional_usd"] = item.get("configured_notional_usd") if item.get("configured_notional_usd") is not None else item.get("avg_notional_usd")
         item["avg_rr_factor"] = round(item["rr_sum"] / item["rr_count"], 4) if item["rr_count"] else None
         item["fee_per_trade_usd"] = round(item["estimated_fees_usd"] / closed, 6) if closed else None
-        item["display_fee_or_trade_value_usd"] = item.get("display_trade_value_usd") if item.get("display_trade_value_usd") is not None else item.get("avg_notional_usd")
+        item["display_fee_or_trade_value_usd"] = item.get("fee_per_trade_usd")
         item["net_sl_usd"] = round(item["net_loss_usd"], 4) if item["net_loss_usd"] else 0.0
         item["avg_net_sl_usd"] = round(avg_loss_pnl, 6) if avg_loss_pnl is not None else None
         item["avg_gross_win_usd"] = round(item["gross_win_usd"] / item["wins"], 6) if item["wins"] else None
@@ -3220,6 +3485,7 @@ def build_replay_preview(
         "candidates": 0,
         "gate_allowed": 0,
         "gate_blocked": 0,
+        "replay_risk_blocked": 0,
         "replay_created": 0,
         "replay_opened": 0,
         "replay_tp": 0,
@@ -3325,20 +3591,53 @@ def build_replay_preview(
         if candidate:
             summary["candidates"] += 1
             gate_result = value_gate.evaluate(replay_gate_input_from_candidate(candidate, config))
+            brain_decision = apply_economic_gate_to_brain_decision(brain_decision, gate_result)
+            candidate = brain_decision.get("candidate") or candidate
+            candidate_features = candidate.setdefault("features", {}) if isinstance(candidate, dict) else {}
+            llm_gate = llm_role_trade_gate(brain_decision.get("llm_layer"), config)
+            candidate_features["llm_role_gate"] = llm_gate
+            candidate_features["llm_role_context"] = compact_llm_role_context(brain_decision, gate_result)
+            candidate_features["llm_role_protocol"] = compact_llm_role_protocol(brain_decision.get("llm_layer"), llm_gate)
+            brain_decision["llm_role_gate"] = llm_gate
             if gate_result.get("trade_allowed"):
                 summary["gate_allowed"] += 1
-                replay_created_trade = replay_trade_from_candidate(candidate, config, safe_resolution)
-                if not any(trade.get("id") == replay_created_trade.get("id") for trade in replay_trades):
-                    replay_trades.append(replay_created_trade)
-                    summary["replay_created"] += 1
+                if not llm_gate.get("allowed", True):
+                    summary["replay_risk_blocked"] += 1
                     replay_events.append(
                         {
-                            "trade_id": replay_created_trade.get("id"),
-                            "status": "pending",
-                            "time": replay_created_trade.get("created_at"),
-                            "price": replay_created_trade.get("entry"),
+                            "trade_id": replay_trade_id(candidate),
+                            "status": "blocked",
+                            "time": int(candidate.get("confirmation_candle_time") or candidate.get("signal_candle_time") or 0),
+                            "price": candidate.get("entry_price"),
+                            "reason": llm_gate.get("reason", "llm_role_gate"),
+                            "llm_role_gate": llm_gate,
                         }
                     )
+                else:
+                    replay_created_trade = replay_trade_from_candidate(candidate, config, safe_resolution)
+                    can_accept_replay, replay_block_reason = replay_can_accept_trade(replay_trades, replay_created_trade, config)
+                    if not can_accept_replay:
+                        summary["replay_risk_blocked"] += 1
+                        replay_events.append(
+                            {
+                                "trade_id": replay_created_trade.get("id"),
+                                "status": "blocked",
+                                "time": replay_created_trade.get("created_at"),
+                                "price": replay_created_trade.get("entry"),
+                                "reason": replay_block_reason,
+                            }
+                        )
+                    elif not any(trade.get("id") == replay_created_trade.get("id") for trade in replay_trades):
+                        replay_trades.append(replay_created_trade)
+                        summary["replay_created"] += 1
+                        replay_events.append(
+                            {
+                                "trade_id": replay_created_trade.get("id"),
+                                "status": "pending",
+                                "time": replay_created_trade.get("created_at"),
+                                "price": replay_created_trade.get("entry"),
+                            }
+                        )
             else:
                 summary["gate_blocked"] += 1
         decision = str(brain_decision.get("decision", "WAIT")).upper()
@@ -3384,6 +3683,8 @@ def build_replay_preview(
                 "candidate": compact_replay_frame_candidate(candidate),
                 "candidate_pnl": pnl_preview,
                 "gate": gate_result,
+                "llm_role_context": (candidate.get("features") or {}).get("llm_role_context") if isinstance(candidate, dict) else None,
+                "llm_role_protocol": (candidate.get("features") or {}).get("llm_role_protocol") if isinstance(candidate, dict) else None,
                 "memory_match": brain_decision.get("memory_match"),
                 "replay_events": replay_events,
                 "replay_trade_created": compact_replay_frame_candidate(replay_created_trade),
@@ -3493,6 +3794,253 @@ def create_setup_from_brain_candidate(candidate: dict[str, Any], config: dict[st
     )
 
 
+def llm_role_trade_gate(llm_layer: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
+    if not bool(config.get("llm_role_team_enabled", config.get("brain_llm_layer_enabled", False))):
+        return {"allowed": True, "reason": "llm_role_team_disabled", "decision": "OFF"}
+    layer = llm_layer if isinstance(llm_layer, dict) else {}
+    judge = layer.get("judge") if isinstance(layer.get("judge"), dict) else {}
+    decision = str(layer.get("decision") or judge.get("decision") or "WAIT").upper()
+    verdict = str(layer.get("verdict") or "NO_DATA").upper()
+    if decision == "BLOCK" or bool(layer.get("block_hint", False)):
+        return {"allowed": False, "reason": "llm_role_judge_block", "decision": decision, "verdict": verdict}
+    if bool(config.get("llm_role_required_for_trade", False)) and decision != "APPROVE":
+        return {"allowed": False, "reason": "llm_role_approval_required", "decision": decision, "verdict": verdict}
+    return {"allowed": True, "reason": "llm_role_gate_passive", "decision": decision, "verdict": verdict}
+
+
+def compact_llm_role_context(brain_decision: dict[str, Any] | None, value_result: dict[str, Any] | None = None) -> dict[str, Any]:
+    brain = brain_decision if isinstance(brain_decision, dict) else {}
+    candidate = brain.get("candidate") if isinstance(brain.get("candidate"), dict) else {}
+    features = candidate.get("features") if isinstance(candidate.get("features"), dict) else {}
+    memory_match = brain.get("memory_match") if isinstance(brain.get("memory_match"), dict) else {}
+    score_breakdown = features.get("brain_score_breakdown") if isinstance(features.get("brain_score_breakdown"), dict) else {}
+    gate = value_result if isinstance(value_result, dict) else brain.get("economic_gate") if isinstance(brain.get("economic_gate"), dict) else {}
+    return {
+        "version": 1,
+        "symbol": candidate.get("symbol"),
+        "decision": brain.get("decision"),
+        "candidate_reason": brain.get("candidate_reason"),
+        "side": candidate.get("side"),
+        "entry_price": candidate.get("entry_price"),
+        "sl_price": candidate.get("sl_price"),
+        "tp_price": candidate.get("tp_price"),
+        "entry_method": candidate.get("entry_method"),
+        "target_method": candidate.get("target_method"),
+        "score": candidate.get("score"),
+        "confidence": candidate.get("confidence"),
+        "pattern_key": candidate.get("pattern_key"),
+        "memory": {
+            "count": memory_match.get("count"),
+            "win_rate": memory_match.get("win_rate"),
+            "avg_r": memory_match.get("avg_r"),
+            "entry_offset_in_box": memory_match.get("entry_offset_in_box"),
+        },
+        "scores": {
+            "long_score": score_breakdown.get("long_score"),
+            "short_score": score_breakdown.get("short_score"),
+            "long_count": score_breakdown.get("long_count"),
+            "short_count": score_breakdown.get("short_count"),
+            "conflict": score_breakdown.get("conflict"),
+        },
+        "economic_gate": {
+            "trade_allowed": gate.get("trade_allowed"),
+            "reason": gate.get("reason"),
+            "rr": gate.get("rr"),
+            "fee_to_risk_fraction": gate.get("fee_to_risk_fraction"),
+            "risk_usd": gate.get("risk_usd"),
+            "net_profit_fraction": gate.get("net_profit_fraction"),
+        },
+    }
+
+
+def compact_llm_role_protocol(llm_layer: dict[str, Any] | None, llm_gate: dict[str, Any] | None = None) -> dict[str, Any]:
+    layer = llm_layer if isinstance(llm_layer, dict) else {}
+    judge = layer.get("judge") if isinstance(layer.get("judge"), dict) else {}
+    gate = llm_gate if isinstance(llm_gate, dict) else {}
+    roles = []
+    for role in layer.get("roles") or []:
+        if not isinstance(role, dict):
+            continue
+        roles.append(
+            {
+                "role_key": role.get("role_key"),
+                "role": role.get("role"),
+                "decision": str(role.get("decision", "WAIT")).upper(),
+                "confidence": role.get("confidence"),
+                "hard_block": bool(role.get("hard_block", False)),
+                "reasons": list(role.get("reasons") or [])[:4],
+            }
+        )
+    return {
+        "version": 1,
+        "enabled": bool(layer.get("enabled", False)),
+        "provider": layer.get("provider"),
+        "model": layer.get("model"),
+        "verdict": layer.get("verdict"),
+        "decision": str(layer.get("decision") or judge.get("decision") or "WAIT").upper(),
+        "block_hint": bool(layer.get("block_hint", False)),
+        "gate": {
+            "allowed": gate.get("allowed"),
+            "reason": gate.get("reason"),
+            "decision": gate.get("decision"),
+            "verdict": gate.get("verdict"),
+        },
+        "judge": {
+            "decision": str(judge.get("decision", layer.get("decision", "WAIT"))).upper(),
+            "confidence": judge.get("confidence"),
+            "summary": judge.get("summary", layer.get("risk_note")),
+            "conflict_note": judge.get("conflict_note", layer.get("conflict_note")),
+            "advice": judge.get("advice", layer.get("advice")),
+        },
+        "roles": roles,
+    }
+
+
+def attach_llm_role_trace(setup: Setup, brain_decision: dict[str, Any], value_result: dict[str, Any] | None, llm_gate: dict[str, Any] | None = None) -> None:
+    setup.features["llm_role_context"] = compact_llm_role_context(brain_decision, value_result)
+    setup.features["llm_role_protocol"] = compact_llm_role_protocol(brain_decision.get("llm_layer"), llm_gate)
+
+
+def active_order_lock_snapshot(broker: PaperBroker, symbol: str | None = None) -> dict[str, Any]:
+    active = [trade for trade in broker.trades if trade.status in ("pending", "open")]
+    if symbol:
+        symbol_active = [trade for trade in active if trade.setup.symbol == symbol]
+    else:
+        symbol_active = active
+    primary = symbol_active[0] if symbol_active else (active[0] if active else None)
+    return {
+        "locked": bool(active),
+        "scope": "symbol" if symbol_active else ("global" if active else "none"),
+        "active_total": len(active),
+        "active_symbol": len(symbol_active),
+        "order_id": primary.id if primary else None,
+        "order_symbol": primary.setup.symbol if primary else None,
+        "order_status": primary.status if primary else None,
+        "order_side": primary.setup.side if primary else None,
+    }
+
+
+def order_lock_brain_decision(
+    symbol: str,
+    agent_board: dict[str, Any],
+    scan: dict[str, Any],
+    config: dict[str, Any],
+    lock: dict[str, Any],
+) -> dict[str, Any]:
+    order_id = lock.get("order_id") or "-"
+    message = f"WAIT: Entry-Suche pausiert, aktive Order {order_id} ({lock.get('order_status', '-')}) laeuft."
+    brain_report = {
+        "agent_name": "Trade Planner",
+        "function": "Entry-Suche steuern",
+        "signal": "NEUTRAL",
+        "score": 0,
+        "reads": f"active_order={order_id} | active_total={lock.get('active_total', 0)}",
+        "message": message,
+        "conflict": False,
+        "blocking": True,
+        "details": {"active_order_lock": lock},
+    }
+    ceo_report = {
+        "agent_name": "CEO / Judge",
+        "function": "Nur neue Kandidaten freigeben, wenn keine aktive Order laeuft",
+        "signal": "NEUTRAL",
+        "score": 0,
+        "reads": f"Entry-Suche gesperrt fuer {symbol}",
+        "message": message,
+        "conflict": False,
+        "blocking": True,
+        "details": {"active_order_lock": lock},
+    }
+    llm_layer = default_role_team_response(
+        config,
+        "WAIT",
+        f"LLM-Rollenteam nicht gestartet: aktive Order {order_id}. Neue LLM-Abfrage erst wieder bei freier Entry-Suche.",
+        enabled=bool(config.get("llm_role_team_enabled", config.get("brain_llm_layer_enabled", False))),
+    )
+    return {
+        "decision": "WAIT",
+        "scores": {},
+        "agent_bias": "NEUTRAL",
+        "agent_bias_score": 0,
+        "candidate_reason": "active_order_lock",
+        "brain": brain_report,
+        "ceo": ceo_report,
+        "candidate": None,
+        "memory_match": {},
+        "score_breakdown": {"decision": "WAIT", "candidate_reason": "active_order_lock", "active_order_lock": lock},
+        "active_order_lock": lock,
+        "llm_layer": llm_layer,
+    }
+
+
+def append_trade_change_events(changes: list[VirtualTrade], cycle: dict[str, Any]) -> None:
+    for trade in changes:
+        if trade.status == "open":
+            print(f"FILLED {trade.id} at {trade.setup.entry} on {format_time(trade.filled_at or 0)}")
+            cycle["events"].append({"type": "filled", "trade": asdict(trade)})
+        elif trade.status in ("tp", "sl"):
+            print(f"CLOSED {trade.id} status={trade.status.upper()} result_r={trade.result_r} on {format_time(trade.closed_at or 0)}")
+            cycle["events"].append({"type": "closed", "trade": asdict(trade)})
+        elif trade.status == "expired":
+            print(f"EXPIRED {trade.id} on {format_time(trade.closed_at or 0)}")
+            cycle["events"].append({"type": "expired", "trade": asdict(trade)})
+
+
+def compact_llm_analysis_entry(symbol: str, brain_decision: dict[str, Any] | None, config: dict[str, Any], skipped_reason: str | None = None) -> dict[str, Any] | None:
+    brain = brain_decision or {}
+    layer = brain.get("llm_layer") if isinstance(brain.get("llm_layer"), dict) else {}
+    if not layer and not skipped_reason:
+        return None
+    trace = layer.get("context_trace") if isinstance(layer.get("context_trace"), dict) else {}
+    roles = layer.get("roles") if isinstance(layer.get("roles"), list) else []
+    judge = layer.get("judge") if isinstance(layer.get("judge"), dict) else {}
+    usage = layer.get("usage_estimate") if isinstance(layer.get("usage_estimate"), dict) else None
+    if usage is None:
+        usage = estimate_llm_usage(trace, roles, judge, config)
+    active_order_lock = brain.get("active_order_lock") if isinstance(brain.get("active_order_lock"), dict) else None
+    event_type = "skipped" if skipped_reason else ("completed" if roles else "waiting")
+    reason = skipped_reason or brain.get("candidate_reason") or layer.get("message") or layer.get("advice") or "-"
+    now = int(time.time())
+    return {
+        "time": now,
+        "time_utc": format_time(now),
+        "symbol": symbol,
+        "type": event_type,
+        "reason": reason,
+        "provider": layer.get("provider") or str(config.get("llm_provider", "openai")),
+        "model": layer.get("model") or str(config.get("openai_model" if str(config.get("llm_provider", "openai")).lower() == "openai" else "ollama_model", "gpt-4.1-mini")),
+        "decision": layer.get("decision") or judge.get("decision") or brain.get("decision") or "-",
+        "verdict": layer.get("verdict") or "-",
+        "role_count": len(roles),
+        "summary": judge.get("summary") or layer.get("risk_note") or layer.get("message") or "-",
+        "active_sources": trace.get("active_sources") or [],
+        "candidate": trace.get("candidate") or brain.get("candidate"),
+        "active_order_lock": active_order_lock,
+        "usage_estimate": usage,
+    }
+
+
+def append_llm_analysis_history(history: list[dict[str, Any]], entry: dict[str, Any] | None, max_items: int = 40) -> list[dict[str, Any]]:
+    if not entry:
+        return history[-max_items:]
+    comparable_keys = ("symbol", "type", "reason", "decision", "verdict", "role_count")
+    last = history[-1] if history else {}
+    same = all(last.get(key) == entry.get(key) for key in comparable_keys)
+    last_lock = last.get("active_order_lock") if isinstance(last.get("active_order_lock"), dict) else {}
+    entry_lock = entry.get("active_order_lock") if isinstance(entry.get("active_order_lock"), dict) else {}
+    if same and last_lock.get("order_id") == entry_lock.get("order_id") and entry.get("type") in {"skipped", "waiting"}:
+        updated = dict(last)
+        updated["time"] = entry["time"]
+        updated["time_utc"] = entry["time_utc"]
+        updated["repeat_count"] = int(updated.get("repeat_count", 1)) + 1
+        history[-1] = updated
+    else:
+        item = dict(entry)
+        item["repeat_count"] = 1
+        history.append(item)
+    return history[-max_items:]
+
+
 # --------------------------------------------------
 # SYSTEM PROCESSING LOOP
 # --------------------------------------------------
@@ -3504,6 +4052,8 @@ def process_cached_once(
     market_cache: MarketDataCache,
 ) -> None:
     market = market_cache.snapshot()
+    previous_status = status_store.snapshot()
+    llm_analysis_history = list(previous_status.get("llm_analysis_history", [])) if isinstance(previous_status.get("llm_analysis_history"), list) else []
     cycle: dict[str, Any] = {
         "started_at": int(time.time()),
         "symbols": {},
@@ -3544,6 +4094,7 @@ def process_cached_once(
             "cycle": {**cycle, "finished_at": now, "duration_seconds": 0, "skipped": "observer stopped"},
             "paper": broker.snapshot(),
             "memory": memory.summary(),
+            "llm_analysis_history": llm_analysis_history,
         }
         status_store.update(snapshot)
         return
@@ -3575,6 +4126,9 @@ def process_cached_once(
 
         if not confirm_candles and config.get("single_timeframe_mode", True):
             confirm_candles = signal_candles
+
+        changes = broker.update(symbol, confirm_candles) if config.get("paper_trading_enabled", True) else []
+        append_trade_change_events(changes, cycle)
 
         cycle["symbols"][symbol] = {
             "last_signal_candle": asdict(signal_candles[-1]) if signal_candles else None,
@@ -3648,6 +4202,37 @@ def process_cached_once(
             scan=scan_explanation,
             config=config,
         )
+        order_lock = active_order_lock_snapshot(broker, symbol)
+        if bool(config.get("pause_entry_search_while_order_active", True)) and order_lock.get("locked"):
+            brain_decision = order_lock_brain_decision(symbol, agent_board, scan_explanation, config, order_lock)
+            agent_board = refresh_agent_board_risk_context(
+                agent_board,
+                scan_explanation,
+                None,
+                broker,
+                config,
+                broker_allowed=False,
+                broker_reason="active_order_lock",
+            )
+            agent_board["brain"] = brain_decision.get("brain")
+            agent_board["ceo"] = brain_decision.get("ceo", agent_board.get("ceo"))
+            agent_board["trade_plan"] = None
+            agent_board["memory_match"] = brain_decision.get("memory_match")
+            agent_board["llm_layer"] = brain_decision.get("llm_layer")
+            agent_board["active_order_lock"] = order_lock
+            cycle["symbols"][symbol]["agents"] = agent_board
+            cycle["agents"][symbol] = agent_board
+            cycle["symbols"][symbol]["brain"] = brain_decision
+            cycle["symbols"][symbol]["active_order_lock"] = order_lock
+            cycle.setdefault("brains", {})[symbol] = brain_decision
+            update_scan_with_brain_decision(scan_explanation, brain_decision)
+            llm_analysis_history = append_llm_analysis_history(
+                llm_analysis_history,
+                compact_llm_analysis_entry(symbol, brain_decision, config, skipped_reason="active_order_lock"),
+            )
+            cycle["events"].append({"type": "entry_search_paused", "reason": "active_order_lock", "symbol": symbol, "active_order_lock": order_lock})
+            continue
+
         brain_decision = build_brain_decision(
             symbol=symbol,
             timeframe_seconds=int(config.get("signal_timeframe_seconds", 300)),
@@ -3681,7 +4266,7 @@ def process_cached_once(
             cycle["agents"][symbol] = agent_board
             value_result = value_gate.evaluate(brain_gate_input_from_setup(setup))
             brain_decision = apply_economic_gate_to_brain_decision(brain_decision, value_result)
-            brain_decision["llm_layer"] = refresh_llm_layer_after_economic_gate(agent_board, scan_explanation, brain_decision, config)
+            brain_decision["llm_layer"] = refresh_llm_layer_after_economic_gate(agent_board, scan_explanation, brain_decision, config, indicator_context)
             agent_board["ceo"] = brain_decision.get("ceo", agent_board.get("ceo"))
             agent_board["economic_gate"] = value_result
             agent_board["llm_layer"] = brain_decision.get("llm_layer")
@@ -3691,6 +4276,7 @@ def process_cached_once(
             cycle["symbols"][symbol]["brain"] = brain_decision
             cycle["brains"][symbol] = brain_decision
             if not value_result.get("trade_allowed", False):
+                attach_llm_role_trace(setup, brain_decision, value_result, None)
                 agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=False, broker_reason="value_gate")
                 cycle["symbols"][symbol]["agents"] = agent_board
                 cycle["agents"][symbol] = agent_board
@@ -3698,6 +4284,16 @@ def process_cached_once(
             else:
                 setup.features["value_gate"] = value_result
                 setup.features["ceo_decision"] = brain_decision.get("ceo")
+                llm_gate = llm_role_trade_gate(brain_decision.get("llm_layer"), config)
+                setup.features["llm_role_gate"] = llm_gate
+                brain_decision["llm_role_gate"] = llm_gate
+                attach_llm_role_trace(setup, brain_decision, value_result, llm_gate)
+                if not llm_gate.get("allowed", True):
+                    agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=False, broker_reason=str(llm_gate.get("reason", "llm_role_gate")))
+                    cycle["symbols"][symbol]["agents"] = agent_board
+                    cycle["agents"][symbol] = agent_board
+                    cycle["events"].append({"type": "blocked", "reason": llm_gate.get("reason", "llm_role_gate"), "llm_role_gate": llm_gate, "setup": asdict(setup), "brain": brain_decision})
+                    continue
                 if config.get("paper_trading_enabled", True):
                     allowed, block_reason = broker.can_accept_setup(setup)
                     agent_board = refresh_agent_board_risk_context(agent_board, scan_explanation, setup, broker, config, value_result=value_result, broker_allowed=allowed, broker_reason=block_reason)
@@ -3720,17 +4316,10 @@ def process_cached_once(
         else:
             cycle["events"].append({"type": "no_setup", "reason": brain_decision.get("decision", scan_explanation.get("reason")), "symbol": symbol, "scan": scan_explanation, "brain": brain_decision})
 
-        changes = broker.update(symbol, confirm_candles) if config.get("paper_trading_enabled", True) else []
-        for trade in changes:
-            if trade.status == "open":
-                print(f"FILLED {trade.id} at {trade.setup.entry} on {format_time(trade.filled_at or 0)}")
-                cycle["events"].append({"type": "filled", "trade": asdict(trade)})
-            elif trade.status in ("tp", "sl"):
-                print(f"CLOSED {trade.id} status={trade.status.upper()} result_r={trade.result_r} on {format_time(trade.closed_at or 0)}")
-                cycle["events"].append({"type": "closed", "trade": asdict(trade)})
-            elif trade.status == "expired":
-                print(f"EXPIRED {trade.id} on {format_time(trade.closed_at or 0)}")
-                cycle["events"].append({"type": "expired", "trade": asdict(trade)})
+        llm_analysis_history = append_llm_analysis_history(
+            llm_analysis_history,
+            compact_llm_analysis_entry(symbol, brain_decision, config),
+        )
 
     cycle["finished_at"] = int(time.time())
     cycle["duration_seconds"] = cycle["finished_at"] - cycle["started_at"]
@@ -3749,6 +4338,7 @@ def process_cached_once(
         "cycle": cycle,
         "paper": broker.snapshot(),
         "memory": memory.summary(),
+        "llm_analysis_history": llm_analysis_history,
     }
     status_store.update(snapshot)
     print(f"PERFORMANCE {json.dumps(broker.performance(), sort_keys=True)}")
@@ -4059,6 +4649,14 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                 payload = json.dumps(read_env_settings(config)).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", payload)
                 return
+            if request_path == "/api/openai-test":
+                payload = json.dumps(test_openai_connection(config)).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", payload)
+                return
+            if request_path == "/api/ollama-test":
+                payload = json.dumps(test_ollama_connection(config)).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", payload)
+                return
             if request_path == "/api/config-json":
                 path = Path(str(config["_config_path"]))
                 payload = path.read_text(encoding="utf-8").encode("utf-8")
@@ -4152,6 +4750,9 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                     existing.update(payload)
                     if existing.get("live_trading_enabled", False):
                         raise ValueError("live_trading_enabled must stay false in this observer")
+                    existing["single_timeframe_mode"] = True
+                    existing["confirmation_timeframe_seconds"] = int(existing.get("signal_timeframe_seconds", 300))
+                    existing["llm_role_timeout_seconds"] = int(existing.get("phemex_poll_seconds", existing.get("poll_seconds", 30)))
                     path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
                     config.update(load_config(path))
                     current = status_store.snapshot()

@@ -7,6 +7,8 @@ import threading
 from typing import Any, Literal
 from urllib import error as urlerror, request as urlrequest
 
+from llm_roles import build_role_context, default_role_team_response, evaluate_role_team, llm_provider_enabled
+
 
 BrainDecisionValue = Literal["LONG", "SHORT", "WAIT", "BLOCKED"]
 BrainSignal = Literal["LONG", "SHORT", "NEUTRAL"]
@@ -255,8 +257,14 @@ def _memory_match(memory_state: dict[str, Any] | None, pattern_key: str) -> Brai
     matches: list[dict[str, Any]] = []
     offsets: list[float] = []
     for record in records:
+        source = str(record.get("source") or "paper_trade_close").lower()
+        if "replay" in source:
+            continue
         setup = record.get("setup", {}) if isinstance(record, dict) else {}
         features = setup.get("features", {}) if isinstance(setup, dict) else {}
+        strategy = str(features.get("strategy") or "").lower()
+        if "replay" in strategy:
+            continue
         if features.get("brain_pattern_key") != pattern_key:
             continue
         matches.append(record)
@@ -301,6 +309,8 @@ def _rule_pattern_matches(rule: dict[str, Any], pattern_key: str) -> bool:
 
 
 def _replay_rule_weight(pattern_key: str, config: dict[str, Any], symbol: str | None = None) -> dict[str, Any]:
+    # Replay is no longer part of the active decision path; keep the old helper inert for stored configs.
+    return {"enabled": False, "matched": False, "adjustment": 0, "quality": "OFF", "reason": "Replay entfernt: Live-Analyse nutzt keine Replay-Regeln"}
     if not bool(config.get("replay_rule_weight_enabled", False)):
         return {"enabled": False, "matched": False, "adjustment": 0, "quality": "OFF", "reason": "replay_rule_weight_enabled=false"}
 
@@ -438,6 +448,124 @@ def _target_from_reward_risk(decision: str, entry: float, sl: float, rr: float) 
     if decision == "LONG":
         return _round_price(entry + risk * rr)
     return _round_price(entry - risk * rr)
+
+
+def _planned_quantity(symbol: str, entry: float, config: dict[str, Any]) -> float | None:
+    if entry <= 0:
+        return None
+    symbol_cfg = config.get("trade_sizes_by_symbol", {}) or {}
+    per_symbol = symbol_cfg.get(symbol) if isinstance(symbol_cfg, dict) else None
+    size_cfg = per_symbol if isinstance(per_symbol, dict) else config
+    mode = str(size_cfg.get("mode", config.get("trade_size_mode", "usd"))).lower()
+    if mode == "asset":
+        quantity = _safe_float(size_cfg.get("asset", config.get("trade_size_asset")), 0.0)
+        return quantity if quantity > 0 else None
+    notional = _safe_float(size_cfg.get("usd", config.get("trade_size_usd")), 0.0)
+    return (notional / entry) if notional > 0 else None
+
+
+def _candidate_value_preview(
+    symbol: str,
+    entry: float,
+    sl: float,
+    tp: float,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    quantity = _planned_quantity(symbol, entry, config)
+    if quantity is None or quantity <= 0:
+        return {"known": False, "reason": "missing_planned_quantity"}
+    reward = abs(tp - entry)
+    fee_rate = _safe_float(config.get("estimated_taker_fee_rate", 0.0006), 0.0006)
+    min_profit_by_symbol = config.get("min_net_profit_fraction_by_symbol", {}) or {}
+    symbol_min_profit = min_profit_by_symbol.get(symbol) if isinstance(min_profit_by_symbol, dict) else None
+    min_net_profit_fraction = _safe_float(
+        symbol_min_profit if symbol_min_profit is not None else config.get("min_net_profit_fraction", 0.001),
+        0.001,
+    )
+    entry_notional = entry * quantity
+    risk = abs(entry - sl)
+    risk_usd = risk * quantity
+    gross_profit = reward * quantity
+    estimated_fees = (entry * quantity + tp * quantity) * fee_rate
+    fee_to_risk_fraction = estimated_fees / risk_usd if risk_usd > 0 else None
+    max_fee_to_risk_fraction = _safe_float(config.get("max_fee_to_risk_fraction", 0.25), 0.25)
+    net_profit = gross_profit - estimated_fees
+    net_profit_fraction = net_profit / entry_notional if entry_notional > 0 else 0.0
+    fee_risk_blocked = (
+        max_fee_to_risk_fraction > 0
+        and fee_to_risk_fraction is not None
+        and fee_to_risk_fraction > max_fee_to_risk_fraction
+    )
+    net_profit_blocked = min_net_profit_fraction > 0 and net_profit_fraction < min_net_profit_fraction
+    reason = "net_profit_ok"
+    if fee_risk_blocked:
+        reason = "fee_to_risk_too_high"
+    elif net_profit_blocked:
+        reason = "net_profit_too_small"
+    return {
+        "known": True,
+        "planned_quantity_asset": round(quantity, 8),
+        "entry_notional_usd": round(entry_notional, 8),
+        "risk_usd": round(risk_usd, 8),
+        "gross_profit_usd": round(gross_profit, 8),
+        "estimated_fees_usd": round(estimated_fees, 8),
+        "fee_to_risk_fraction": round(fee_to_risk_fraction, 8) if fee_to_risk_fraction is not None else None,
+        "max_fee_to_risk_fraction": max_fee_to_risk_fraction,
+        "net_profit_usd": round(net_profit, 8),
+        "net_profit_fraction": round(net_profit_fraction, 8),
+        "min_net_profit_fraction": min_net_profit_fraction,
+        "trade_allowed": not (fee_risk_blocked or net_profit_blocked),
+        "reason": reason,
+    }
+
+
+def _ceo_trade_gate(agent_board: dict[str, Any], signal: str, config: dict[str, Any]) -> dict[str, Any]:
+    if not bool(config.get("brain_require_ceo_quality_for_trade", True)):
+        return {"allowed": True, "reason": "brain_require_ceo_quality_for_trade=false"}
+    ceo = agent_board.get("ceo") if isinstance(agent_board.get("ceo"), dict) else {}
+    if not ceo:
+        return {"allowed": False, "reason": "CEO-Report fehlt."}
+    ceo_signal = str(ceo.get("signal", "NEUTRAL")).upper()
+    details = ceo.get("details") if isinstance(ceo.get("details"), dict) else {}
+    decision = str(details.get("decision", "")).upper()
+    grade = str(details.get("decision_grade", "")).upper()
+    final_quality = _safe_float(details.get("final_quality_score", ceo.get("score", 0)), 0.0)
+    role_alignment = _safe_float(details.get("role_alignment_score", details.get("quality_score", 0)), 0.0)
+    min_quality = _safe_float(config.get("brain_ceo_min_final_quality", 55), 55)
+    min_alignment = _safe_float(config.get("brain_ceo_min_alignment_score", 45), 45)
+    wanted_decision = "LONG_BIAS" if signal == "LONG" else "SHORT_BIAS" if signal == "SHORT" else ""
+    allowed = (
+        signal in ("LONG", "SHORT")
+        and ceo_signal == signal
+        and (not decision or decision == wanted_decision)
+        and (not grade or grade in {"A", "B"})
+        and final_quality >= min_quality
+        and role_alignment >= min_alignment
+        and not bool(ceo.get("blocking", False))
+    )
+    if allowed:
+        reason = "CEO bestätigt Richtung und Qualität."
+    elif ceo_signal != signal:
+        reason = f"CEO bestätigt {signal} nicht; CEO-Signal {ceo_signal}."
+    elif grade and grade not in {"A", "B"}:
+        reason = f"CEO-Qualitätsgrad {grade} ist für Trade-Plan zu schwach."
+    elif final_quality < min_quality:
+        reason = f"CEO-Finalqualität {round(final_quality, 2)} unter Minimum {round(min_quality, 2)}."
+    elif role_alignment < min_alignment:
+        reason = f"CEO-Rollen-Ausrichtung {round(role_alignment, 2)} unter Minimum {round(min_alignment, 2)}."
+    else:
+        reason = "CEO gibt keine saubere Trade-Freigabe."
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "ceo_signal": ceo_signal,
+        "ceo_decision": decision,
+        "decision_grade": grade,
+        "final_quality_score": final_quality,
+        "role_alignment_score": role_alignment,
+        "min_final_quality": min_quality,
+        "min_alignment_score": min_alignment,
+    }
 
 
 def _apply_timeframe_target_cap(
@@ -614,11 +742,11 @@ def _llm_audit_context(
 
 def _llm_system_prompt() -> str:
     return (
-        "Du bist ein lokaler Trade-Auditor fuer ein Paper-Trading-System. "
+        "Du bist ein lokaler Trade-Auditor für ein Paper-Trading-System. "
         "Antworte immer auf Deutsch. "
         "Verwende keine chinesischen, japanischen oder koreanischen Schriftzeichen. "
         "Antworte nur mit einem einzelnen JSON-Objekt ohne Markdown, ohne Codeblock und ohne Zusatztext. "
-        "Du darfst keine Entry-, Stop-Loss-, Take-Profit- oder Positionsgroessen setzen. "
+        "Du darfst keine Entry-, Stop-Loss-, Take-Profit- oder Positionsgrößen setzen. "
         "Du darfst das Economic Gate nicht umgehen."
     )
 
@@ -627,13 +755,13 @@ def _llm_prompt(context: dict[str, Any], config: dict[str, Any]) -> str:
     max_chars = max(500, int(_safe_float(config.get("ollama_max_prompt_chars", 4000), 4000.0)))
     payload = json.dumps(context, ensure_ascii=False, separators=(",", ":"))[:max_chars]
     return (
-        "Erzeuge ein deutsches Audit fuer den folgenden reduzierten Bot-Kontext. "
+        "Erzeuge ein deutsches Audit für den folgenden reduzierten Bot-Kontext. "
         "Pflichtformat: JSON mit exakt diesen Schluesseln: "
         "verdict, confidence_note, risk_note, conflict_note, advice, block_hint. "
         "Erlaubte verdict Werte: OK, WARN, BLOCK_HINT, NO_DATA, ERROR. "
         "Alle Textfelder muessen kurz, sachlich und deutsch sein. "
-        "Wenn keine passende Aussage moeglich ist, nutze '-' als Textwert. "
-        "Beispiel: {\"verdict\":\"WARN\",\"confidence_note\":\"-\",\"risk_note\":\"Risiko pruefen.\",\"conflict_note\":\"-\",\"advice\":\"Abwarten.\",\"block_hint\":false}. "
+        "Wenn keine passende Aussage möglich ist, nutze '-' als Textwert. "
+        "Beispiel: {\"verdict\":\"WARN\",\"confidence_note\":\"-\",\"risk_note\":\"Risiko prüfen.\",\"conflict_note\":\"-\",\"advice\":\"Abwarten.\",\"block_hint\":false}. "
         f"Audit-Kontext: {payload}"
     )
 
@@ -706,7 +834,7 @@ def _parse_llm_audit(raw_text: str, config: dict[str, Any]) -> dict[str, Any]:
             provider,
             model,
             "WARN",
-            "Ollama-Antwort war kein valides JSON; Pipeline laeuft deterministisch weiter.",
+            "Ollama-Antwort war kein valides JSON; Pipeline läuft deterministisch weiter.",
             advice=_clean_llm_text_value(raw_text),
         )
 
@@ -716,7 +844,7 @@ def _parse_llm_audit(raw_text: str, config: dict[str, Any]) -> dict[str, Any]:
             provider,
             model,
             "WARN",
-            "Ollama-Antwort war kein JSON-Objekt; Pipeline laeuft deterministisch weiter.",
+            "Ollama-Antwort war kein JSON-Objekt; Pipeline läuft deterministisch weiter.",
             advice="Ollama muss ein einzelnes JSON-Objekt liefern.",
         )
 
@@ -727,10 +855,10 @@ def _parse_llm_audit(raw_text: str, config: dict[str, Any]) -> dict[str, Any]:
             provider,
             model,
             "ERROR",
-            "Ollama-Antwort verworfen: Antwortsprache ist nicht Deutsch; Pipeline laeuft deterministisch weiter.",
+            "Ollama-Antwort verworfen: Antwortsprache ist nicht Deutsch; Pipeline läuft deterministisch weiter.",
             risk_note="Ollama-Antwort enthielt nicht erlaubte Schriftzeichen und wurde nicht angezeigt.",
             conflict_note="-",
-            advice="Modell erneut laufen lassen oder Prompt/Modell pruefen.",
+            advice="Modell erneut laufen lassen oder Prompt/Modell prüfen.",
             block_hint=False,
         )
 
@@ -763,31 +891,30 @@ def _llm_audit_hash(context: dict[str, Any]) -> str:
 
 
 def _llm_async_status_response(config: dict[str, Any], message: str, risk_note: str, advice: str) -> dict[str, Any]:
-    return _llm_audit_response(
-        True,
-        "ollama",
-        str(config.get("ollama_model", "qwen2.5:3b")),
+    result = default_role_team_response(
+        config,
         "NO_DATA",
         message,
-        risk_note=risk_note,
-        advice=advice,
+        enabled=True,
     )
+    result["risk_note"] = risk_note
+    result["advice"] = advice
+    return result
 
 
 def _run_ollama_audit_worker(context_key: str, context_hash: str, context: dict[str, Any], config: dict[str, Any]) -> None:
     try:
-        raw_text = _ollama_generate(_llm_prompt(context, config), config)
-        result = _parse_llm_audit(raw_text, config)
-    except (OSError, TimeoutError, ValueError, json.JSONDecodeError, urlerror.URLError) as exc:
-        result = _llm_audit_response(
-            True,
-            "ollama",
-            str(config.get("ollama_model", "qwen2.5:3b")),
+        result = evaluate_role_team(context, config)
+    except (OSError, TimeoutError, ValueError, RuntimeError, json.JSONDecodeError, urlerror.URLError) as exc:
+        detail = str(exc).strip() or type(exc).__name__
+        result = default_role_team_response(
+            config,
             "ERROR",
-            f"Ollama-Audit fehlgeschlagen: {type(exc).__name__}; Pipeline laeuft deterministisch weiter.",
-            risk_note=f"Ollama-Audit fehlgeschlagen: {type(exc).__name__}; Pipeline laeuft deterministisch weiter.",
-            advice="Ollama-Server, Modellname und lokalen Modellstart pruefen.",
+            f"OpenAI/LLM-Rollenteam fehlgeschlagen: {detail}; Pipeline läuft deterministisch weiter.",
+            enabled=True,
         )
+        result["risk_note"] = detail
+        result["advice"] = "OpenAI API Connection testen und Billing/Guthaben, Key, Projekt und Modell prüfen."
 
     with _LLM_AUDIT_LOCK:
         _LLM_AUDIT_STATE["running"] = False
@@ -807,15 +934,15 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         if _LLM_AUDIT_STATE.get("running"):
             if last_result:
                 result = dict(last_result)
-                result["message"] = "Ollama verarbeitet noch den vorherigen Audit-Kontext; neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben."
-                result["risk_note"] = "LLM-Worker ist beschaeftigt; Trading-Pipeline laeuft deterministisch weiter."
-                result["advice"] = "Warten bis der lokale Ollama-Worker frei ist."
+                result["message"] = "OpenAI/LLM-Rollenteam verarbeitet noch den vorherigen Kontext; neuer Kontext wird erst nach Abschluss im nächsten Tick übergeben."
+                result["risk_note"] = "LLM-Worker ist beschäftigt; Trading-Pipeline läuft deterministisch weiter."
+                result["advice"] = "Warten bis der LLM-Worker frei ist."
                 return result
             return _llm_async_status_response(
                 config,
-                "Ollama verarbeitet den ersten Audit-Kontext im Hintergrund.",
-                "LLM-Worker ist beschaeftigt; Trading-Pipeline laeuft deterministisch weiter.",
-                "Neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben.",
+                "OpenAI/LLM-Rollenteam verarbeitet den ersten Kontext im Hintergrund.",
+                "LLM-Worker ist beschäftigt; Trading-Pipeline läuft deterministisch weiter.",
+                "Neuer Kontext wird erst nach Abschluss im nächsten Tick übergeben.",
             )
         if last_hash == context_hash and last_result:
             return dict(last_result)
@@ -830,9 +957,9 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         thread.start()
     return _llm_async_status_response(
         config,
-        "Ollama-Audit wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick.",
-        "LLM laeuft getrennt von der Trading-Pipeline; keine Blockade durch Modelllaufzeit.",
-        "Warten auf lokalen Ollama-Worker.",
+        "OpenAI/LLM-Rollenteam wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick.",
+        "LLM läuft getrennt von der Trading-Pipeline; keine Blockade durch Modelllaufzeit.",
+        "Warten auf LLM-Worker.",
     )
 
 def _llm_learning_layer(
@@ -843,32 +970,26 @@ def _llm_learning_layer(
     decision: str | None = None,
     candidate: dict[str, Any] | None = None,
     economic_gate: dict[str, Any] | None = None,
+    indicator_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    enabled = bool(config.get("brain_llm_layer_enabled", False))
-    model = str(config.get("ollama_model", "qwen2.5:3b"))
+    enabled = bool(config.get("llm_role_team_enabled", config.get("brain_llm_layer_enabled", False)))
     if not enabled:
-        return _llm_audit_response(
-            False,
-            "ollama",
-            model,
+        return default_role_team_response(
+            config,
             "NO_DATA",
-            "LLM-Schicht ist deaktiviert; Entscheidung nutzt Agenten, Struktur und Memory-Matching.",
-            risk_note="Keine Datenuebertragung an Ollama, weil brain_llm_layer_enabled=false.",
-            advice="LLM-Schicht und Ollama-Provider in Agent Settings aktivieren, wenn lokales Audit gewuenscht ist.",
+            "LLM-Rollenteam ist deaktiviert; Entscheidung nutzt Signalquellen, Struktur und Memory-Matching.",
+            enabled=False,
+        )
+    if not llm_provider_enabled(config):
+        provider = str(config.get("llm_provider", "openai"))
+        return default_role_team_response(
+            config,
+            "NO_DATA",
+            f"LLM-Rollenteam ist aktiv, aber Provider {provider} ist nicht freigeschaltet oder der API-Key fehlt.",
+            enabled=False,
         )
 
-    if not bool(config.get("ollama_enabled", False)):
-        return _llm_audit_response(
-            False,
-            "ollama",
-            model,
-            "NO_DATA",
-            "LLM-Schicht ist aktiv, aber lokaler Ollama-Provider ist nicht aktiviert.",
-            risk_note="Keine Datenuebertragung an Ollama, weil ollama_enabled=false.",
-            advice="Ollama-Provider in Agent Settings aktivieren und lokalen Server bereitstellen.",
-        )
-
-    context = _llm_audit_context(agent_board, scan, match, decision, candidate, economic_gate)
+    context = build_role_context(agent_board, scan, match.to_dict(), decision, candidate, economic_gate, indicator_data)
     return _submit_llm_audit_async(context, config)
 
 
@@ -889,14 +1010,11 @@ def _build_candidate(
     if not candles:
         return None, "keine Kerzen vorhanden"
     boxes = _boxes_for_direction(indicator_data, decision)
-    require_box = bool(config.get("brain_require_box_for_trade", False))
     if boxes:
         active_box = boxes[-1]
         entry, zone_low, zone_high, entry_offset = _entry_from_box(decision, active_box, match, config)
         entry_method = "brain_box_optimized_limit"
         zone_type = "ll_box" if decision == "LONG" else "hh_box"
-    elif require_box:
-        return None, "keine passende LL/HH Box fuer Brain-Entry"
     else:
         entry, zone_low, zone_high, entry_offset = _fallback_entry(candles, decision)
         entry_method = "brain_agent_fallback_market_context"
@@ -904,20 +1022,24 @@ def _build_candidate(
 
     sl, stop_method = _stop_price(decision, entry, zone_low, zone_high, candles, config)
     if decision == "LONG" and not sl < entry:
-        return None, "ungueltiger LONG Stop unter Entry fehlt"
+        return None, "ungültiger LONG Stop unter Entry fehlt"
     if decision == "SHORT" and not sl > entry:
-        return None, "ungueltiger SHORT Stop ueber Entry fehlt"
+        return None, "ungültiger SHORT Stop über Entry fehlt"
 
     rr_target = _safe_float(config.get("reward_risk", 1.5), 1.5)
     tp = _target_from_reward_risk(decision, entry, sl, rr_target)
     target_method = "reward_risk_target"
     if tp is None:
-        return None, "kein gueltiges RR-TP-Ziel fuer Brain-Setup"
+        return None, "kein gültiges RR-TP-Ziel für Brain-Setup"
 
     if decision == "LONG" and not entry < tp:
-        return None, "ungueltiger LONG TP ueber Entry fehlt"
+        return None, "ungültiger LONG TP über Entry fehlt"
     if decision == "SHORT" and not tp < entry:
-        return None, "ungueltiger SHORT TP unter Entry fehlt"
+        return None, "ungültiger SHORT TP unter Entry fehlt"
+
+    value_preview = _candidate_value_preview(symbol, entry, sl, tp, config)
+    if bool(config.get("brain_precheck_trade_value", True)) and value_preview.get("known") and not value_preview.get("trade_allowed"):
+        return None, f"brain_value_precheck_{value_preview.get('reason')}"
 
     last_time = _timestamp(candles[-1], int(0))
     side = "long" if decision == "LONG" else "short"
@@ -945,6 +1067,7 @@ def _build_candidate(
         "brain_memory_avg_r": match.avg_r,
         "brain_entry_offset_in_box": entry_offset,
         "brain_rr_before_gate": round(rr, 6),
+        "brain_value_preview": value_preview,
         "trend_alignment": "agent_board",
         "session": "all",
     }
@@ -1010,7 +1133,7 @@ def build_brain_decision(
             "ceo": ceo_report.to_dict(),
             "candidate": None,
             "memory_match": BrainMemoryMatch("", 0, None, None, None).to_dict(),
-            "llm_layer": _llm_learning_layer(agent_board, scan_data, BrainMemoryMatch("", 0, None, None, None), cfg, decision="BLOCKED"),
+            "llm_layer": _llm_learning_layer(agent_board, scan_data, BrainMemoryMatch("", 0, None, None, None), cfg, decision="BLOCKED", indicator_data=indicator),
         }
 
     blocking_reports = [report for report in agent_board.get("reports", []) if bool(report.get("blocking", False))]
@@ -1041,7 +1164,7 @@ def build_brain_decision(
             "ceo": ceo_report.to_dict(),
             "candidate": None,
             "memory_match": empty_match.to_dict(),
-            "llm_layer": _llm_learning_layer(agent_board, scan_data, empty_match, cfg, decision="BLOCKED"),
+            "llm_layer": _llm_learning_layer(agent_board, scan_data, empty_match, cfg, decision="BLOCKED", indicator_data=indicator),
         }
 
     scores = _direction_scores(agent_board)
@@ -1054,6 +1177,9 @@ def build_brain_decision(
     adjustment = memory_adjustment + replay_adjustment
     quality_penalty = int(scores.get("data_quality_penalty", 0))
     min_score = int(cfg.get("brain_min_score", 58))
+    cold_start = match.count == 0 and not bool(replay_rule_weight.get("matched", False))
+    cold_start_extra = max(0, int(cfg.get("brain_cold_start_min_score_extra", 6))) if cold_start else 0
+    effective_min_score = min(100, min_score + cold_start_extra)
     min_gap = float(cfg.get("brain_min_score_gap", 18.0))
     min_alignment = int(cfg.get("brain_min_agent_alignment", 2))
     long_score = float(scores["long_score"])
@@ -1071,26 +1197,31 @@ def build_brain_decision(
         signal = "LONG"
         raw_score = (long_score / max(0.1, long_weight_sum)) + adjustment - quality_penalty
         base_score = int(max(0, min(100, raw_score)))
-        if base_score >= min_score:
+        if base_score >= effective_min_score:
             decision = "LONG"
             reason = "Agenten-Matching LONG dominiert."
         else:
             decision = "WAIT"
-            reason = "LONG-Bias erkannt, aber Score nach Memory/Replay/Datenqualitaet unter Minimum."
+            reason = "LONG-Bias erkannt, aber Score nach Memory und Datenqualität unter Minimum."
     elif short_count >= min_alignment and short_score > long_score and (short_score - long_score) >= min_gap:
         signal = "SHORT"
         raw_score = (short_score / max(0.1, short_weight_sum)) + adjustment - quality_penalty
         base_score = int(max(0, min(100, raw_score)))
-        if base_score >= min_score:
+        if base_score >= effective_min_score:
             decision = "SHORT"
             reason = "Agenten-Matching SHORT dominiert."
         else:
             decision = "WAIT"
-            reason = "SHORT-Bias erkannt, aber Score nach Memory/Replay/Datenqualitaet unter Minimum."
+            reason = "SHORT-Bias erkannt, aber Score nach Memory und Datenqualität unter Minimum."
+
+    ceo_trade_gate = _ceo_trade_gate(agent_board, signal, cfg)
+    if decision in ("LONG", "SHORT") and not bool(ceo_trade_gate.get("allowed", False)):
+        decision = "WAIT"
+        reason = ceo_trade_gate.get("reason", "CEO gibt keine saubere Trade-Freigabe.")
 
     candidate: BrainTradeCandidate | None = None
     candidate_reason = "no_candidate"
-    if decision in ("LONG", "SHORT") and base_score >= min_score:
+    if decision in ("LONG", "SHORT") and base_score >= effective_min_score:
         candidate, candidate_reason = _build_candidate(
             symbol=symbol,
             timeframe_seconds=timeframe_seconds,
@@ -1105,6 +1236,8 @@ def build_brain_decision(
         if candidate is None:
             decision = "WAIT"
             reason = candidate_reason
+    elif signal in ("LONG", "SHORT") and not bool(ceo_trade_gate.get("allowed", False)):
+        candidate_reason = "ceo_quality_gate_wait"
 
     raw_direction_average = 50.0
     if signal == "LONG" and long_count:
@@ -1132,6 +1265,9 @@ def build_brain_decision(
         "blocking_count": scores.get("blocking_count", 0),
         "final_score": base_score if signal != "NEUTRAL" else 50,
         "min_score": min_score,
+        "effective_min_score": effective_min_score,
+        "cold_start": cold_start,
+        "cold_start_min_score_extra": cold_start_extra,
         "min_gap": min_gap,
         "min_alignment": min_alignment,
         "memory_count": match.count,
@@ -1141,6 +1277,7 @@ def build_brain_decision(
         "replay_rule_matched": replay_rule_weight.get("matched"),
         "replay_rule_scope": replay_rule_weight.get("scope"),
         "replay_rule_symbol": replay_rule_weight.get("symbol", symbol),
+        "ceo_trade_gate": ceo_trade_gate,
     }
 
     if candidate is not None:
@@ -1155,14 +1292,11 @@ def build_brain_decision(
         candidate.features["brain_score_breakdown"] = score_breakdown
 
     if candidate is not None:
-        llm_layer = _llm_audit_response(
-            bool(cfg.get("brain_llm_layer_enabled", False)) and bool(cfg.get("ollama_enabled", False)),
-            "ollama",
-            str(cfg.get("ollama_model", "qwen2.5:3b")),
+        llm_layer = default_role_team_response(
+            cfg,
             "NO_DATA",
-            "Ollama-Audit wartet auf Economic-Gate-Ergebnis.",
-            risk_note="Economic Gate wurde fuer diesen Kandidaten noch nicht berechnet.",
-            advice="Audit wird nach der Value-Gate-Pruefung aktualisiert.",
+            "OpenAI/LLM-Rollenteam wartet auf Economic-Gate-Ergebnis.",
+            enabled=bool(cfg.get("llm_role_team_enabled", cfg.get("brain_llm_layer_enabled", False))),
         )
     else:
         llm_layer = _llm_learning_layer(
@@ -1172,6 +1306,7 @@ def build_brain_decision(
             cfg,
             decision=decision,
             candidate=None,
+            indicator_data=indicator,
         )
 
     brain_score = base_score if signal != "NEUTRAL" else 50
@@ -1180,8 +1315,8 @@ def build_brain_decision(
         function="Agenten-Bias bewerten und Entry-Logik mit Erfahrung abgleichen",
         signal=signal,
         score=brain_score,
-        reads=f"LONG {long_count}/{round(long_score,1)} | SHORT {short_count}/{round(short_score,1)} | Memory {match.count} | ReplayRule {replay_rule_weight.get('quality')} {replay_adjustment:+d} | DataPenalty {quality_penalty}",
-        message=f"{decision}: {reason} Memory Winrate {match.win_rate if match.win_rate is not None else '-'} AvgR {match.avg_r if match.avg_r is not None else '-'}. Replay-Regel {replay_rule_weight.get('quality')} {replay_adjustment:+d}. Datenqualitaet {quality_penalty} Abzug.",
+        reads=f"LONG {long_count}/{round(long_score,1)} | SHORT {short_count}/{round(short_score,1)} | Memory {match.count} | DataPenalty {quality_penalty}",
+        message=f"{decision}: {reason} Memory Winrate {match.win_rate if match.win_rate is not None else '-'} AvgR {match.avg_r if match.avg_r is not None else '-'}. Datenqualität {quality_penalty} Abzug.",
         conflict=bool(scores["conflict"]),
         blocking=decision == "BLOCKED",
         details={"score_breakdown": score_breakdown},
@@ -1189,14 +1324,14 @@ def build_brain_decision(
     ceo_signal: BrainSignal = signal
     ceo_score = brain_score
     if candidate is not None:
-        ceo_message = f"{candidate.decision}: Agenten-Bias bestaetigt; Brain-Kandidat bereit; Economic Gate prueft RR/TP/SL."
+        ceo_message = f"{candidate.decision}: Agenten-Bias bestätigt; Brain-Kandidat bereit; Economic Gate prüft RR/TP/SL."
     elif signal in ("LONG", "SHORT"):
         ceo_message = f"WAIT: {signal}-Bias bewertet, aber kein freigegebener Trade-Plan ({candidate_reason})."
     else:
-        ceo_message = "WAIT: Keine ausreichende Agentenmehrheit fuer einen Trade-Plan."
+        ceo_message = "WAIT: Keine ausreichende Agentenmehrheit für einen Trade-Plan."
     ceo_report = BrainReport(
         agent_name="CEO Trader",
-        function="Alle Agentendaten bewerten und nur freigegebene Trade-Plaene an Economic Gate uebergeben",
+        function="Alle Agentendaten bewerten und nur freigegebene Trade-Pläne an Economic Gate übergeben",
         signal=ceo_signal,
         score=ceo_score,
         reads=f"Agenten-Bias {signal} | Trade {decision} | Candidate {candidate_reason}",
@@ -1226,6 +1361,7 @@ def refresh_llm_layer_after_economic_gate(
     scan: dict[str, Any],
     brain_decision: dict[str, Any],
     config: dict[str, Any] | None = None,
+    indicator_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = config or {}
     match_data = brain_decision.get("memory_match") or {}
@@ -1244,6 +1380,7 @@ def refresh_llm_layer_after_economic_gate(
         decision=str(brain_decision.get("decision", "WAIT")),
         candidate=brain_decision.get("candidate"),
         economic_gate=brain_decision.get("economic_gate"),
+        indicator_data=indicator_data,
     )
 
 

@@ -24,6 +24,7 @@ REQUIRED_PATCHES = [
     "dashboard_settings_layout_patch.js",
     "dashboard_settings_tabs_patch.js",
     "dashboard_tradingview_overlay_patch.js",
+    "dashboard_replay_view_layout_patch.js",
 ]
 
 

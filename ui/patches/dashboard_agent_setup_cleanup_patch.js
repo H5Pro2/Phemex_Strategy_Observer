@@ -53,16 +53,16 @@
       #agentSetupView .agentDirectGroup[data-agent-section="rsi"] .label.fullWidth::after,
       #agentSetupView .agentDirectGroup[data-agent-section="vwap"] .label.fullWidth::after,
       #agentSetupView .agentDirectGroup[data-agent-section="volume"] .label.fullWidth::after {
-        content:' · wird im Chart View angezeigt';
+        content:' | wird im Chart View angezeigt';
         color:#67e8f9;
       }
       #agentSetupView .agentDirectGroup[data-agent-section="breakout_fakeout"] .label.fullWidth::after {
-        content:' · Struktur-/Signalbewertung';
+        content:' | Struktur-/Signalbewertung';
         color:#f9a8d4;
       }
       #agentSetupView .agentDirectGroup[data-agent-section="volatility_regime"] .label.fullWidth::after,
       #agentSetupView .agentDirectGroup[data-agent-section="risk"] .label.fullWidth::after {
-        content:' · Bewertungslogik ohne Chart-Pane';
+        content:' | Bewertungslogik ohne Chart-Pane';
         color:#fdba74;
       }
     `;
@@ -77,10 +77,10 @@
       const label = block.querySelector(':scope > .label');
       if (!title) return;
       const text = String(title.textContent || '').trim();
-      if (text !== 'Direkte Agenten ohne Chart-Indikator' && text !== 'Agenten ohne eigene Hauptchart-Linie') return;
-      title.textContent = 'Direkte Agenten / Chart View';
+      if (text !== 'Datenquellen ohne Chart-Indikator' && text !== 'Direkte Signalquellen ohne Chart-Indikator' && text !== 'Signalquellen ohne eigene Hauptchart-Linie' && text !== 'Direkte Agenten ohne Chart-Indikator' && text !== 'Agenten ohne eigene Hauptchart-Linie') return;
+      title.textContent = 'Datenquellen ohne Chart-Indikator';
       if (label) {
-        label.textContent = 'RSI, VWAP und Volume werden im Chart View angezeigt. Breakout/Fakeout, Volatility und Risk bleiben reine Bewertungsagenten.';
+        label.textContent = 'Diese Quellen bleiben in ihrer Analystenrolle und liefern nur Kontextdaten.';
       }
     });
   }

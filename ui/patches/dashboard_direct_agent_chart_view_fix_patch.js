@@ -5,13 +5,14 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-05-17-direct-agent-chart-view-fix-v7-direct-status-chart';
+  const PATCH_VERSION = '2026-06-02-direct-agent-chart-view-fix-v10-rsi-anchor-revert';
   const CHART_VIEW_SECTIONS = ['hma', 'sma', 'triple_ema', 'macd', 'mfi', 'rsi', 'vwap', 'volume'];
   const CHART_STATUS_SECTIONS = ['breakout_fakeout', 'volatility_regime', 'risk'];
   const EVALUATION_ONLY_SECTIONS = [];
   let originalDrawChart = null;
   let originalClearKlineChart = null;
   let directVolumeRegistered = false;
+  let directRsiRegistered = false;
 
   function runtimeConfig() {
     try {
@@ -146,6 +147,51 @@
       directVolumeRegistered = true;
     } catch (_) {
       directVolumeRegistered = true;
+    }
+  }
+
+  function registerDirectRsiIndicator() {
+    if (directRsiRegistered) return;
+    const api = apiInstance();
+    if (!api || typeof api.registerIndicator !== 'function') return;
+    try {
+      api.registerIndicator({
+        name: 'BOT_RSI',
+        shortName: 'RSI',
+        series: 'normal',
+        precision: 2,
+        calcParams: [14],
+        minValue: 0,
+        maxValue: 100,
+        figures: [{ key: 'rsi', title: 'RSI: ', type: 'line' }],
+        calc: (dataList, indicator) => {
+          const period = Math.max(1, Number(indicator?.calcParams?.[0] || 14));
+          let avgGain = 0;
+          let avgLoss = 0;
+          return dataList.map((k, index) => {
+            if (index === 0) return { rsi: null };
+            const diff = Number(k.close) - Number(dataList[index - 1]?.close || k.close);
+            const gain = Math.max(diff, 0);
+            const loss = Math.max(-diff, 0);
+            if (index <= period) {
+              avgGain += gain;
+              avgLoss += loss;
+              if (index < period) return { rsi: null };
+              avgGain /= period;
+              avgLoss /= period;
+            } else {
+              avgGain = ((avgGain * (period - 1)) + gain) / period;
+              avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+            }
+            if (avgLoss <= 0) return { rsi: 100 };
+            const rs = avgGain / avgLoss;
+            return { rsi: 100 - (100 / (1 + rs)) };
+          });
+        }
+      });
+      directRsiRegistered = true;
+    } catch (_) {
+      directRsiRegistered = true;
     }
   }
 
@@ -318,10 +364,10 @@
     const volatility = findReport('volatility');
     const risk = findReport('risk');
     const breakoutDetail = breakout?.details?.mode
-      ? `${textValue(breakout.details.mode)} · High ${textValue(breakout.details.range_high)} · Low ${textValue(breakout.details.range_low)}`
+      ? `${textValue(breakout.details.mode)} | High ${textValue(breakout.details.range_high)} | Low ${textValue(breakout.details.range_low)}`
       : textValue(breakout?.message, 'wartet');
     const volatilityDetail = volatility?.details?.regime
-      ? `${textValue(volatility.details.regime)} · ATR ${textValue(volatility.details.atr)} · Ratio ${textValue(volatility.details.ratio)}x`
+      ? `${textValue(volatility.details.regime)} | ATR ${textValue(volatility.details.atr)} | Ratio ${textValue(volatility.details.ratio)}x`
       : textValue(volatility?.message, 'wartet');
     const riskDetail = Array.isArray(risk?.details?.hard_blocks) && risk.details.hard_blocks.length
       ? `Block: ${risk.details.hard_blocks.join(' / ')}`
@@ -331,7 +377,7 @@
 
     panel.innerHTML = `
       <div class="directAgentChartStatusHead">
-        <strong>Direkte Agenten im Chartfenster</strong>
+        <strong>Direkte Signalquellen im Chartfenster</strong>
         <span>Range / Regime / Risk-Status</span>
       </div>
       <div class="directAgentChartGrid">
@@ -351,8 +397,9 @@
     window.__botDirectAgentChartView = window.__botDirectAgentChartView || {};
 
     if (boolConfig('agent_rsi_enabled', false) || boolConfig('indicator_show_rsi', false)) {
+      registerDirectRsiIndicator();
       const period = Math.max(1, Math.floor(numberConfig('agent_rsi_period', numberConfig('indicator_rsi_period', 14))));
-      createIndicatorSafe('rsi', { name: 'RSI', calcParams: [period] }, 'bot_direct_rsi_pane', 90, 130);
+      createIndicatorSafe('rsi', { name: 'BOT_RSI', id: 'BOT_RSI_DIRECT', calcParams: [period] }, 'bot_direct_rsi_pane', 90, 130);
     }
 
     if (boolConfig('agent_volume_enabled', false) || boolConfig('indicator_show_volume', false)) {
@@ -375,7 +422,7 @@
       const base = Object.keys(window.__botNativeIndicators || {}).filter(key => window.__botNativeIndicators[key]);
       const direct = Object.keys(window.__botDirectAgentChartView || {}).filter(key => window.__botDirectAgentChartView[key]);
       const active = Array.from(new Set(base.concat(direct)));
-      status.textContent = `KLineCharts · Agent-Indikatoren ${active.length ? active.join(' / ') : 'bereit'}`;
+      status.textContent = `KLineCharts | Signalquellen ${active.length ? active.join(' / ') : 'bereit'}`;
     }
   }
 
@@ -408,7 +455,7 @@
     return Array.from(body?.querySelectorAll('.settingsGroup') || []).find(block => {
       if (block.dataset.agentSection) return false;
       const title = String(block.querySelector(':scope > h3')?.textContent || '').trim();
-      return /Direkte Agenten|Agenten ohne eigene Hauptchart-Linie|Nur Bewertungsagenten/i.test(title);
+      return /Datenquellen ohne Chart-Indikator|Direkte Signalquellen|Signalquellen ohne eigene Hauptchart-Linie|Nur Bewertungsquellen|Direkte Agenten|Agenten ohne eigene Hauptchart-Linie|Nur Bewertungsagenten/i.test(title);
     }) || null;
   }
 
@@ -445,19 +492,19 @@
 
     const chartHeader = sectionHeader(
       'agentSetupChartViewAgentsHeader',
-      'Chart View Agenten',
-      'Agenten mit Linie, Pane oder Preis-Overlay im Chart.',
+      'Chart View Signalquellen',
+      'Signalquellen mit Linie, Pane oder Preis-Overlay im Chart.',
       'chart'
     );
     const statusHeader = sectionHeader(
       'agentSetupChartStatusAgentsHeader',
-      'Chart Status Agenten',
-      'Direkte Agenten als Status-Kacheln und Range-Anzeige im Chartfenster.',
+      'Chart Status Quellen',
+      'Direkte Signalquellen als Status-Kacheln und Range-Anzeige im Chartfenster.',
       'status'
     );
     const evaluationHeader = sectionHeader(
       'agentSetupEvaluationAgentsHeader',
-      'Nur Bewertungsagenten',
+      'Risk Officer / Kontext',
       'Bewertung, Risiko, Regime und Filter ohne eigene Chart-Anzeige.',
       'evaluation'
     );
@@ -525,8 +572,8 @@
       #agentSetupView [data-agent-display-group="evaluation"] .agentChartModeBadge { color:#fdba74 !important; border-color:#c2410c !important; background:rgba(194,65,12,.14) !important; }
       #agentSetupView .settingsGroup, #agentSetupView .agentIndicatorGroup, #agentSetupView .agentDirectGroup, #agentSetupView .agentUtilityGroup { min-height:0 !important; height:auto !important; align-content:start !important; contain:layout style !important; }
       #agentSetupView .settingsGroupGrid { align-items:start !important; }
-      #agentSetupView .modalActions { position:sticky !important; bottom:0 !important; z-index:50 !important; display:flex !important; justify-content:flex-end !important; gap:10px !important; margin:0 -16px -16px !important; padding:16px 24px !important; border-top:1px solid var(--line) !important; background:linear-gradient(180deg, rgba(17,24,39,.90), rgba(17,24,39,.98)) !important; backdrop-filter:blur(8px) !important; }
-      #agentSetupView .modalActions #saveAgentSettings { min-width:230px !important; box-shadow:0 -6px 20px rgba(0,0,0,.18) !important; }
+      #agentSetupView .modalActions { position:sticky !important; bottom:0 !important; z-index:3200 !important; isolation:isolate !important; display:flex !important; justify-content:flex-end !important; gap:10px !important; margin:0 -16px -16px !important; padding:16px 24px !important; border-top:1px solid var(--line) !important; background:linear-gradient(180deg, rgba(17,24,39,.90), rgba(17,24,39,.98)) !important; backdrop-filter:blur(8px) !important; }
+      #agentSetupView .modalActions #saveAgentSettings { position:relative !important; z-index:3201 !important; min-width:230px !important; box-shadow:0 -6px 20px rgba(0,0,0,.18) !important; }
       @media (max-width:900px) { main { padding:16px 12px 32px !important; } #agentSetupView .configModalBody { grid-template-columns:1fr !important; padding:12px 0 90px !important; } #agentSetupView .settingsTabButton { flex:1 1 140px !important; } #agentSetupView .modalActions { margin:0 -16px -16px !important; padding:12px 14px !important; } #agentSetupView .modalActions #saveAgentSettings { width:100% !important; } }
     `;
     document.head.appendChild(style);

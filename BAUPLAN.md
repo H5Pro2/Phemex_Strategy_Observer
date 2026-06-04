@@ -1,4 +1,4 @@
-# BAUPLAN: Trading Bot Agent System
+﻿# BAUPLAN: Trading Bot Agent System
 
 Stand: 2026-05-17
 
@@ -17,19 +17,21 @@ Live-Trading bleibt gesperrt.
 ## 1.2 Pipeline
 
 ```text
-Agenten
-→ CEO Trader Gesamtbewertung
-→ Brain / Lernschicht Entry-Optimierung
-→ Economic Gate
-→ Paper Trade
+Marktdaten / Indikatoren / Strukturquellen
+-> deterministische Kandidaten-Engine
+-> OpenAI/LLM Rollen-Team
+-> CEO / Judge Gesamtbewertung
+-> Economic Gate
+-> Paper Trade
 ```
 
 Kernaufgaben:
 
 - Marktdaten laden
 - Kerzen und Indikatoren auswerten
-- Agentenberichte erzeugen
-- CEO-Gesamtbewertung anwenden
+- strukturierte Signalquellen erzeugen
+- OpenAI/LLM-Rollenberichte erzeugen
+- CEO/Judge-Gesamtbewertung anwenden
 - Brain-/Lernschicht auswerten
 - Replay-Regeln einbeziehen
 - Economic Gate pruefen
@@ -40,23 +42,23 @@ Kernaufgaben:
 
 ```text
 /
-├─ phemex_strategy_observer.py      Kernruntime / Webserver / Observer
-├─ agent_runtime.py                 Agentenruntime
-├─ brain_runtime.py                 Brain- und Lernruntime
-├─ trade_value_gate.py              Economic Gate
-├─ indikator.py                     Indikatorlogik
-├─ dashboard.html                   Dashboard-Hauptdatei
-├─ dashboard_script.js              Dashboard-JavaScript
-├─ styles.css                       Dashboard-Styles
-├─ start_bot.ps1                    empfohlener Windows-Start
-├─ start_bot.bat                    alternativer Windows-Start
-├─ config.example.json              Konfigurationsvorlage
-├─ assets.txt                       Asset-Liste
-├─ docs/                            Dokumentation
-├─ checks/                          lokale Pruefskripte
-├─ tools/                           lokale Hilfs- und Vorbereitungstools
-├─ ui/patches/                      Dashboard Runtime-Patches
-└─ data/                            lokale Laufzeitdaten, nicht versioniert
+â”œâ”€ phemex_strategy_observer.py      Kernruntime / Webserver / Observer
+â”œâ”€ agent_runtime.py                 Agentenruntime
+â”œâ”€ brain_runtime.py                 Brain- und Lernruntime
+â”œâ”€ trade_value_gate.py              Economic Gate
+â”œâ”€ indikator.py                     Indikatorlogik
+â”œâ”€ dashboard.html                   Dashboard-Hauptdatei
+â”œâ”€ dashboard_script.js              Dashboard-JavaScript
+â”œâ”€ styles.css                       Dashboard-Styles
+â”œâ”€ start_bot.ps1                    empfohlener Windows-Start
+â”œâ”€ start_bot.bat                    alternativer Windows-Start
+â”œâ”€ config.example.json              Konfigurationsvorlage
+â”œâ”€ assets.txt                       Asset-Liste
+â”œâ”€ docs/                            Dokumentation
+â”œâ”€ checks/                          lokale Pruefskripte
+â”œâ”€ tools/                           lokale Hilfs- und Vorbereitungstools
+â”œâ”€ ui/patches/                      Dashboard Runtime-Patches
+â””â”€ data/                            lokale Laufzeitdaten, nicht versioniert
 ```
 
 ## 1.4 Repository-Regeln
@@ -103,73 +105,166 @@ Die Startdateien pruefen:
 - Bot-Start ohne Fehler
 
 # --------------------------------------------------
-# 2. Agenten / CEO
+# 2. Agenten / OpenAI-Rollenteam / CEO
 # --------------------------------------------------
 
-## 2.1 Rollenstand
+## 2.1 Zielbild Rollenmodell
 
-Technische Rollen:
+Das bisherige Modell mit vielen einzelnen Indikator-Agenten wird zu einem Rollenmodell umgebaut.
 
-- Struktur
-- Momentum
-- Kontext
-- Risiko
-- Entscheidung
-- Weitere
+Wichtig:
 
-Umgesetzt:
+- Indikatoren bleiben technische Datenquellen.
+- RSI, MACD, VWAP, EMA/HMA, Volume, BOS, CHoCH, HH/LL und Range erzeugen Fakten.
+- Diese Fakten werden nicht mehr als einzelne UI-Agenten mit eigener Trade-Entscheidung behandelt.
+- Die eigentliche Bewertung erfolgt durch ein kleines OpenAI/LLM-Team mit festen Spezialrollen.
+- Die LLM-Rollen arbeiten auf 30m/1h oder auf Replay-Kandidaten, nicht im schnellen Tick-Hotpath.
+- Die deterministische Engine bleibt immer pruefbar und reproduzierbar.
+
+OpenAI/LLM-Rollen:
+
+- Market Structure Analyst
+- Momentum Analyst
+- Risk Officer
+- Skeptic / Bear Case
+- Execution Coach
+- CEO / Judge
+
+Rollenziele:
+
+- Market Structure Analyst prueft BOS, CHoCH, HH/LL, Range und Trendkontext.
+- Momentum Analyst prueft RSI, MACD, EMA/HMA/VWAP und Volumenimpuls.
+- Risk Officer prueft Fee/R, SL-Distanz, RR, Volatilitaet, Overtrading und offene Trades.
+- Skeptic / Bear Case sucht aktiv Gruende gegen den Trade.
+- Execution Coach prueft Entry-Art, Limit/Market-Qualitaet und ob der Trade zu spaet kommt.
+- CEO / Judge fasst Rollenberichte zusammen und entscheidet `APPROVE`, `WAIT` oder `BLOCK`.
+
+Bestehende technische Grundlagen:
 
 - `agent_runtime_roles.py`
 - `checks/check_agent_runtime_roles.py`
-- Rollenvertrag fuer Agenten
+- Rollenvertrag fuer technische Agenten
 - CEO-Rollenbewertung
 - Volume als Kontext getrennt
 - Risk / Volatility getrennt bewertet
 
 ## 2.2 Agenten-Setup im Dashboard
 
-Das Agenten-Setup ist getrennt in:
+Das Agenten-Setup soll auf weniger, klarere Bereiche reduziert werden:
 
-- Chart-Indikator-Agenten
-- Struktur- und Signalagenten
-- Bewertungsagenten ohne eigene Chart-Pane
+- Signalquellen
+- OpenAI/LLM-Rollenteam
+- Risiko / Economic Gate
+- Replay / Learning
 
-Chart-Indikator-Agenten:
+Signalquellen:
 
 - RSI
 - VWAP
 - Volume
 - MACD
 - MFI
-
-Struktur- und Signalagenten:
-
 - Breakout / Fakeout
 - BOS / CHoCH
 - LL / HH Boxen
 - Support / Resistance
 - Swing Labels
-
-Bewertungsagenten ohne eigene Chart-Pane:
-
 - Volatility Regime
 - Risk
 
-## 2.3 CEO-Zielbild
+Diese Quellen koennen weiterhin einzeln berechnet und visualisiert werden. Sie sollen aber nicht mehr als eigenstaendige Agenten im Sinne einer finalen Trade-Entscheidung auftreten.
+
+OpenAI/LLM-Rollenteam:
+
+- pro Rolle aktivierbar
+- Provider konfigurierbar
+- Modell konfigurierbar
+- nur strukturierte Eingabedaten
+- nur JSON-Ausgabe
+- Timeout und Fallback Pflicht
+- keine API-Schluessel im Prompt
+- keine Order-Ausfuehrung durch LLM
+
+## 2.3 Rollen-Verarbeitung
+
+Die Verarbeitung erfolgt in Stufen:
+
+```text
+Signalquellen
+-> Kandidaten-Engine
+-> Rollen-Kontextpaket
+-> OpenAI/LLM-Rollenberichte
+-> CEO / Judge
+-> Economic Gate
+-> Paper Trade
+```
+
+Jede Rolle bekommt ein kleines, maschinenlesbares Kontextpaket:
+
+```json
+{
+  "asset": "BTCUSDT",
+  "timeframe": "1h",
+  "candidate": {
+    "direction": "LONG",
+    "entry": 77257.36,
+    "sl": 77619.70,
+    "tp": 77257.36,
+    "rr": 1.6,
+    "fee_to_risk": 0.18
+  },
+  "structure": {},
+  "momentum": {},
+  "risk": {},
+  "memory": {}
+}
+```
+
+Jede Rolle muss JSON liefern:
+
+```json
+{
+  "role": "Risk Officer",
+  "decision": "BLOCK",
+  "confidence": 0.82,
+  "reasons": ["Fee/R ist zu hoch fuer den geplanten SL."],
+  "hard_block": true
+}
+```
+
+## 2.4 CEO / Judge-Zielbild
 
 CEO prueft:
 
-- Agentenmehrheit
+- Rollenberichte
 - Richtungskonsens
 - Rollen-Konsens
-- Konflikte
-- Blocking-Agenten
+- Rollen-Konflikte
+- Hard-Blocks
 - Mindestscore
 - Mindest-Alignment
 - Brain-Entscheidung
 - Economic-Gate-Status
 
-CEO erzeugt keine eigene Preislogik.
+CEO / Judge erzeugt keine eigene Preislogik.
+
+CEO / Judge darf:
+
+- `APPROVE` geben
+- `WAIT` geben
+- `BLOCK` geben
+- Rollenberichte zusammenfassen
+- Konflikte erklaeren
+- ein finales JSON-Ergebnis fuer Dashboard und Replay erzeugen
+
+CEO / Judge darf nicht:
+
+- Entry setzen
+- Stop-Loss setzen
+- Take-Profit setzen
+- Positionsgroesse setzen
+- Economic Gate umgehen
+- Live-Trading freigeben
 
 # --------------------------------------------------
 # 3. Brain / Replay
@@ -279,8 +374,9 @@ Dashboard soll staerker auf Entscheidung und Bedienbarkeit ausgerichtet werden.
 Ziel:
 
 - klare Bereiche
-- einklappbare Agentengruppen
-- kompakte CEO-Zusammenfassung
+- einklappbare Signalquellen- und Rollenbereiche
+- kompakte CEO/Judge-Zusammenfassung
+- OpenAI/LLM-Rollenberichte sichtbar
 - Brain-Status sichtbar
 - Replay-Regeln sichtbar und erklaert
 - Trade-History filterbar
@@ -304,23 +400,36 @@ Es prueft:
 - Positionsgroesse
 - maximale SL-Entfernung
 
-Kein Agent, kein CEO, kein Brain und keine Audit-Schicht darf diese Stufe umgehen.
+Kein Signal, kein OpenAI/LLM-Agent, kein CEO/Judge, kein Brain und keine Audit-Schicht darf diese Stufe umgehen.
 
 # --------------------------------------------------
-# 6. Lokale Audit-Schicht
+# 6. OpenAI/LLM Rollen-Team
 # --------------------------------------------------
 
-Die lokale Audit-Schicht soll Entscheidungen erklaeren, nicht treffen.
+Die OpenAI/LLM-Schicht soll als kleines Rollen-Team arbeiten.
+
+Sie bewertet nur vorberechnete, strukturierte Kandidaten. Sie ersetzt keine Indikatorberechnung, keine Preislogik und kein Economic Gate.
+
+Ziel:
+
+- weniger einzelne Indikator-Agenten in der Bedienung
+- klare Spezialrollen statt kleinteiliger Schalter
+- bessere Begruendung von `APPROVE`, `WAIT` und `BLOCK`
+- Replay-faehige Rollenberichte
+- OpenAI-Anbindung als optionaler Review-Layer fuer 30m/1h oder manuelle Kandidaten
 
 Erlaubt:
 
-- Agentenberichte zusammenfassen
+- Signalquellen zusammenfassen
+- Rollenberichte erzeugen
 - Konflikte erklaeren
-- CEO-Gesamtbewertung sprachlich beschreiben
+- CEO/Judge-Gesamtbewertung sprachlich und maschinenlesbar beschreiben
 - Brain-Entscheidung erklaeren
 - Memory-Kontext lesbar machen
 - Risiko-Hinweise erzeugen
 - Dashboard-Texte verbessern
+- Replay-Kandidaten bewerten
+- Bear-Case gegen einen Trade formulieren
 
 Nicht erlaubt:
 
@@ -334,6 +443,15 @@ Nicht erlaubt:
 - private `.env`-Daten erhalten
 - Orders ausloesen
 - deterministische Preislogik ersetzen
+
+Pflichtanforderungen:
+
+- Rollen antworten als JSON.
+- Rollen haben feste Systemprompts.
+- Jede Rolle hat Timeout, Retry-Limit und Fallback.
+- Bei LLM-Fehler laeuft die deterministische Pipeline weiter.
+- API-Schluessel werden nie an Rollenprompts uebergeben.
+- Das finale CEO/Judge-Ergebnis wird fuer Replay und Dashboard gespeichert.
 
 # --------------------------------------------------
 # 7. Naechste Ausbaustufen
@@ -361,13 +479,22 @@ Umgesetzt:
 - `ui/patches/` eingefuehrt
 - `docs/` fuer technische Dokumentation genutzt
 
-## Abschnitt 2: Agentenrollen schaerfen
+## Abschnitt 2: OpenAI/LLM-Rollenteam aufbauen
 
 Status:
 
-- teilweise umgesetzt
+- geplant
 
-Umgesetzt:
+Ziel:
+
+- technische Indikator-Agenten zu Signalquellen degradieren
+- OpenAI/LLM-Rollen als Review-Team einfuehren
+- Rollenberichte als JSON speichern
+- CEO/Judge als finale Rollen-Zusammenfassung nutzen
+- Dashboard auf wenige Rollenbereiche reduzieren
+- Replay mit Rollenentscheidungen auswertbar machen
+
+Bestehende Vorarbeit:
 
 - Rollenvertrag technisch ergaenzt
 - CEO-Rollenbewertung vorbereitet
@@ -380,10 +507,15 @@ Umgesetzt:
 
 Offen:
 
-- Dashboard-Agentenkarten nach echtem Test weiter feinjustieren
-- Rollenanzeige dauerhaft in Haupt-HTML integrieren
+- `llm_roles.py` oder gleichwertiges Rollenmodul erstellen
+- OpenAI Provider-Konfiguration ergaenzen
+- Rollenprompts fuer Structure, Momentum, Risk, Skeptic, Execution und CEO/Judge definieren
+- JSON-Schema fuer Rollenberichte pruefen
+- Replay-Kandidaten durch Rollen-Team laufen lassen
+- altes Agenten-Setup in Signalquellen / LLM-Team / Risiko / Replay gliedern
+- einzelne Indikator-Agenten aus der finalen Entscheidungs-UI entfernen
 
-## Abschnitt 3: CEO-Bewertung verbessern
+## Abschnitt 3: CEO/Judge-Bewertung verbessern
 
 Status:
 
@@ -400,8 +532,10 @@ Umgesetzt:
 
 Offen:
 
-- CEO-Entscheidung im Dashboard nach Live-Test weiter schaerfen
-- WAIT / BLOCKED / BIAS optisch final trennen
+- CEO/Judge auf Rollenberichte statt Agentenmehrheit ausrichten
+- `APPROVE` / `WAIT` / `BLOCK` optisch final trennen
+- Hard-Blocks von Risk Officer und Skeptic sichtbar machen
+- finale Entscheidung im Replay speichern
 
 ## Abschnitt 4: Brain verbessern
 
