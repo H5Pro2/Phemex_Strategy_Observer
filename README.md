@@ -1,202 +1,115 @@
-# Trading Bot Agent System
+# Phemex Strategy Observer
 
-Lokales Trading-Agentensystem fuer Marktbeobachtung, Paper-Trading, Agentenbewertung, CEO-Entscheidung, Brain-/Lernschicht und Dashboard-Steuerung.
+Lokales Analyse- und Paper-Trading-System fuer Phemex. Das Projekt kombiniert technische Signalquellen, eine deterministische Strategy Engine, ein spezialisiertes LLM-Rollenteam und ein Dashboard fuer Chart-, Analyse- und Setup-Ansichten.
 
-Das Projekt ist kein Live-Trading-System. Live-Trading bleibt gesperrt. Der Bot arbeitet als Observer- und Paper-Trading-System.
+Repository: https://github.com/H5Pro2/Phemex_Strategy_Observer
 
-# --------------------------------------------------
-# Projektstruktur
-# --------------------------------------------------
+Das System ist als Observer gebaut. Live-Trading bleibt gesperrt. Der Fokus liegt auf Marktbeobachtung, Kandidatenbewertung, Paper-Trading, Risiko-Checks und nachvollziehbaren LLM-Rollenberichten.
+
+## Kernidee
+
+Der Bot sammelt Phemex-Kerzendaten und Accountdaten, berechnet technische Signale und baut daraus einen Trade-Kandidaten. Danach bewertet ein Rollen-Team den Kandidaten:
+
+- Market Structure Analyst
+- Momentum Analyst
+- Risk Officer
+- Skeptic / Bear Case
+- Execution Coach
+- CEO / Judge
+
+Der CEO/Judge ist die finale Instanz und entscheidet `APPROVE`, `WAIT` oder `BLOCK`. Die LLM-Rollen erzeugen keine eigene Preislogik. Entry, SL, TP, RR und harte Risiko-Grenzen kommen aus der Strategy Engine und dem Economic Gate.
+
+## Projektstruktur
 
 ```text
 /
-├─ phemex_strategy_observer.py      Kernruntime / Webserver / Observer
-├─ agent_runtime.py                 Agentenruntime
-├─ brain_runtime.py                 Brain- und Lernruntime
-├─ trade_value_gate.py              Economic Gate
-├─ indikator.py                     Indikatorlogik
-├─ dashboard.html                   Dashboard-Hauptdatei
-├─ dashboard_script.js              Dashboard-JavaScript
-├─ styles.css                       Dashboard-Styles
-├─ start_bot.ps1                    empfohlener Windows-Start
-├─ start_bot.bat                    alternativer Windows-Start
-├─ config.example.json              Konfigurationsvorlage
-├─ assets.txt                       Asset-Liste
-├─ docs/                            Dokumentation
-├─ checks/                          lokale Pruefskripte
-├─ tools/                           lokale Hilfs- und Vorbereitungstools
-├─ ui/patches/                      Dashboard Runtime-Patches
-└─ data/                            lokale Laufzeitdaten, nicht versioniert
++-- phemex_strategy_observer.py       Webserver, API-Routen, Runtime-Orchestrierung
++-- agent_runtime.py                  Signal- und Agentenruntime
++-- agent_runtime_roles.py            Rollen- und Agenten-Hilfslogik
++-- llm_roles.py                      LLM-Rollen, Prompts und Rollen-Auswertung
++-- brain_runtime.py                  Memory- und Lernschicht
++-- trade_value_gate.py               Economic Gate und harte Risiko-Pruefung
++-- indikator.py                      Indikator- und Signalberechnung
++-- dashboard.html                    Dashboard-Hauptdatei
++-- dashboard_script.js               Dashboard-JavaScript
++-- dashboard_script_check.js         gebuendelter Dashboard-Check
++-- config.example.json               Konfigurationsvorlage
++-- .env.example                      Vorlage fuer private API-Werte
++-- assets.txt                        Asset-Liste
++-- BAUPLAN.md                        Architektur und Zielbild
++-- DESIGNE_ANLEITUNG.md              UI-Designregeln fuer weitere Arbeiten
++-- strategy.md                       Strategie- und Trading-Regelwerk
++-- checks/                           lokale Pruefskripte
++-- docs/                             technische Dokumentation
++-- tools/                            Hilfs- und Build-Tools
++-- ui/patches/                       Dashboard Runtime-Patches
++-- data/                             lokale Laufzeitdaten, nicht versioniert
 ```
 
-# --------------------------------------------------
-# Kernbereiche
-# --------------------------------------------------
+## Dashboard
 
-## Agenten
+Das Dashboard laeuft lokal unter:
 
-Jeder Agent bewertet eine eigene Datenquelle oder Perspektive.
+```text
+http://127.0.0.1:8787
+```
 
-Rollen:
+Hauptbereiche:
 
-- Struktur
-- Momentum
-- Kontext
-- Risiko
-- Entscheidung
-- Weitere
+- Settings: API, Bot-Config, Sprache, Theme und technische Einstellungen
+- Chart View: KLineCharts-Ansicht mit Indikatoren, Status und Chart-Bedienung
+- Analyse Viewer: LLM-Rollenberichte, Pipeline, Kostenstatus, Trades und Debugdaten
+- Strategie Setup: Strategy Engine, LLM-Rollenteam, Analysten und Datenquellen
 
-Rollenlogik:
+Das UI ist auf kompakte, einheitliche Bereiche ausgelegt. Ausklappbare Bereiche sollen dem Stil aus `DESIGNE_ANLEITUNG.md` folgen.
 
-- `agent_runtime_roles.py`
+## LLM-Anbindung
 
-Pruefung:
+Unterstuetzte Provider:
 
-- `checks/check_agent_runtime_roles.py`
+- OpenAI
+- Ollama lokal
 
-## Agenten-Setup im Dashboard
+OpenAI wird ueber `.env` konfiguriert. Ollama wird lokal ueber Base URL und Modell eingestellt, zum Beispiel:
 
-Das Agenten-Setup ist getrennt in:
+```text
+http://127.0.0.1:11434
+qwen2.5:3b
+```
 
-- Chart-Indikator-Agenten
-- Struktur- und Signalagenten
-- Bewertungsagenten ohne eigene Chart-Pane
+Die aktiven Signalquellen der Analysten werden als strukturierter Kontext an die jeweiligen Rollen uebergeben. Prompt-Erweiterungen koennen im Strategy Setup gepflegt werden.
 
-Chart-Indikator-Agenten:
+## Sicherheit
 
-- RSI
-- VWAP
-- Volume
-- MACD
-- MFI
+Private Werte gehoeren nicht ins Repository.
 
-Struktur- und Signalagenten:
+Nicht versioniert:
 
-- Breakout / Fakeout
-- BOS / CHoCH
-- LL / HH Boxen
-- Support / Resistance
-- Swing Labels
+- `.env`
+- `config.json`
+- lokale Runtime-Daten unter `data/*.json`
+- Logs und Exporte
 
-Bewertungsagenten ohne eigene Chart-Pane:
+Live-Trading ist in diesem Observer absichtlich gesperrt. Das Economic Gate darf nicht durch LLM, CEO/Judge oder UI-Logik umgangen werden.
 
-- Volatility Regime
-- Risk
+## Setup
 
-## CEO Trader
-
-Der CEO bewertet die Gesamtlage aus allen Agentenberichten.
-
-Aufgaben:
-
-- Richtungskonsens bewerten
-- Rollen-Konsens bewerten
-- Konflikte erkennen
-- Blocking-Signale beruecksichtigen
-- Agentenqualitaet einordnen
-- Brain-Entscheidung sichtbar machen
-
-Der CEO erzeugt keine eigene Preislogik.
-
-## Brain / Replay
-
-Brain nutzt Agentenkombinationen, Pattern-Keys und Paper-Trade-Ergebnisse.
-
-Erweiterung:
-
-- `brain_replay_enhancements.py`
-- `brain_dashboard_enhancements.py`
-
-Pruefungen:
-
-- `checks/check_brain_replay_enhancements.py`
-- `checks/check_brain_dashboard_enhancements.py`
-
-Umgesetzt:
-
-- stabilerer Pattern-Key `v2`
-- rollenbasierter Pattern-Key
-- robustere Replay-Regelgewichtung
-- Asset-spezifische Replay-Regeln
-- Edge-Score aus Winrate, AvgR und Profit-Factor
-- Schutz gegen zu kleine Datenbasis
-- `dashboard_summary` fuer Brain-/Replay-Status
-
-## Economic Gate
-
-Das Economic Gate ist die harte mathematische Sperre.
-
-Es prueft:
-
-- Preisgeometrie
-- Risk / Reward
-- Mindest-RR
-- Mindest-Netto-Profit
-- Gebuehren
-- Positionsgroesse
-- maximale SL-Entfernung
-
-Kein Agent, kein CEO und keine Audit-Schicht darf das Economic Gate umgehen.
-
-## Dashboard / Chart
-
-Dashboard-Hauptdateien:
-
-- `dashboard.html`
-- `dashboard_script.js`
-- `styles.css`
-
-Runtime-Patches:
-
-- `ui/patches/dashboard_agent_roles_patch.js`
-- `ui/patches/dashboard_chart_pane_patch.js`
-- `ui/patches/dashboard_kline_native_indicators_patch.js`
-- `ui/patches/dashboard_agent_setup_cleanup_patch.js`
-
-Vorbereitungstool:
-
-- `tools/prepare_dashboard_runtime.py`
-
-Patch-Pruefung:
-
-- `checks/check_dashboard_runtime_patches.py`
-
-Aktuelle Dashboard-Patches:
-
-- `role-ui-v3-tech`
-- `chart-controls-v2-tech`
-- `kline-native-indicators-v3-full`
-- `agent-setup-cleanup-v2-tech`
-
-Chart-Anzeige:
-
-- MACD eigene native KLineCharts-Pane
-- MFI eigene native KLineCharts-Pane
-- RSI eigene native KLineCharts-Pane
-- Volume eigene native KLineCharts-Pane
-- VWAP als Preislinie / Overlay im Hauptchart
-- Auto-Scroll AN/AUS
-- Realtime
-- Zoom + / Zoom -
-- Fit
-
-# --------------------------------------------------
-# Setup
-# --------------------------------------------------
+Abhaengigkeiten installieren:
 
 ```powershell
 python -m pip install -r requirements.txt
+```
+
+Lokale Konfiguration anlegen:
+
+```powershell
 Copy-Item .env.example .env
 Copy-Item config.example.json config.json
 ```
 
-API-Daten gehoeren nur in `.env`.
+API-Werte werden in `.env` eingetragen. Die Datei bleibt lokal.
 
-`config.json` ist absichtlich nicht versioniert. Sie muss lokal aus `config.example.json` erstellt werden.
-
-# --------------------------------------------------
-# Start
-# --------------------------------------------------
+## Start
 
 Empfohlen unter Windows PowerShell:
 
@@ -204,89 +117,62 @@ Empfohlen unter Windows PowerShell:
 .\start_bot.ps1
 ```
 
-Alternative mit Batch-Datei:
+Alternative:
 
 ```powershell
 .\start_bot.bat
 ```
 
-Manueller Start mit Dashboard:
+Manueller Start:
 
 ```powershell
 python .\phemex_strategy_observer.py --config .\config.json --web
 ```
 
-Dashboard:
+## Pruefungen
 
-```text
-http://127.0.0.1:8787
-```
-
-# --------------------------------------------------
-# Technische Pruefungen
-# --------------------------------------------------
-
-Dashboard Runtime vorbereiten:
+Python Runtime:
 
 ```powershell
-python .\tools\prepare_dashboard_runtime.py
+python -m py_compile .\phemex_strategy_observer.py
 ```
 
-Dashboard Runtime Patches pruefen:
+Dashboard-JavaScript:
+
+```powershell
+node --check .\dashboard_script.js
+node --check .\dashboard_script_check.js
+```
+
+LLM-Rollen:
+
+```powershell
+python .\checks\check_llm_roles.py
+```
+
+Dashboard Runtime-Patches:
 
 ```powershell
 python .\checks\check_dashboard_runtime_patches.py
 ```
 
-Agentenrollen:
+## Wichtige Dateien
 
-```powershell
-python .\checks\check_agent_runtime_roles.py
-```
+- `BAUPLAN.md`: grober Architektur- und Umbauplan
+- `DESIGNE_ANLEITUNG.md`: Designregeln fuer neue UI-Funktionen
+- `strategy.md`: Trading-Regeln und Strategie-Logik
+- `docs/TECHNICAL_STATUS.md`: technischer Stand
+- `config.example.json`: sichere Vorlage fuer `config.json`
+- `.env.example`: sichere Vorlage fuer `.env`
 
-Brain / Replay:
+## Aktueller Schwerpunkt
 
-```powershell
-python .\checks\check_brain_replay_enhancements.py
-```
+Das Projekt entwickelt sich von einem klassischen Indikator-Agenten-System zu einem Rollen-basierten Analyse-System:
 
-Brain Dashboard Summary:
+1. Signalquellen liefern strukturierte Daten.
+2. Die Strategy Engine baut einen Trade-Kandidaten.
+3. Das LLM-Rollenteam bewertet den Kandidaten aus Spezialrollen.
+4. CEO/Judge entscheidet final.
+5. Economic Gate und Paper-Trading pruefen die praktische Umsetzbarkeit.
 
-```powershell
-python .\checks\check_brain_dashboard_enhancements.py
-```
-
-# --------------------------------------------------
-# Konfiguration
-# --------------------------------------------------
-
-Wichtige Dateien:
-
-- `config.example.json` Vorlage fuer Konfiguration
-- `config.json` lokale Arbeitskonfiguration, nicht versioniert
-- `assets.txt` editierbare Asset-Liste
-- `.env.example` Vorlage fuer API-Werte
-- `.env` lokale private API-Werte, nicht versioniert
-
-# --------------------------------------------------
-# Laufzeitdaten
-# --------------------------------------------------
-
-Das System speichert lokale Laufzeitdaten unter `data/`.
-
-Wichtige Dateien:
-
-- `data/learning_memory.json`
-- `data/observer_state.json`
-- `data/runtime_status.json`
-
-Diese Dateien sind Laufzeitdaten und werden nicht versioniert.
-
-# --------------------------------------------------
-# Dokumentation
-# --------------------------------------------------
-
-- `README.md` kurzer Einstieg und Projektueberblick
-- `BAUPLAN.md` Architektur und Zielbild
-- `strategy.md` Regelwerk und Trading-Logik
-- `docs/TECHNICAL_STATUS.md` aktueller technischer Umsetzungsstand
+Ziel ist eine nachvollziehbare Live-Analyse mit sauberer UI, begrenzten LLM-Kosten und klarer Trennung zwischen technischer Preislogik und LLM-Bewertung.
