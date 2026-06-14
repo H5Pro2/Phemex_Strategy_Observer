@@ -8,6 +8,18 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
+function Invoke-ProjectPython {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+    if ($script:pythonCmd.Count -gt 1) {
+        & $script:pythonCmd[0] $script:pythonCmd[1] @Arguments
+    } else {
+        & $script:pythonCmd[0] @Arguments
+    }
+}
+
 Write-Host "--------------------------------------------------"
 Write-Host "Trading Bot Agent System - Startpruefung"
 Write-Host "--------------------------------------------------"
@@ -24,11 +36,23 @@ if (-not (Test-Path "requirements.txt")) {
     exit 1
 }
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+$script:pythonCmd = $null
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    & py -3 --version *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $script:pythonCmd = @("py", "-3")
+    }
+}
+if (-not $script:pythonCmd -and (Get-Command python -ErrorAction SilentlyContinue)) {
+    $script:pythonCmd = @("python")
+}
+if (-not $script:pythonCmd) {
     Write-Host "FEHLER: Python wurde nicht gefunden."
-    Write-Host "Bitte Python installieren und erneut starten."
+    Write-Host "Bitte Python installieren oder den Windows Python Launcher py aktivieren."
     exit 1
 }
+
+Write-Host ("Python Runtime: " + ($script:pythonCmd -join " "))
 
 if (-not (Test-Path "config.json")) {
     if (Test-Path "config.example.json") {
@@ -59,7 +83,7 @@ if (Test-Path "tools/prepare_dashboard_runtime.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Bereite Dashboard Runtime vor"
     Write-Host "--------------------------------------------------"
-    python tools/prepare_dashboard_runtime.py
+    Invoke-ProjectPython tools/prepare_dashboard_runtime.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Dashboard Runtime konnte nicht vorbereitet werden."
         exit 1
@@ -70,7 +94,7 @@ if (Test-Path "checks/check_dashboard_runtime_patches.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Dashboard Runtime Patches"
     Write-Host "--------------------------------------------------"
-    python checks/check_dashboard_runtime_patches.py
+    Invoke-ProjectPython checks/check_dashboard_runtime_patches.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Dashboard Runtime Patches sind ungueltig."
         exit 1
@@ -81,7 +105,7 @@ if (Test-Path "checks/check_agent_runtime_roles.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Agenten-Rollenvertrag"
     Write-Host "--------------------------------------------------"
-    python checks/check_agent_runtime_roles.py
+    Invoke-ProjectPython checks/check_agent_runtime_roles.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Agenten-Rollenvertrag ist ungueltig."
         exit 1
@@ -92,7 +116,7 @@ if (Test-Path "checks/check_brain_replay_enhancements.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Brain Replay Enhancements"
     Write-Host "--------------------------------------------------"
-    python checks/check_brain_replay_enhancements.py
+    Invoke-ProjectPython checks/check_brain_replay_enhancements.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Brain Replay Enhancements sind ungueltig."
         exit 1
@@ -103,7 +127,7 @@ if (Test-Path "checks/check_brain_dashboard_enhancements.py") {
     Write-Host "--------------------------------------------------"
     Write-Host "Pruefe Brain Dashboard Enhancements"
     Write-Host "--------------------------------------------------"
-    python checks/check_brain_dashboard_enhancements.py
+    Invoke-ProjectPython checks/check_brain_dashboard_enhancements.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FEHLER: Brain Dashboard Enhancements sind ungueltig."
         exit 1
@@ -113,7 +137,7 @@ if (Test-Path "checks/check_brain_dashboard_enhancements.py") {
 Write-Host "--------------------------------------------------"
 Write-Host "Installiere/pruefe Python-Abhaengigkeiten"
 Write-Host "--------------------------------------------------"
-python -m pip install -r requirements.txt
+Invoke-ProjectPython -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FEHLER: Python-Abhaengigkeiten konnten nicht installiert werden."
     exit 1
@@ -122,7 +146,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "--------------------------------------------------"
 Write-Host "Starte Dashboard"
 Write-Host "--------------------------------------------------"
-python phemex_strategy_observer.py --config config.json --web
+Invoke-ProjectPython phemex_strategy_observer.py --config config.json --web
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FEHLER: Bot wurde mit Fehler beendet."
     exit 1
