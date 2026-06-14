@@ -67,15 +67,23 @@ Das UI ist auf kompakte, einheitliche Bereiche ausgelegt. Ausklappbare Bereiche 
 
 Unterstützte Provider:
 
-- OpenAI
 - Ollama lokal
+- OpenAI
 
-OpenAI wird über `.env` konfiguriert. Ollama wird lokal über Base URL und Modell eingestellt, zum Beispiel:
+Der Standard ist `Ollama lokal`. Damit kann das System ohne OpenAI-Guthaben offline gegen ein lokal laufendes Modell prüfen. Erwartete Standardwerte:
 
 ```text
 http://127.0.0.1:11434
 qwen2.5:3b
 ```
+
+Ollama muss lokal laufen. Falls das Modell fehlt:
+
+```powershell
+ollama pull qwen2.5:3b
+```
+
+OpenAI ist optional und wird über `.env` oder die API-Einstellungen im Dashboard konfiguriert. Ohne gültigen API-Key oder Guthaben kann OpenAI keine Rollenberichte liefern.
 
 Die aktiven Signalquellen der Analysten werden als strukturierter Kontext an die jeweiligen Rollen übergeben. Prompt-Erweiterungen können im Strategy Setup gepflegt werden.
 
@@ -94,36 +102,50 @@ Live-Trading ist in diesem Observer absichtlich gesperrt. Das Economic Gate darf
 
 ## Setup
 
-Abhängigkeiten installieren:
+Empfohlen unter Windows: `start_bot.bat` doppelklicken oder ausführen. Das Skript sucht zuerst `py -3` und nutzt danach automatisch `python`, falls der Python Launcher nicht vorhanden ist. Außerdem legt es lokale Vorlagen an und bereitet die Dashboard Runtime vor.
+
+Manuelles Setup:
+
+```powershell
+py -3 -m pip install -r requirements.txt
+```
+
+Falls `py` auf deinem Rechner nicht verfügbar ist, nutze stattdessen:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-Lokale Konfiguration anlegen:
+Lokale Konfiguration anlegen, falls noch nicht vorhanden:
 
 ```powershell
 Copy-Item .env.example .env
 Copy-Item config.example.json config.json
 ```
 
-API-Werte werden in `.env` eingetragen. Die Datei bleibt lokal.
+API-Werte werden in `.env` eingetragen. `.env` und `config.json` bleiben lokal und werden nicht gepusht.
 
 ## Start
 
-Empfohlen unter Windows PowerShell:
-
-```powershell
-.\start_bot.ps1
-```
-
-Alternative:
+Empfohlen:
 
 ```powershell
 .\start_bot.bat
 ```
 
+Alternative unter PowerShell:
+
+```powershell
+.\start_bot.ps1
+```
+
 Manueller Start:
+
+```powershell
+py -3 .\phemex_strategy_observer.py --config .\config.json --web
+```
+
+Falls `py` nicht verfügbar ist:
 
 ```powershell
 python .\phemex_strategy_observer.py --config .\config.json --web
@@ -134,7 +156,7 @@ python .\phemex_strategy_observer.py --config .\config.json --web
 Python Runtime:
 
 ```powershell
-python -m py_compile .\phemex_strategy_observer.py
+py -3 -m py_compile .\phemex_strategy_observer.py
 ```
 
 Dashboard-JavaScript:
@@ -147,13 +169,13 @@ node --check .\dashboard_script_check.js
 LLM-Rollen:
 
 ```powershell
-python .\checks\check_llm_roles.py
+py -3 .\checks\check_llm_roles.py
 ```
 
 Dashboard Runtime-Patches:
 
 ```powershell
-python .\checks\check_dashboard_runtime_patches.py
+py -3 .\checks\check_dashboard_runtime_patches.py
 ```
 
 ## Wichtige Dateien
