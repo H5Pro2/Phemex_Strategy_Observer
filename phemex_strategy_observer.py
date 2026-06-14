@@ -874,7 +874,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("brain_max_target_rr", float(config.get("reward_risk", 1.5)))
     config.setdefault("brain_llm_layer_enabled", True)
     config.setdefault("llm_role_team_enabled", True)
-    config.setdefault("llm_provider", "openai")
+    config.setdefault("llm_provider", "ollama")
     config.setdefault("openai_enabled", False)
     config.setdefault("openai_model", "gpt-4.1-mini")
     config.setdefault("openai_timeout_seconds", 30)
@@ -4007,8 +4007,8 @@ def compact_llm_analysis_entry(symbol: str, brain_decision: dict[str, Any] | Non
         "symbol": symbol,
         "type": event_type,
         "reason": reason,
-        "provider": layer.get("provider") or str(config.get("llm_provider", "openai")),
-        "model": layer.get("model") or str(config.get("openai_model" if str(config.get("llm_provider", "openai")).lower() == "openai" else "ollama_model", "gpt-4.1-mini")),
+        "provider": layer.get("provider") or str(config.get("llm_provider", "ollama")),
+        "model": layer.get("model") or str(config.get("openai_model" if str(config.get("llm_provider", "ollama")).lower() == "openai" else "ollama_model", "qwen2.5:3b")),
         "decision": layer.get("decision") or judge.get("decision") or brain.get("decision") or "-",
         "verdict": layer.get("verdict") or "-",
         "role_count": len(roles),

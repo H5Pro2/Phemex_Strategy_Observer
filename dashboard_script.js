@@ -374,6 +374,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let replayRequestRunning = false;
     let refreshRunning = false;
     let refreshFailedCount = 0;
+    let agentSettingsSaveResetTimer = null;
     window.__setDetailsOpen = (key, open) => {
       if (!key) return;
       detailsOpenState[key] = !!open;
@@ -544,7 +545,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       syncUtilityAgentGroupStates();
     }
     function syncLlmProviderVisibility() {
-      const provider = document.getElementById('cfgLlmProvider')?.value || 'openai';
+      const provider = document.getElementById('cfgLlmProvider')?.value || 'ollama';
       document.querySelectorAll('.providerOpenAi').forEach(el => el.classList.toggle('providerHidden', provider !== 'openai'));
       document.querySelectorAll('.providerOllama').forEach(el => el.classList.toggle('providerHidden', provider !== 'ollama'));
       const help = document.getElementById('llmProviderHelp');
@@ -1634,7 +1635,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const brainState = data?.cycle?.brains?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.brain || null;
       const layer = board?.llm_layer || brainState?.llm_layer || null;
       if (layer) return layer;
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       const providerEnabled = provider === 'ollama' ? !!cfg?.ollama_enabled : !!cfg?.openai_enabled;
       const keyReady = provider !== 'openai' || !!latestEnvSettings?.openai_key_present;
       const enabled = !!cfg?.llm_role_team_enabled && providerEnabled && keyReady;
@@ -1660,7 +1661,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     }
     function renderLlmAuditContent(llmLayer, cfg) {
       const layer = llmLayer || llmLayerForSymbol(latestStatusData || {}, cfg || latestConfig || {}, selectedAgentAsset || selectedAsset);
-      const provider = layer?.provider || cfg?.llm_provider || 'openai';
+      const provider = layer?.provider || cfg?.llm_provider || 'ollama';
       const keyMissing = provider === 'openai' && latestEnvSettings?.openai_key_present === false;
       const enabled = !!layer?.enabled && !keyMissing;
       const model = layer?.model || (provider === 'ollama' ? cfg?.ollama_model : cfg?.openai_model) || 'gpt-4.1-mini';
@@ -1895,13 +1896,13 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       </div>`;
     }
     function llmAuditEnabled(cfg) {
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       if (!cfg?.llm_role_team_enabled) return false;
       if (provider === 'ollama') return !!cfg?.ollama_enabled;
       return !!cfg?.openai_enabled && !!latestEnvSettings?.openai_key_present;
     }
     function llmAuditStatus(cfg) {
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       if (!cfg?.llm_role_team_enabled) return { badge:'Aus', main:'LLM-Rollenteam deaktiviert', detail:'Aktivierung über Strategie Setup.', cls:'off' };
       if (provider === 'openai') {
         if (!cfg?.openai_enabled) return { badge:'Aus', main:'OpenAI deaktiviert', detail:'OpenAI aktiv im Strategie Setup einschalten.', cls:'off' };
@@ -1963,7 +1964,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const llmEnabled = llmAuditEnabled(cfg);
       const llmState = llmAuditStatus(cfg);
       const llmDecision = llmLayer?.decision || llmLayer?.judge?.decision || llmLayer?.verdict || (llmEnabled ? 'NO_DATA' : 'Aus');
-      const llmProvider = llmLayer?.provider || cfg?.llm_provider || 'openai';
+      const llmProvider = llmLayer?.provider || cfg?.llm_provider || 'ollama';
       const ceoDecision = ceo?.details?.decision || ceo?.signal || 'NEUTRAL';
       const ceoMessage = ceo?.message || 'Noch keine finale CEO/Judge-Aussage.';
       const gateAllowed = gate?.trade_allowed === true;
@@ -3497,6 +3498,10 @@ Rueckmeldung: ${message}</div>
       const legacy = document.getElementById('agentSettingsStatus');
       const button = document.getElementById('saveAgentSettings');
       const label = text || (state === 'idle' ? uiText('noChanges') : state);
+      if (agentSettingsSaveResetTimer) {
+        window.clearTimeout(agentSettingsSaveResetTimer);
+        agentSettingsSaveResetTimer = null;
+      }
       if (feedback) {
         feedback.dataset.state = state;
         feedback.textContent = label;
@@ -3508,6 +3513,17 @@ Rueckmeldung: ${message}</div>
       if (button) {
         button.dataset.state = state;
         button.disabled = state === 'saving';
+        if (state === 'saving') button.textContent = uiText('saving');
+        else if (state === 'saved') button.textContent = uiText('saved');
+        else if (state === 'error') button.textContent = uiText('setupSave');
+        else button.textContent = uiText('setupSave');
+      }
+      if (state === 'saved') {
+        agentSettingsSaveResetTimer = window.setTimeout(() => {
+          if (feedback?.dataset.state === 'saved') {
+            setAgentSettingsSaveStatus('idle', uiText('noChanges'));
+          }
+        }, 2500);
       }
     }
     function bindAgentSettingsDirtyTracking(root = document) {
@@ -3729,7 +3745,7 @@ Rueckmeldung: ${message}</div>
       document.getElementById('cfgBrainEntryBoxOffset').value = data.brain_entry_box_offset ?? 0.35;
       document.getElementById('cfgBrainLlmLayer').checked = data.brain_llm_layer_enabled === true;
       document.getElementById('cfgLlmRoleTeamEnabled').checked = data.llm_role_team_enabled === true;
-      document.getElementById('cfgLlmProvider').value = data.llm_provider || 'openai';
+      document.getElementById('cfgLlmProvider').value = data.llm_provider || 'ollama';
       document.getElementById('cfgOpenAiEnabled').checked = data.openai_enabled === true;
       document.getElementById('cfgOpenAiModel').value = data.openai_model || 'gpt-4.1-mini';
       document.getElementById('openAiAgentTestStatus').textContent = 'Noch nicht geprüft.';
@@ -3783,87 +3799,99 @@ Rueckmeldung: ${message}</div>
     async function saveAgentSettings() {
       if (agentSettingsSaving) return;
       agentSettingsSaving = true;
-      const saveButton = document.getElementById('saveAgentSettings');
-      const originalSaveText = saveButton?.textContent || 'Setup speichern';
-      if (saveButton) saveButton.textContent = uiText('saving');
       setAgentSettingsSaveStatus('saving', uiText('saving'));
-      syncLinkedIndicatorInputsFromAgents();
-      const parsed = {
-        ...indicatorSettingsPayload(),
-        trade_decision_mode: 'brain',
-        brain_enabled: document.getElementById('cfgBrainEnabled').checked,
-        brain_min_score: Number(document.getElementById('cfgBrainMinScore').value),
-        brain_min_score_gap: Number(document.getElementById('cfgBrainMinScoreGap').value),
-        brain_min_agent_alignment: Number(document.getElementById('cfgBrainMinAlignment').value),
-        brain_memory_min_count: Number(document.getElementById('cfgBrainMemoryMinCount').value),
-        brain_entry_box_offset: Number(document.getElementById('cfgBrainEntryBoxOffset').value),
-        brain_llm_layer_enabled: document.getElementById('cfgBrainLlmLayer').checked,
-        llm_role_team_enabled: document.getElementById('cfgLlmRoleTeamEnabled').checked,
-        llm_provider: document.getElementById('cfgLlmProvider').value,
-        openai_enabled: document.getElementById('cfgOpenAiEnabled').checked,
-        openai_model: document.getElementById('cfgOpenAiModel').value.trim(),
-        llm_role_timeout_seconds: Number(latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || currentPhemexPollSeconds()),
-        llm_role_temperature: Number(document.getElementById('cfgLlmRoleTemperature').value),
-        llm_role_required_for_trade: document.getElementById('cfgLlmRoleRequired').checked,
-        llm_role_market_structure_enabled: document.getElementById('cfgLlmRoleMarketStructure').checked,
-        llm_role_momentum_enabled: document.getElementById('cfgLlmRoleMomentum').checked,
-        llm_role_risk_officer_enabled: document.getElementById('cfgLlmRoleRiskOfficer').checked,
-        llm_role_skeptic_enabled: document.getElementById('cfgLlmRoleSkeptic').checked,
-        llm_role_execution_enabled: document.getElementById('cfgLlmRoleExecution').checked,
-        llm_role_market_structure_prompt_extra: document.getElementById('cfgLlmRoleMarketStructurePrompt').value.trim(),
-        llm_role_momentum_prompt_extra: document.getElementById('cfgLlmRoleMomentumPrompt').value.trim(),
-        llm_role_risk_officer_prompt_extra: document.getElementById('cfgLlmRoleRiskOfficerPrompt').value.trim(),
-        llm_role_skeptic_prompt_extra: document.getElementById('cfgLlmRoleSkepticPrompt').value.trim(),
-        llm_role_execution_prompt_extra: document.getElementById('cfgLlmRoleExecutionPrompt').value.trim(),
-        llm_role_judge_prompt_extra: document.getElementById('cfgLlmRoleJudgePrompt').value.trim(),
-        ollama_enabled: document.getElementById('cfgOllamaEnabled').checked,
-        ollama_base_url: document.getElementById('cfgOllamaBaseUrl').value.trim(),
-        ollama_model: document.getElementById('cfgOllamaModel').value.trim(),
-        ollama_timeout_seconds: Number(document.getElementById('cfgOllamaTimeout').value),
-        ollama_max_prompt_chars: Number(document.getElementById('cfgOllamaMaxPrompt').value),
-        ollama_temperature: Number(document.getElementById('cfgOllamaTemperature').value),
-        ollama_block_hint_enabled: document.getElementById('cfgOllamaBlockHint').checked,
-        agent_show_offline_agents: document.getElementById('cfgAgentShowOffline').checked,
-      };
-      for (const [key, _title, _info, linked, period] of AGENT_SETTING_DEFS) {
-        const agentEnabled = document.getElementById(`cfgAgent${key}Enabled`).checked;
-        parsed[`agent_${key}_enabled`] = agentEnabled;
-        if (linked) parsed[linked] = agentEnabled;
-        parsed[`agent_${key}_weight`] = Number(document.getElementById(`cfgAgent${key}Weight`).value);
-        parsed[`agent_${key}_min_score`] = Number(document.getElementById(`cfgAgent${key}MinScore`).value);
-        parsed[`agent_${key}_blocking`] = document.getElementById(`cfgAgent${key}Blocking`).checked;
-        parsed[`agent_${key}_color`] = safeColor(document.getElementById(`cfgAgent${key}Color`)?.value, defaultAgentColor(key));
-        if (period) {
-          parsed[period.key] = Number(document.getElementById(period.id)?.value || latestConfig[period.key] || period.fallback);
-          if (key === 'volatility_regime') parsed.agent_volatility_lookback = Number(latestConfig.agent_volatility_lookback || 50);
-        }
-      }
-      parsed.indicator_enabled = AGENT_SETTING_DEFS.some(([key, _title, _info, linked]) => linked && parsed[`agent_${key}_enabled`]);
-      parsed.agent_sma_period = parsed.indicator_sma_period;
-      parsed.agent_mfi_period = parsed.indicator_mfi_period;
+      let timeout = null;
       try {
+        const field = (id) => {
+          const node = document.getElementById(id);
+          if (!node) throw new Error(`Setup-Feld fehlt: ${id}`);
+          return node;
+        };
+        const checked = (id) => !!field(id).checked;
+        const numberValue = (id) => Number(field(id).value);
+        const textValue = (id) => String(field(id).value || '').trim();
+        syncLinkedIndicatorInputsFromAgents();
+        const parsed = {
+          ...indicatorSettingsPayload(),
+          trade_decision_mode: 'brain',
+          brain_enabled: checked('cfgBrainEnabled'),
+          brain_min_score: numberValue('cfgBrainMinScore'),
+          brain_min_score_gap: numberValue('cfgBrainMinScoreGap'),
+          brain_min_agent_alignment: numberValue('cfgBrainMinAlignment'),
+          brain_memory_min_count: numberValue('cfgBrainMemoryMinCount'),
+          brain_entry_box_offset: numberValue('cfgBrainEntryBoxOffset'),
+          brain_llm_layer_enabled: checked('cfgBrainLlmLayer'),
+          llm_role_team_enabled: checked('cfgLlmRoleTeamEnabled'),
+          llm_provider: textValue('cfgLlmProvider'),
+          openai_enabled: checked('cfgOpenAiEnabled'),
+          openai_model: textValue('cfgOpenAiModel'),
+          llm_role_timeout_seconds: Number(latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || currentPhemexPollSeconds()),
+          llm_role_temperature: numberValue('cfgLlmRoleTemperature'),
+          llm_role_required_for_trade: checked('cfgLlmRoleRequired'),
+          llm_role_market_structure_enabled: checked('cfgLlmRoleMarketStructure'),
+          llm_role_momentum_enabled: checked('cfgLlmRoleMomentum'),
+          llm_role_risk_officer_enabled: checked('cfgLlmRoleRiskOfficer'),
+          llm_role_skeptic_enabled: checked('cfgLlmRoleSkeptic'),
+          llm_role_execution_enabled: checked('cfgLlmRoleExecution'),
+          llm_role_market_structure_prompt_extra: textValue('cfgLlmRoleMarketStructurePrompt'),
+          llm_role_momentum_prompt_extra: textValue('cfgLlmRoleMomentumPrompt'),
+          llm_role_risk_officer_prompt_extra: textValue('cfgLlmRoleRiskOfficerPrompt'),
+          llm_role_skeptic_prompt_extra: textValue('cfgLlmRoleSkepticPrompt'),
+          llm_role_execution_prompt_extra: textValue('cfgLlmRoleExecutionPrompt'),
+          llm_role_judge_prompt_extra: textValue('cfgLlmRoleJudgePrompt'),
+          ollama_enabled: checked('cfgOllamaEnabled'),
+          ollama_base_url: textValue('cfgOllamaBaseUrl'),
+          ollama_model: textValue('cfgOllamaModel'),
+          ollama_timeout_seconds: numberValue('cfgOllamaTimeout'),
+          ollama_max_prompt_chars: numberValue('cfgOllamaMaxPrompt'),
+          ollama_temperature: numberValue('cfgOllamaTemperature'),
+          ollama_block_hint_enabled: checked('cfgOllamaBlockHint'),
+          agent_show_offline_agents: checked('cfgAgentShowOffline'),
+        };
+        for (const [key, _title, _info, linked, period] of AGENT_SETTING_DEFS) {
+          const agentEnabled = checked(`cfgAgent${key}Enabled`);
+          parsed[`agent_${key}_enabled`] = agentEnabled;
+          if (linked) parsed[linked] = agentEnabled;
+          parsed[`agent_${key}_weight`] = numberValue(`cfgAgent${key}Weight`);
+          parsed[`agent_${key}_min_score`] = numberValue(`cfgAgent${key}MinScore`);
+          parsed[`agent_${key}_blocking`] = checked(`cfgAgent${key}Blocking`);
+          parsed[`agent_${key}_color`] = safeColor(document.getElementById(`cfgAgent${key}Color`)?.value, defaultAgentColor(key));
+          if (period) {
+            parsed[period.key] = Number(document.getElementById(period.id)?.value || latestConfig[period.key] || period.fallback);
+            if (key === 'volatility_regime') parsed.agent_volatility_lookback = Number(latestConfig.agent_volatility_lookback || 50);
+          }
+        }
+        parsed.indicator_enabled = AGENT_SETTING_DEFS.some(([key, _title, _info, linked]) => linked && parsed[`agent_${key}_enabled`]);
+        parsed.agent_sma_period = parsed.indicator_sma_period;
+        parsed.agent_mfi_period = parsed.indicator_mfi_period;
+        const controller = new AbortController();
+        timeout = window.setTimeout(() => controller.abort(), 12000);
         const response = await fetch('/api/config-json', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed)
+          body: JSON.stringify(parsed),
+          signal: controller.signal
         });
+        window.clearTimeout(timeout);
         const result = await response.json();
-        setAgentSettingsSaveStatus(response.ok ? 'saved' : 'error', response.ok ? uiText('saved') : (result.error || 'Fehler'));
+        const savedAt = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setAgentSettingsSaveStatus(response.ok ? 'saved' : 'error', response.ok ? `Gespeichert um ${savedAt}` : (result.error || 'Fehler'));
         if (response.ok) {
           latestConfig = { ...latestConfig, ...parsed };
           agentSettingsDirty = false;
           updateChartSetupPreview();
           updateKlineChartStyles();
           lastChartKey = '';
-          await refresh();
+          refresh().catch(() => {});
           if (currentView === 'agent_setup') document.dispatchEvent(new CustomEvent('agent-settings-rendered'));
-          if (currentView === 'chart') await loadChartData(true);
+          if (currentView === 'chart') loadChartData(true).catch(() => {});
         }
       } catch (error) {
-        setAgentSettingsSaveStatus('error', uiText('saveFailed'));
+        const reason = error?.name === 'AbortError' ? 'Speichern abgebrochen: keine Antwort vom Server.' : `${uiText('saveFailed')}: ${error?.message || 'unbekannter Fehler'}`;
+        setAgentSettingsSaveStatus('error', reason);
       } finally {
+        if (timeout) window.clearTimeout(timeout);
         agentSettingsSaving = false;
-        if (saveButton) saveButton.textContent = originalSaveText;
         if (document.getElementById('agentSettingsSaveFeedback')?.dataset.state === 'saving') {
           setAgentSettingsSaveStatus('error', uiText('noAnswer'));
         }

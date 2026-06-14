@@ -1632,6 +1632,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let replayRequestRunning = false;
     let refreshRunning = false;
     let refreshFailedCount = 0;
+    let agentSettingsSaveResetTimer = null;
     window.__setDetailsOpen = (key, open) => {
       if (!key) return;
       detailsOpenState[key] = !!open;
@@ -1802,7 +1803,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       syncUtilityAgentGroupStates();
     }
     function syncLlmProviderVisibility() {
-      const provider = document.getElementById('cfgLlmProvider')?.value || 'openai';
+      const provider = document.getElementById('cfgLlmProvider')?.value || 'ollama';
       document.querySelectorAll('.providerOpenAi').forEach(el => el.classList.toggle('providerHidden', provider !== 'openai'));
       document.querySelectorAll('.providerOllama').forEach(el => el.classList.toggle('providerHidden', provider !== 'ollama'));
       const help = document.getElementById('llmProviderHelp');
@@ -2892,7 +2893,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const brainState = data?.cycle?.brains?.[activeSymbol] || data?.cycle?.symbols?.[activeSymbol]?.brain || null;
       const layer = board?.llm_layer || brainState?.llm_layer || null;
       if (layer) return layer;
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       const providerEnabled = provider === 'ollama' ? !!cfg?.ollama_enabled : !!cfg?.openai_enabled;
       const keyReady = provider !== 'openai' || !!latestEnvSettings?.openai_key_present;
       const enabled = !!cfg?.llm_role_team_enabled && providerEnabled && keyReady;
@@ -2918,7 +2919,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     }
     function renderLlmAuditContent(llmLayer, cfg) {
       const layer = llmLayer || llmLayerForSymbol(latestStatusData || {}, cfg || latestConfig || {}, selectedAgentAsset || selectedAsset);
-      const provider = layer?.provider || cfg?.llm_provider || 'openai';
+      const provider = layer?.provider || cfg?.llm_provider || 'ollama';
       const keyMissing = provider === 'openai' && latestEnvSettings?.openai_key_present === false;
       const enabled = !!layer?.enabled && !keyMissing;
       const model = layer?.model || (provider === 'ollama' ? cfg?.ollama_model : cfg?.openai_model) || 'gpt-4.1-mini';
@@ -3153,13 +3154,13 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       </div>`;
     }
     function llmAuditEnabled(cfg) {
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       if (!cfg?.llm_role_team_enabled) return false;
       if (provider === 'ollama') return !!cfg?.ollama_enabled;
       return !!cfg?.openai_enabled && !!latestEnvSettings?.openai_key_present;
     }
     function llmAuditStatus(cfg) {
-      const provider = cfg?.llm_provider || 'openai';
+      const provider = cfg?.llm_provider || 'ollama';
       if (!cfg?.llm_role_team_enabled) return { badge:'Aus', main:'LLM-Rollenteam deaktiviert', detail:'Aktivierung über Strategie Setup.', cls:'off' };
       if (provider === 'openai') {
         if (!cfg?.openai_enabled) return { badge:'Aus', main:'OpenAI deaktiviert', detail:'OpenAI aktiv im Strategie Setup einschalten.', cls:'off' };
@@ -3221,7 +3222,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const llmEnabled = llmAuditEnabled(cfg);
       const llmState = llmAuditStatus(cfg);
       const llmDecision = llmLayer?.decision || llmLayer?.judge?.decision || llmLayer?.verdict || (llmEnabled ? 'NO_DATA' : 'Aus');
-      const llmProvider = llmLayer?.provider || cfg?.llm_provider || 'openai';
+      const llmProvider = llmLayer?.provider || cfg?.llm_provider || 'ollama';
       const ceoDecision = ceo?.details?.decision || ceo?.signal || 'NEUTRAL';
       const ceoMessage = ceo?.message || 'Noch keine finale CEO/Judge-Aussage.';
       const gateAllowed = gate?.trade_allowed === true;
@@ -4755,6 +4756,10 @@ Rueckmeldung: ${message}</div>
       const legacy = document.getElementById('agentSettingsStatus');
       const button = document.getElementById('saveAgentSettings');
       const label = text || (state === 'idle' ? uiText('noChanges') : state);
+      if (agentSettingsSaveResetTimer) {
+        window.clearTimeout(agentSettingsSaveResetTimer);
+        agentSettingsSaveResetTimer = null;
+      }
       if (feedback) {
         feedback.dataset.state = state;
         feedback.textContent = label;
@@ -4766,6 +4771,17 @@ Rueckmeldung: ${message}</div>
       if (button) {
         button.dataset.state = state;
         button.disabled = state === 'saving';
+        if (state === 'saving') button.textContent = uiText('saving');
+        else if (state === 'saved') button.textContent = uiText('saved');
+        else if (state === 'error') button.textContent = uiText('setupSave');
+        else button.textContent = uiText('setupSave');
+      }
+      if (state === 'saved') {
+        agentSettingsSaveResetTimer = window.setTimeout(() => {
+          if (feedback?.dataset.state === 'saved') {
+            setAgentSettingsSaveStatus('idle', uiText('noChanges'));
+          }
+        }, 2500);
       }
     }
     function bindAgentSettingsDirtyTracking(root = document) {
@@ -4987,7 +5003,7 @@ Rueckmeldung: ${message}</div>
       document.getElementById('cfgBrainEntryBoxOffset').value = data.brain_entry_box_offset ?? 0.35;
       document.getElementById('cfgBrainLlmLayer').checked = data.brain_llm_layer_enabled === true;
       document.getElementById('cfgLlmRoleTeamEnabled').checked = data.llm_role_team_enabled === true;
-      document.getElementById('cfgLlmProvider').value = data.llm_provider || 'openai';
+      document.getElementById('cfgLlmProvider').value = data.llm_provider || 'ollama';
       document.getElementById('cfgOpenAiEnabled').checked = data.openai_enabled === true;
       document.getElementById('cfgOpenAiModel').value = data.openai_model || 'gpt-4.1-mini';
       document.getElementById('openAiAgentTestStatus').textContent = 'Noch nicht geprüft.';
@@ -5041,87 +5057,99 @@ Rueckmeldung: ${message}</div>
     async function saveAgentSettings() {
       if (agentSettingsSaving) return;
       agentSettingsSaving = true;
-      const saveButton = document.getElementById('saveAgentSettings');
-      const originalSaveText = saveButton?.textContent || 'Setup speichern';
-      if (saveButton) saveButton.textContent = uiText('saving');
       setAgentSettingsSaveStatus('saving', uiText('saving'));
-      syncLinkedIndicatorInputsFromAgents();
-      const parsed = {
-        ...indicatorSettingsPayload(),
-        trade_decision_mode: 'brain',
-        brain_enabled: document.getElementById('cfgBrainEnabled').checked,
-        brain_min_score: Number(document.getElementById('cfgBrainMinScore').value),
-        brain_min_score_gap: Number(document.getElementById('cfgBrainMinScoreGap').value),
-        brain_min_agent_alignment: Number(document.getElementById('cfgBrainMinAlignment').value),
-        brain_memory_min_count: Number(document.getElementById('cfgBrainMemoryMinCount').value),
-        brain_entry_box_offset: Number(document.getElementById('cfgBrainEntryBoxOffset').value),
-        brain_llm_layer_enabled: document.getElementById('cfgBrainLlmLayer').checked,
-        llm_role_team_enabled: document.getElementById('cfgLlmRoleTeamEnabled').checked,
-        llm_provider: document.getElementById('cfgLlmProvider').value,
-        openai_enabled: document.getElementById('cfgOpenAiEnabled').checked,
-        openai_model: document.getElementById('cfgOpenAiModel').value.trim(),
-        llm_role_timeout_seconds: Number(latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || currentPhemexPollSeconds()),
-        llm_role_temperature: Number(document.getElementById('cfgLlmRoleTemperature').value),
-        llm_role_required_for_trade: document.getElementById('cfgLlmRoleRequired').checked,
-        llm_role_market_structure_enabled: document.getElementById('cfgLlmRoleMarketStructure').checked,
-        llm_role_momentum_enabled: document.getElementById('cfgLlmRoleMomentum').checked,
-        llm_role_risk_officer_enabled: document.getElementById('cfgLlmRoleRiskOfficer').checked,
-        llm_role_skeptic_enabled: document.getElementById('cfgLlmRoleSkeptic').checked,
-        llm_role_execution_enabled: document.getElementById('cfgLlmRoleExecution').checked,
-        llm_role_market_structure_prompt_extra: document.getElementById('cfgLlmRoleMarketStructurePrompt').value.trim(),
-        llm_role_momentum_prompt_extra: document.getElementById('cfgLlmRoleMomentumPrompt').value.trim(),
-        llm_role_risk_officer_prompt_extra: document.getElementById('cfgLlmRoleRiskOfficerPrompt').value.trim(),
-        llm_role_skeptic_prompt_extra: document.getElementById('cfgLlmRoleSkepticPrompt').value.trim(),
-        llm_role_execution_prompt_extra: document.getElementById('cfgLlmRoleExecutionPrompt').value.trim(),
-        llm_role_judge_prompt_extra: document.getElementById('cfgLlmRoleJudgePrompt').value.trim(),
-        ollama_enabled: document.getElementById('cfgOllamaEnabled').checked,
-        ollama_base_url: document.getElementById('cfgOllamaBaseUrl').value.trim(),
-        ollama_model: document.getElementById('cfgOllamaModel').value.trim(),
-        ollama_timeout_seconds: Number(document.getElementById('cfgOllamaTimeout').value),
-        ollama_max_prompt_chars: Number(document.getElementById('cfgOllamaMaxPrompt').value),
-        ollama_temperature: Number(document.getElementById('cfgOllamaTemperature').value),
-        ollama_block_hint_enabled: document.getElementById('cfgOllamaBlockHint').checked,
-        agent_show_offline_agents: document.getElementById('cfgAgentShowOffline').checked,
-      };
-      for (const [key, _title, _info, linked, period] of AGENT_SETTING_DEFS) {
-        const agentEnabled = document.getElementById(`cfgAgent${key}Enabled`).checked;
-        parsed[`agent_${key}_enabled`] = agentEnabled;
-        if (linked) parsed[linked] = agentEnabled;
-        parsed[`agent_${key}_weight`] = Number(document.getElementById(`cfgAgent${key}Weight`).value);
-        parsed[`agent_${key}_min_score`] = Number(document.getElementById(`cfgAgent${key}MinScore`).value);
-        parsed[`agent_${key}_blocking`] = document.getElementById(`cfgAgent${key}Blocking`).checked;
-        parsed[`agent_${key}_color`] = safeColor(document.getElementById(`cfgAgent${key}Color`)?.value, defaultAgentColor(key));
-        if (period) {
-          parsed[period.key] = Number(document.getElementById(period.id)?.value || latestConfig[period.key] || period.fallback);
-          if (key === 'volatility_regime') parsed.agent_volatility_lookback = Number(latestConfig.agent_volatility_lookback || 50);
-        }
-      }
-      parsed.indicator_enabled = AGENT_SETTING_DEFS.some(([key, _title, _info, linked]) => linked && parsed[`agent_${key}_enabled`]);
-      parsed.agent_sma_period = parsed.indicator_sma_period;
-      parsed.agent_mfi_period = parsed.indicator_mfi_period;
+      let timeout = null;
       try {
+        const field = (id) => {
+          const node = document.getElementById(id);
+          if (!node) throw new Error(`Setup-Feld fehlt: ${id}`);
+          return node;
+        };
+        const checked = (id) => !!field(id).checked;
+        const numberValue = (id) => Number(field(id).value);
+        const textValue = (id) => String(field(id).value || '').trim();
+        syncLinkedIndicatorInputsFromAgents();
+        const parsed = {
+          ...indicatorSettingsPayload(),
+          trade_decision_mode: 'brain',
+          brain_enabled: checked('cfgBrainEnabled'),
+          brain_min_score: numberValue('cfgBrainMinScore'),
+          brain_min_score_gap: numberValue('cfgBrainMinScoreGap'),
+          brain_min_agent_alignment: numberValue('cfgBrainMinAlignment'),
+          brain_memory_min_count: numberValue('cfgBrainMemoryMinCount'),
+          brain_entry_box_offset: numberValue('cfgBrainEntryBoxOffset'),
+          brain_llm_layer_enabled: checked('cfgBrainLlmLayer'),
+          llm_role_team_enabled: checked('cfgLlmRoleTeamEnabled'),
+          llm_provider: textValue('cfgLlmProvider'),
+          openai_enabled: checked('cfgOpenAiEnabled'),
+          openai_model: textValue('cfgOpenAiModel'),
+          llm_role_timeout_seconds: Number(latestConfig?.phemex_poll_seconds || latestConfig?.poll_seconds || currentPhemexPollSeconds()),
+          llm_role_temperature: numberValue('cfgLlmRoleTemperature'),
+          llm_role_required_for_trade: checked('cfgLlmRoleRequired'),
+          llm_role_market_structure_enabled: checked('cfgLlmRoleMarketStructure'),
+          llm_role_momentum_enabled: checked('cfgLlmRoleMomentum'),
+          llm_role_risk_officer_enabled: checked('cfgLlmRoleRiskOfficer'),
+          llm_role_skeptic_enabled: checked('cfgLlmRoleSkeptic'),
+          llm_role_execution_enabled: checked('cfgLlmRoleExecution'),
+          llm_role_market_structure_prompt_extra: textValue('cfgLlmRoleMarketStructurePrompt'),
+          llm_role_momentum_prompt_extra: textValue('cfgLlmRoleMomentumPrompt'),
+          llm_role_risk_officer_prompt_extra: textValue('cfgLlmRoleRiskOfficerPrompt'),
+          llm_role_skeptic_prompt_extra: textValue('cfgLlmRoleSkepticPrompt'),
+          llm_role_execution_prompt_extra: textValue('cfgLlmRoleExecutionPrompt'),
+          llm_role_judge_prompt_extra: textValue('cfgLlmRoleJudgePrompt'),
+          ollama_enabled: checked('cfgOllamaEnabled'),
+          ollama_base_url: textValue('cfgOllamaBaseUrl'),
+          ollama_model: textValue('cfgOllamaModel'),
+          ollama_timeout_seconds: numberValue('cfgOllamaTimeout'),
+          ollama_max_prompt_chars: numberValue('cfgOllamaMaxPrompt'),
+          ollama_temperature: numberValue('cfgOllamaTemperature'),
+          ollama_block_hint_enabled: checked('cfgOllamaBlockHint'),
+          agent_show_offline_agents: checked('cfgAgentShowOffline'),
+        };
+        for (const [key, _title, _info, linked, period] of AGENT_SETTING_DEFS) {
+          const agentEnabled = checked(`cfgAgent${key}Enabled`);
+          parsed[`agent_${key}_enabled`] = agentEnabled;
+          if (linked) parsed[linked] = agentEnabled;
+          parsed[`agent_${key}_weight`] = numberValue(`cfgAgent${key}Weight`);
+          parsed[`agent_${key}_min_score`] = numberValue(`cfgAgent${key}MinScore`);
+          parsed[`agent_${key}_blocking`] = checked(`cfgAgent${key}Blocking`);
+          parsed[`agent_${key}_color`] = safeColor(document.getElementById(`cfgAgent${key}Color`)?.value, defaultAgentColor(key));
+          if (period) {
+            parsed[period.key] = Number(document.getElementById(period.id)?.value || latestConfig[period.key] || period.fallback);
+            if (key === 'volatility_regime') parsed.agent_volatility_lookback = Number(latestConfig.agent_volatility_lookback || 50);
+          }
+        }
+        parsed.indicator_enabled = AGENT_SETTING_DEFS.some(([key, _title, _info, linked]) => linked && parsed[`agent_${key}_enabled`]);
+        parsed.agent_sma_period = parsed.indicator_sma_period;
+        parsed.agent_mfi_period = parsed.indicator_mfi_period;
+        const controller = new AbortController();
+        timeout = window.setTimeout(() => controller.abort(), 12000);
         const response = await fetch('/api/config-json', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed)
+          body: JSON.stringify(parsed),
+          signal: controller.signal
         });
+        window.clearTimeout(timeout);
         const result = await response.json();
-        setAgentSettingsSaveStatus(response.ok ? 'saved' : 'error', response.ok ? uiText('saved') : (result.error || 'Fehler'));
+        const savedAt = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setAgentSettingsSaveStatus(response.ok ? 'saved' : 'error', response.ok ? `Gespeichert um ${savedAt}` : (result.error || 'Fehler'));
         if (response.ok) {
           latestConfig = { ...latestConfig, ...parsed };
           agentSettingsDirty = false;
           updateChartSetupPreview();
           updateKlineChartStyles();
           lastChartKey = '';
-          await refresh();
+          refresh().catch(() => {});
           if (currentView === 'agent_setup') document.dispatchEvent(new CustomEvent('agent-settings-rendered'));
-          if (currentView === 'chart') await loadChartData(true);
+          if (currentView === 'chart') loadChartData(true).catch(() => {});
         }
       } catch (error) {
-        setAgentSettingsSaveStatus('error', uiText('saveFailed'));
+        const reason = error?.name === 'AbortError' ? 'Speichern abgebrochen: keine Antwort vom Server.' : `${uiText('saveFailed')}: ${error?.message || 'unbekannter Fehler'}`;
+        setAgentSettingsSaveStatus('error', reason);
       } finally {
+        if (timeout) window.clearTimeout(timeout);
         agentSettingsSaving = false;
-        if (saveButton) saveButton.textContent = originalSaveText;
         if (document.getElementById('agentSettingsSaveFeedback')?.dataset.state === 'saving') {
           setAgentSettingsSaveStatus('error', uiText('noAnswer'));
         }
@@ -8858,7 +8886,9 @@ Rueckmeldung: ${message}</div>
       }
     }
     const saveButton = document.getElementById('saveAgentSettings');
-    if (saveButton) saveButton.textContent = 'Setup speichern';
+    if (saveButton && (!saveButton.dataset.state || saveButton.dataset.state === 'idle')) {
+      saveButton.textContent = 'Setup speichern';
+    }
   }
 
   function installStyles() {
@@ -9090,21 +9120,18 @@ Rueckmeldung: ${message}</div>
       #agentSetupView [data-agent-display-group="llm"] .agentSetupFinalBadge { color:#67e8f9 !important; border-color:#0891b2 !important; background:rgba(8,145,178,.14) !important; }
       #agentSetupView [data-agent-display-group="inactive"] .agentSetupFinalBadge { color:#cbd5e1 !important; border-color:#475569 !important; background:rgba(71,85,105,.18) !important; }
       #agentSetupView .modalActions { position:sticky !important; bottom:0 !important; z-index:3200 !important; isolation:isolate !important; display:flex !important; justify-content:flex-end !important; padding:10px 12px !important; margin:8px -10px -10px !important; background:linear-gradient(180deg, rgba(17,24,39,.88), rgba(17,24,39,.99)) !important; border-top:1px solid var(--line) !important; box-shadow:0 -14px 34px rgba(0,0,0,.34) !important; }
-      #agentSetupView .agentSaveStatus { display:none !important; }
-      #agentSetupView .agentSaveFeedback { align-self:center !important; margin-right:auto !important; min-height:28px !important; display:inline-flex !important; align-items:center !important; padding:5px 10px !important; border:1px solid rgba(148,163,184,.22) !important; border-radius:5px !important; background:rgba(15,23,42,.32) !important; color:#94a3b8 !important; font-size:11px !important; font-weight:850 !important; letter-spacing:.03em !important; text-transform:uppercase !important; }
-      #agentSetupView .agentSaveFeedback[data-state="dirty"] { color:#fbbf24 !important; border-color:rgba(245,158,11,.42) !important; background:rgba(245,158,11,.10) !important; }
-      #agentSetupView .agentSaveFeedback[data-state="saving"] { color:#67e8f9 !important; border-color:rgba(34,211,238,.44) !important; background:rgba(8,145,178,.12) !important; }
-      #agentSetupView .agentSaveFeedback[data-state="saved"] { color:#34d399 !important; border-color:rgba(52,211,153,.46) !important; background:rgba(6,78,59,.14) !important; }
-      #agentSetupView .agentSaveFeedback[data-state="error"] { color:#f87171 !important; border-color:rgba(248,113,113,.46) !important; background:rgba(127,29,29,.12) !important; }
-      #agentSetupView #saveAgentSettings { position:relative !important; z-index:3201 !important; width:auto !important; min-width:220px !important; max-width:280px !important; min-height:36px !important; padding:8px 14px !important; border-radius:6px !important; box-shadow:0 12px 26px rgba(20,184,166,.18) !important; }
-      #agentSetupView #saveAgentSettings[data-state="saving"] { opacity:.78 !important; cursor:wait !important; }
-      #agentSetupView #saveAgentSettings[data-state="saved"] { background:#059669 !important; box-shadow:0 12px 26px rgba(5,150,105,.22) !important; }
+      #agentSetupView .agentSaveFeedback { flex:1 1 auto !important; min-height:36px !important; display:flex !important; align-items:center !important; padding:8px 12px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:6px !important; background:rgba(15,23,42,.72) !important; color:#9fb0c8 !important; font-weight:800 !important; letter-spacing:0 !important; }
+      #agentSetupView .agentSaveFeedback[data-state="dirty"] { color:#fbbf24 !important; border-color:rgba(251,191,36,.42) !important; background:rgba(251,191,36,.08) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="saving"] { color:#67e8f9 !important; border-color:rgba(34,211,238,.50) !important; background:linear-gradient(90deg, rgba(34,211,238,.16), rgba(15,23,42,.72)) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="saved"] { color:#34d399 !important; border-color:rgba(52,211,153,.55) !important; background:linear-gradient(90deg, rgba(16,185,129,.18), rgba(15,23,42,.72)) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="error"] { color:#fca5a5 !important; border-color:rgba(248,113,113,.58) !important; background:linear-gradient(90deg, rgba(248,113,113,.16), rgba(15,23,42,.72)) !important; }
+      #agentSetupView #saveAgentSettings { position:relative !important; z-index:3201 !important; flex:0 0 170px !important; width:170px !important; min-width:150px !important; max-width:190px !important; min-height:36px !important; padding:8px 14px !important; border-radius:6px !important; box-shadow:0 12px 26px rgba(20,184,166,.18) !important; }
       #agentSetupView .agentSetupToggle { width:34px !important; min-width:34px !important; max-width:34px !important; height:34px !important; border-radius:6px !important; }
       #agentSetupView .settingsGroup.open, #agentSetupView .agentIndicatorGroup.open, #agentSetupView .agentDirectGroup.open, #agentSetupView .agentUtilityGroup.open, #agentSetupView .settingsGroup:focus-within, #agentSetupView .agentIndicatorGroup:focus-within, #agentSetupView .agentDirectGroup:focus-within, #agentSetupView .agentUtilityGroup:focus-within { height:auto !important; max-height:none !important; min-height:0 !important; z-index:120 !important; overflow:visible !important; }
       #agentSetupView .modalBackdrop, #agentSetupView .modal { z-index:2000 !important; }
       .modalBackdrop.open { z-index:2000 !important; }
       .modalBackdrop.open .modal, .modal.open { z-index:2010 !important; }
-      @media (max-width:900px) { #agentSetupView .configModalBody { grid-template-columns:1fr !important; } #agentSetupView .agentSetupFinalCards .settingsGroupGrid { grid-template-columns:1fr auto !important; } #agentSetupView #saveAgentSettings { width:100% !important; max-width:none !important; } }
+      @media (max-width:900px) { #agentSetupView .configModalBody { grid-template-columns:1fr !important; } #agentSetupView .agentSetupFinalCards .settingsGroupGrid { grid-template-columns:1fr auto !important; } #agentSetupView #saveAgentSettings { flex:0 0 170px !important; width:170px !important; max-width:190px !important; } }
       @media (max-width:760px) { #agentSetupView .agentSetupFinalCards { grid-template-columns:1fr !important; } }
       @media (max-width:900px) { #agentSetupView .llmTeamGroup .settingsGroupGrid { grid-template-columns:1fr !important; } }
       @media (max-width:760px) { #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { grid-template-columns:1fr !important; } }
@@ -10635,7 +10662,7 @@ Rueckmeldung: ${message}</div>
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-06-02-tradingview-overlay-v3-top-controls-hud';
+  const PATCH_VERSION = '2026-06-04-tradingview-overlay-v4-sl-entry-dock';
   const OVERLAY_GROUP = 'tv_strategy_overlay';
   let overlayIds = [];
   let overlaysRegistered = false;
@@ -10709,9 +10736,16 @@ Rueckmeldung: ${message}</div>
   function setupPrices(overlay) {
     const setup = overlay?.setup || {};
     const scan = overlay?.scan || {};
+    const entry = Number(setup.entry ?? scan.entry);
+    const rawStop = Number(setup.stop_loss ?? scan.stop_loss);
+    const snapDistance = Number.isFinite(entry)
+      ? Math.max(Math.abs(entry) * 0.00005, 0.0001)
+      : 0;
+    const stopDocked = Number.isFinite(entry) && Number.isFinite(rawStop) && Math.abs(rawStop - entry) <= snapDistance;
     return {
-      entry: Number(setup.entry ?? scan.entry),
-      stop: Number(setup.stop_loss ?? scan.stop_loss),
+      entry,
+      stop: stopDocked ? entry : rawStop,
+      stopDocked,
       tp: Number(setup.take_profit ?? scan.take_profit),
       side: directionFromOverlay(overlay)
     };
@@ -10775,13 +10809,20 @@ Rueckmeldung: ${message}</div>
         const data = overlay.extendData || {};
         const x = Math.min(coordinates[0].x, coordinates[1].x);
         const width = Math.max(4, Math.abs(coordinates[1].x - coordinates[0].x));
-        const y = Math.min(coordinates[0].y, coordinates[1].y);
-        const height = Math.max(3, Math.abs(coordinates[1].y - coordinates[0].y));
+        const rawHeight = Math.abs(coordinates[1].y - coordinates[0].y);
+        const isDocked = data.docked === true || rawHeight < 2;
+        const y = isDocked
+          ? Math.min(coordinates[0].y, coordinates[1].y) - 1
+          : Math.min(coordinates[0].y, coordinates[1].y);
+        const height = isDocked ? 3 : Math.max(3, rawHeight);
         const color = data.kind === 'reward' ? '#22c55e' : '#ef4444';
-        const fill = data.kind === 'reward' ? 'rgba(34,197,94,.13)' : 'rgba(239,68,68,.13)';
-        const label = data.kind === 'reward' ? `Target ${fmt(data.price)}` : `Stop ${fmt(data.price)}`;
+        const fill = data.kind === 'reward' ? 'rgba(34,197,94,.13)' : (isDocked ? 'rgba(239,68,68,.20)' : 'rgba(239,68,68,.13)');
+        const label = data.kind === 'reward'
+          ? `Target ${fmt(data.price)}`
+          : (isDocked ? `Stop @ Entry ${fmt(data.price)}` : `Stop ${fmt(data.price)}`);
         return [
           { type: 'rect', attrs: { x, y, width, height }, styles: { style: 'stroke_fill', color: fill, borderColor: color }, ignoreEvent: true },
+          ...(isDocked ? [{ type: 'line', attrs: { coordinates: [{ x, y: y + 1.5 }, { x: x + width, y: y + 1.5 }] }, styles: { color, size: 2, style: 'solid' }, ignoreEvent: true }] : []),
           { type: 'text', attrs: { x: x + 12, y: y + 15, text: label, align: 'left', baseline: 'middle' }, styles: textStyle(color, 11), ignoreEvent: true }
         ];
       }
@@ -10840,7 +10881,7 @@ Rueckmeldung: ${message}</div>
         lock: true,
         zLevel: 38,
         points: [point(range.last - range.step * 18, riskTop), point(range.end, riskBottom)],
-        extendData: { kind: 'risk', price: prices.stop }
+        extendData: { kind: 'risk', price: prices.stop, docked: prices.stopDocked }
       }));
     }
 
@@ -10910,7 +10951,7 @@ Rueckmeldung: ${message}</div>
       </div>
       <div class="tvHudPrices">
         <span><b>Entry</b>${fmt(prices.entry)}</span>
-        <span><b>SL</b>${fmt(prices.stop)}</span>
+        <span><b>SL</b>${prices.stopDocked ? `@ Entry ${fmt(prices.stop)}` : fmt(prices.stop)}</span>
         <span><b>TP</b>${fmt(prices.tp)}</span>
         <span><b>RR</b>${rr === null ? '-' : rr.toFixed(2)}</span>
       </div>

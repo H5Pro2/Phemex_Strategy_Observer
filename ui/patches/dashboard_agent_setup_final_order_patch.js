@@ -495,7 +495,9 @@
       }
     }
     const saveButton = document.getElementById('saveAgentSettings');
-    if (saveButton) saveButton.textContent = 'Setup speichern';
+    if (saveButton && (!saveButton.dataset.state || saveButton.dataset.state === 'idle')) {
+      saveButton.textContent = 'Setup speichern';
+    }
   }
 
   function installStyles() {
@@ -727,13 +729,18 @@
       #agentSetupView [data-agent-display-group="llm"] .agentSetupFinalBadge { color:#67e8f9 !important; border-color:#0891b2 !important; background:rgba(8,145,178,.14) !important; }
       #agentSetupView [data-agent-display-group="inactive"] .agentSetupFinalBadge { color:#cbd5e1 !important; border-color:#475569 !important; background:rgba(71,85,105,.18) !important; }
       #agentSetupView .modalActions { position:sticky !important; bottom:0 !important; z-index:3200 !important; isolation:isolate !important; display:flex !important; justify-content:flex-end !important; padding:10px 12px !important; margin:8px -10px -10px !important; background:linear-gradient(180deg, rgba(17,24,39,.88), rgba(17,24,39,.99)) !important; border-top:1px solid var(--line) !important; box-shadow:0 -14px 34px rgba(0,0,0,.34) !important; }
-      #agentSetupView #saveAgentSettings { position:relative !important; z-index:3201 !important; width:auto !important; min-width:220px !important; max-width:280px !important; min-height:36px !important; padding:8px 14px !important; border-radius:6px !important; box-shadow:0 12px 26px rgba(20,184,166,.18) !important; }
+      #agentSetupView .agentSaveFeedback { flex:1 1 auto !important; min-height:36px !important; display:flex !important; align-items:center !important; padding:8px 12px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:6px !important; background:rgba(15,23,42,.72) !important; color:#9fb0c8 !important; font-weight:800 !important; letter-spacing:0 !important; }
+      #agentSetupView .agentSaveFeedback[data-state="dirty"] { color:#fbbf24 !important; border-color:rgba(251,191,36,.42) !important; background:rgba(251,191,36,.08) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="saving"] { color:#67e8f9 !important; border-color:rgba(34,211,238,.50) !important; background:linear-gradient(90deg, rgba(34,211,238,.16), rgba(15,23,42,.72)) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="saved"] { color:#34d399 !important; border-color:rgba(52,211,153,.55) !important; background:linear-gradient(90deg, rgba(16,185,129,.18), rgba(15,23,42,.72)) !important; }
+      #agentSetupView .agentSaveFeedback[data-state="error"] { color:#fca5a5 !important; border-color:rgba(248,113,113,.58) !important; background:linear-gradient(90deg, rgba(248,113,113,.16), rgba(15,23,42,.72)) !important; }
+      #agentSetupView #saveAgentSettings { position:relative !important; z-index:3201 !important; flex:0 0 170px !important; width:170px !important; min-width:150px !important; max-width:190px !important; min-height:36px !important; padding:8px 14px !important; border-radius:6px !important; box-shadow:0 12px 26px rgba(20,184,166,.18) !important; }
       #agentSetupView .agentSetupToggle { width:34px !important; min-width:34px !important; max-width:34px !important; height:34px !important; border-radius:6px !important; }
       #agentSetupView .settingsGroup.open, #agentSetupView .agentIndicatorGroup.open, #agentSetupView .agentDirectGroup.open, #agentSetupView .agentUtilityGroup.open, #agentSetupView .settingsGroup:focus-within, #agentSetupView .agentIndicatorGroup:focus-within, #agentSetupView .agentDirectGroup:focus-within, #agentSetupView .agentUtilityGroup:focus-within { height:auto !important; max-height:none !important; min-height:0 !important; z-index:120 !important; overflow:visible !important; }
       #agentSetupView .modalBackdrop, #agentSetupView .modal { z-index:2000 !important; }
       .modalBackdrop.open { z-index:2000 !important; }
       .modalBackdrop.open .modal, .modal.open { z-index:2010 !important; }
-      @media (max-width:900px) { #agentSetupView .configModalBody { grid-template-columns:1fr !important; } #agentSetupView .agentSetupFinalCards .settingsGroupGrid { grid-template-columns:1fr auto !important; } #agentSetupView #saveAgentSettings { width:100% !important; max-width:none !important; } }
+      @media (max-width:900px) { #agentSetupView .configModalBody { grid-template-columns:1fr !important; } #agentSetupView .agentSetupFinalCards .settingsGroupGrid { grid-template-columns:1fr auto !important; } #agentSetupView #saveAgentSettings { flex:0 0 170px !important; width:170px !important; max-width:190px !important; } }
       @media (max-width:760px) { #agentSetupView .agentSetupFinalCards { grid-template-columns:1fr !important; } }
       @media (max-width:900px) { #agentSetupView .llmTeamGroup .settingsGroupGrid { grid-template-columns:1fr !important; } }
       @media (max-width:760px) { #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { grid-template-columns:1fr !important; } }

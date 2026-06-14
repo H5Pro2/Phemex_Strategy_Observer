@@ -5,7 +5,7 @@
 // ==================================================
 
 (function () {
-  const PATCH_VERSION = '2026-06-02-tradingview-overlay-v3-top-controls-hud';
+  const PATCH_VERSION = '2026-06-04-tradingview-overlay-v4-sl-entry-dock';
   const OVERLAY_GROUP = 'tv_strategy_overlay';
   let overlayIds = [];
   let overlaysRegistered = false;
@@ -79,9 +79,16 @@
   function setupPrices(overlay) {
     const setup = overlay?.setup || {};
     const scan = overlay?.scan || {};
+    const entry = Number(setup.entry ?? scan.entry);
+    const rawStop = Number(setup.stop_loss ?? scan.stop_loss);
+    const snapDistance = Number.isFinite(entry)
+      ? Math.max(Math.abs(entry) * 0.00005, 0.0001)
+      : 0;
+    const stopDocked = Number.isFinite(entry) && Number.isFinite(rawStop) && Math.abs(rawStop - entry) <= snapDistance;
     return {
-      entry: Number(setup.entry ?? scan.entry),
-      stop: Number(setup.stop_loss ?? scan.stop_loss),
+      entry,
+      stop: stopDocked ? entry : rawStop,
+      stopDocked,
       tp: Number(setup.take_profit ?? scan.take_profit),
       side: directionFromOverlay(overlay)
     };
@@ -145,13 +152,20 @@
         const data = overlay.extendData || {};
         const x = Math.min(coordinates[0].x, coordinates[1].x);
         const width = Math.max(4, Math.abs(coordinates[1].x - coordinates[0].x));
-        const y = Math.min(coordinates[0].y, coordinates[1].y);
-        const height = Math.max(3, Math.abs(coordinates[1].y - coordinates[0].y));
+        const rawHeight = Math.abs(coordinates[1].y - coordinates[0].y);
+        const isDocked = data.docked === true || rawHeight < 2;
+        const y = isDocked
+          ? Math.min(coordinates[0].y, coordinates[1].y) - 1
+          : Math.min(coordinates[0].y, coordinates[1].y);
+        const height = isDocked ? 3 : Math.max(3, rawHeight);
         const color = data.kind === 'reward' ? '#22c55e' : '#ef4444';
-        const fill = data.kind === 'reward' ? 'rgba(34,197,94,.13)' : 'rgba(239,68,68,.13)';
-        const label = data.kind === 'reward' ? `Target ${fmt(data.price)}` : `Stop ${fmt(data.price)}`;
+        const fill = data.kind === 'reward' ? 'rgba(34,197,94,.13)' : (isDocked ? 'rgba(239,68,68,.20)' : 'rgba(239,68,68,.13)');
+        const label = data.kind === 'reward'
+          ? `Target ${fmt(data.price)}`
+          : (isDocked ? `Stop @ Entry ${fmt(data.price)}` : `Stop ${fmt(data.price)}`);
         return [
           { type: 'rect', attrs: { x, y, width, height }, styles: { style: 'stroke_fill', color: fill, borderColor: color }, ignoreEvent: true },
+          ...(isDocked ? [{ type: 'line', attrs: { coordinates: [{ x, y: y + 1.5 }, { x: x + width, y: y + 1.5 }] }, styles: { color, size: 2, style: 'solid' }, ignoreEvent: true }] : []),
           { type: 'text', attrs: { x: x + 12, y: y + 15, text: label, align: 'left', baseline: 'middle' }, styles: textStyle(color, 11), ignoreEvent: true }
         ];
       }
@@ -210,7 +224,7 @@
         lock: true,
         zLevel: 38,
         points: [point(range.last - range.step * 18, riskTop), point(range.end, riskBottom)],
-        extendData: { kind: 'risk', price: prices.stop }
+        extendData: { kind: 'risk', price: prices.stop, docked: prices.stopDocked }
       }));
     }
 
@@ -280,7 +294,7 @@
       </div>
       <div class="tvHudPrices">
         <span><b>Entry</b>${fmt(prices.entry)}</span>
-        <span><b>SL</b>${fmt(prices.stop)}</span>
+        <span><b>SL</b>${prices.stopDocked ? `@ Entry ${fmt(prices.stop)}` : fmt(prices.stop)}</span>
         <span><b>TP</b>${fmt(prices.tp)}</span>
         <span><b>RR</b>${rr === null ? '-' : rr.toFixed(2)}</span>
       </div>

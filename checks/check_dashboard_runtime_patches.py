@@ -23,8 +23,12 @@ REQUIRED_PATCHES = [
     "dashboard_agent_setup_cleanup_patch.js",
     "dashboard_settings_layout_patch.js",
     "dashboard_settings_tabs_patch.js",
+    "dashboard_agent_setup_final_order_patch.js",
+    "dashboard_chart_status_layout_fix_patch.js",
+    "dashboard_chart_view_focus_patch.js",
     "dashboard_tradingview_overlay_patch.js",
-    "dashboard_replay_view_layout_patch.js",
+    "dashboard_chart_view_controls_patch.js",
+    "dashboard_bot_view_layout_patch.js",
 ]
 
 
