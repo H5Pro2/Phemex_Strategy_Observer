@@ -1481,6 +1481,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let currentView = 'dashboard';
     let agentSortMode = 'score_desc';
     let agentRoleFilter = 'all';
+    const DETAILS_STATE_PREFIX = 'phemex-details-open:';
     let detailsOpenState = {};
     let lastChartKey = '';
     let klineChart = null;
@@ -1639,13 +1640,58 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let refreshRunning = false;
     let refreshFailedCount = 0;
     let agentSettingsSaveResetTimer = null;
-    window.__setDetailsOpen = (key, open) => {
+    function loadDetailsOpenState(key, fallback=false) {
+      if (!key) return !!fallback;
+      try {
+        const stored = window.localStorage?.getItem(`${DETAILS_STATE_PREFIX}${key}`);
+        if (stored === '1') return true;
+        if (stored === '0') return false;
+      } catch (error) {}
+      return Object.prototype.hasOwnProperty.call(detailsOpenState, key) ? detailsOpenState[key] : !!fallback;
+    }
+    function storeDetailsOpenState(key, open) {
       if (!key) return;
       detailsOpenState[key] = !!open;
-    };
+      try {
+        window.localStorage?.setItem(`${DETAILS_STATE_PREFIX}${key}`, open ? '1' : '0');
+      } catch (error) {}
+    }
+    window.__setDetailsOpen = storeDetailsOpenState;
     function detailsAttrs(key, defaultOpen=false) {
-      const open = Object.prototype.hasOwnProperty.call(detailsOpenState, key) ? detailsOpenState[key] : !!defaultOpen;
+      const open = loadDetailsOpenState(key, defaultOpen);
       return `data-details-key="${key}" ${open ? 'open ' : ''}ontoggle="window.__setDetailsOpen && window.__setDetailsOpen('${key}', this.open)"`;
+    }
+    function installDetailsStateHandler() {
+      if (document.body.dataset.detailsStateHandler === '1') return;
+      document.body.dataset.detailsStateHandler = '1';
+      document.addEventListener('toggle', event => {
+        const target = event.target;
+        if (!(target instanceof HTMLDetailsElement)) return;
+        storeDetailsOpenState(target.dataset.detailsKey, target.open);
+      }, true);
+      document.addEventListener('click', event => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest('button, a, input, select, textarea, label')) return;
+        const summary = target.closest('summary');
+        const details = summary?.closest('details[data-details-key]');
+        if (!details) return;
+        event.preventDefault();
+        details.open = !details.open;
+        storeDetailsOpenState(details.dataset.detailsKey, details.open);
+      }, true);
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest('button, a, input, select, textarea, label')) return;
+        const summary = target.closest('summary');
+        const details = summary?.closest('details[data-details-key]');
+        if (!details) return;
+        event.preventDefault();
+        details.open = !details.open;
+        storeDetailsOpenState(details.dataset.detailsKey, details.open);
+      }, true);
     }
     function mergeConfigState(update = {}) {
       if (!update || typeof update !== 'object') return latestConfig || {};
@@ -5885,6 +5931,7 @@ Rueckmeldung: ${message}</div>
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
+    installDetailsStateHandler();
     installBotControlHandler();
     bindBotControlButtons();
     document.getElementById('assetFilter').addEventListener('change', event => {
