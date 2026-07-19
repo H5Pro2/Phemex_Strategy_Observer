@@ -379,6 +379,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let botControlRequestRunning = false;
     let dashboardReloadRequestRunning = false;
     let resetConfirmRequest = null;
+    let tradingOrderType = 'limit';
     function loadDetailsOpenState(key, fallback=false) {
       if (!key) return !!fallback;
       try {
@@ -4198,6 +4199,75 @@ Rueckmeldung: ${message}</div>
       const mode = document.getElementById('sizeMode').value;
       document.getElementById('sizeUsdWrap').style.display = mode === 'usd' ? 'block' : 'none';
       document.getElementById('sizeAssetWrap').style.display = mode === 'asset' ? 'block' : 'none';
+      renderTradingPreview();
+    }
+    function tradingSymbolParts(symbol) {
+      const value = String(symbol || 'BTCUSDT').toUpperCase();
+      if (value.endsWith('USDT')) return { base: value.slice(0, -4), quote: 'USDT' };
+      if (value.endsWith('USD')) return { base: value.slice(0, -3), quote: 'USD' };
+      return { base: value, quote: 'USDT' };
+    }
+    function tradingReferencePrice(symbol) {
+      const safeSymbol = String(symbol || '').toUpperCase();
+      const signals = Array.isArray(latestStatusData?.cycle?.signals) ? latestStatusData.cycle.signals : [];
+      const signal = signals.slice().reverse().find(item => String(item?.symbol || item?.setup?.symbol || '').toUpperCase() === safeSymbol);
+      const signalPrice = Number(signal?.entry_price ?? signal?.setup?.entry ?? signal?.price);
+      if (Number.isFinite(signalPrice) && signalPrice > 0) return signalPrice;
+      const trades = Array.isArray(latestStatusData?.paper?.trades) ? latestStatusData.paper.trades : [];
+      const trade = trades.slice().reverse().find(item => String(item?.setup?.symbol || '').toUpperCase() === safeSymbol);
+      const tradePrice = Number(trade?.setup?.entry ?? trade?.setup?.entry_price);
+      return Number.isFinite(tradePrice) && tradePrice > 0 ? tradePrice : null;
+    }
+    function setTradingOrderType(type) {
+      tradingOrderType = type === 'market' ? 'market' : 'limit';
+      document.querySelectorAll('[data-trading-order-type]').forEach(button => {
+        button.classList.toggle('active', button.dataset.tradingOrderType === tradingOrderType);
+      });
+      const price = document.getElementById('tradingLimitPrice');
+      if (price) price.disabled = tradingOrderType === 'market';
+      renderTradingPreview();
+    }
+    function renderTradingPreview() {
+      const selector = document.getElementById('tradeSizeAssetSelector');
+      const symbol = selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || ['BTCUSDT'])[0] || 'BTCUSDT';
+      const parts = tradingSymbolParts(symbol);
+      const baseEl = document.getElementById('tradingBaseAsset');
+      const quoteEl = document.getElementById('tradingQuoteCurrency');
+      if (baseEl) baseEl.textContent = parts.base;
+      if (quoteEl) quoteEl.textContent = parts.quote;
+      const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
+      const availableEl = document.getElementById('tradingAvailable');
+      if (availableEl) availableEl.textContent = Number.isFinite(available) ? `${available.toFixed(4)} ${parts.quote}` : `-- ${parts.quote}`;
+      const priceInput = document.getElementById('tradingLimitPrice');
+      const referencePrice = tradingReferencePrice(symbol);
+      if (priceInput && !priceInput.value && referencePrice) priceInput.value = String(referencePrice);
+      const price = tradingOrderType === 'market' ? (referencePrice || Number(priceInput?.value || 0)) : Number(priceInput?.value || 0);
+      const mode = document.getElementById('sizeMode')?.value || 'usd';
+      const usd = Number(document.getElementById('sizeUsd')?.value || 0);
+      const asset = Number(document.getElementById('sizeAsset')?.value || 0);
+      const quantity = mode === 'asset' ? asset : (price > 0 ? usd / price : 0);
+      const cost = mode === 'usd' ? usd : (price > 0 ? asset * price : 0);
+      const riskPercent = Number(document.getElementById('tradingRiskPercentValue')?.value || 0);
+      const riskCost = cost > 0 && Number.isFinite(riskPercent) ? cost * riskPercent / 100 : 0;
+      const sizeEl = document.getElementById('tradingPreviewSize');
+      const costEl = document.getElementById('tradingPreviewCost');
+      const liqEl = document.getElementById('tradingPreviewLiq');
+      if (sizeEl) sizeEl.textContent = quantity > 0 ? `${quantity.toFixed(quantity >= 1 ? 4 : 6)} ${parts.base}` : `-- ${parts.base}`;
+      if (costEl) {
+        costEl.innerHTML = cost > 0
+          ? `${cost.toFixed(4)} / <span class="riskCost">${riskCost.toFixed(4)}</span> ${parts.quote}`
+          : `-- ${parts.quote}`;
+      }
+      if (liqEl) liqEl.textContent = price > 0 ? `-- / -- ${parts.quote}` : `-- / -- ${parts.quote}`;
+    }
+    function syncTradingRiskInput(source) {
+      const slider = document.getElementById('tradingRiskPercent');
+      const input = document.getElementById('tradingRiskPercentValue');
+      if (!slider || !input) return;
+      const value = Math.max(0, Math.min(100, Number((source === 'slider' ? slider.value : input.value) || 0)));
+      slider.value = String(Math.min(10, value));
+      input.value = String(value);
+      renderTradingPreview();
     }
     function renderTradeSizeAssetSelector(cfg) {
       const wrap = document.getElementById('tradeSizeAssetSelectorWrap');
@@ -4236,6 +4306,7 @@ Rueckmeldung: ${message}</div>
       document.getElementById('sizeUsd').value = fmt(size.usd, 0);
       document.getElementById('sizeAsset').value = fmt(size.asset, 0);
       updateSizeVisibility();
+      renderTradingPreview();
     }
     async function loadTradingSettings() {
       const response = await fetch('/api/status', { cache: 'no-store' });
@@ -4246,6 +4317,8 @@ Rueckmeldung: ${message}</div>
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
       renderTradeSizeAssetSelector(latestConfig);
       loadTradeSizeForSelectedAsset();
+      setTradingOrderType(tradingOrderType);
+      renderTradingPreview();
       openModal('tradingModal');
     }
     async function openSetupFile(target) {
@@ -4743,13 +4816,23 @@ Rueckmeldung: ${message}</div>
     document.getElementById('tradeSizeAssetSelector').addEventListener('change', () => {
       persistCurrentTradeSizeDraft(activeTradeSizeSymbol);
       loadTradeSizeForSelectedAsset();
+      renderTradingPreview();
     });
     document.getElementById('sizeMode').addEventListener('change', () => {
       updateSizeVisibility();
       persistCurrentTradeSizeDraft();
+      renderTradingPreview();
     });
-    document.getElementById('sizeUsd').addEventListener('input', () => persistCurrentTradeSizeDraft());
-    document.getElementById('sizeAsset').addEventListener('input', () => persistCurrentTradeSizeDraft());
+    document.getElementById('sizeUsd').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
+    document.getElementById('sizeAsset').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
+    document.getElementById('tradingLimitPrice')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingTakeProfit')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingStopLoss')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingRiskPercent')?.addEventListener('input', () => syncTradingRiskInput('slider'));
+    document.getElementById('tradingRiskPercentValue')?.addEventListener('input', () => syncTradingRiskInput('input'));
+    document.querySelectorAll('[data-trading-order-type]').forEach(button => {
+      button.addEventListener('click', () => setTradingOrderType(button.dataset.tradingOrderType));
+    });
     document.getElementById('paperToggle').addEventListener('change', () => syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox'));
     document.getElementById('cfgCorrelationBlock').addEventListener('change', () => syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState'));
     document.getElementById('cfgTrendFilter').addEventListener('change', () => syncSwitchState('cfgTrendFilter', 'cfgTrendState'));

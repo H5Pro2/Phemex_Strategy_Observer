@@ -126,6 +126,43 @@
     .modalBackdrop { display:none; position:fixed; inset:0; z-index:2000; background:rgba(15,23,42,.42); align-items:center; justify-content:center; padding:24px; }
     .modalBackdrop.open { display:flex; }
     .modal { width:min(680px, 100%); max-height:90vh; overflow:auto; background:#fff; border-radius:8px; border:1px solid var(--line); box-shadow:0 24px 60px rgba(23,32,51,.28); }
+    .tradingOrderModal { width:min(420px, 100%); background:#0f1724; border-color:#243449; color:#e5e7eb; border-radius:5px; }
+    .tradingOrderModal .modalHeader { border-bottom:1px solid #223047; padding:14px 16px; }
+    .tradingOrderModal .modalHeader h2 { margin:0; font-size:15px; letter-spacing:.03em; }
+    .tradingOrderModal .closeButton { min-height:34px; padding:7px 11px; background:#243044; color:#cbd5e1; border-color:#334155; }
+    .tradingOrderBody { display:block; padding:14px; background:#0f1724; }
+    .tradingOrderBody label { color:#7f8ea3; font-size:13px; text-transform:none; letter-spacing:0; }
+    .tradingOrderBody input,
+    .tradingOrderBody select { min-height:38px; background:#0b111d; color:#e5e7eb; border-color:#26364c; border-radius:4px; font-weight:700; }
+    .tradingOrderBody input::placeholder { color:#58687d; }
+    .tradingTopBar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    .segmentedControl { display:inline-flex; overflow:hidden; border:1px solid #26364c; border-radius:5px; background:#111c2b; }
+    .segmentedControl button { min-height:30px; padding:6px 13px; border:0; border-radius:0; background:transparent; color:#7f8ea3; font-size:12px; font-weight:800; }
+    .segmentedControl button.active { background:#164563; color:#e0f2fe; box-shadow:inset 0 0 0 1px rgba(56,189,248,.16); }
+    .segmentedControl button:disabled { opacity:1; }
+    .leverageControl { display:flex; align-items:center; gap:8px; color:#7f8ea3; font-size:13px; }
+    .leverageControl strong { min-width:72px; min-height:32px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #24415b; border-radius:5px; background:#0b111d; color:#f8fafc; }
+    .leverageControl small { color:#38bdf8; font-weight:800; }
+    .tradingPaperToggle { margin-bottom:14px; border-color:#24415b; background:#111c2b; }
+    .tradingPaperToggle label { margin:0; color:#e5e7eb; font-size:16px; font-weight:900; }
+    .tradingField { margin-top:11px; }
+    .orderTypeRow { display:flex; align-items:end; justify-content:space-between; gap:14px; margin:11px 0 8px; padding-bottom:7px; border-bottom:2px solid rgba(229,231,235,.84); }
+    .orderTypeRow strong { font-size:14px; color:#fff; }
+    .suffixInput { display:grid; grid-template-columns:minmax(0, 1fr) auto; align-items:center; border:1px solid #26364c; border-radius:4px; background:#0b111d; overflow:hidden; }
+    .suffixInput input { border:0; border-radius:0; background:transparent; }
+    .suffixInput span { padding:0 10px; color:#aab7c8; font-size:12px; font-weight:900; white-space:nowrap; }
+    .tpSlGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px; }
+    .riskSliderRow { display:grid; grid-template-columns:minmax(0, 1fr) 88px; gap:8px; align-items:center; margin-top:12px; }
+    .riskSliderRow input[type="range"] { min-height:24px; padding:0; accent-color:#38bdf8; }
+    .percentInput input { min-height:34px; padding:7px 8px; }
+    .availableLine { margin-top:12px; color:#7f8ea3; font-size:13px; }
+    .availableLine strong { color:#f8fafc; }
+    .orderSummaryBox { margin-top:10px; padding:10px; border:1px solid #1f2d42; border-radius:4px; background:#111c2b; display:grid; gap:8px; }
+    .orderSummaryBox div { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#7f8ea3; font-size:13px; }
+    .orderSummaryBox strong { color:#f8fafc; text-align:right; }
+    .orderSummaryBox div:nth-child(2) strong { color:#34d399; }
+    .orderSummaryBox div:nth-child(2) strong .riskCost { color:#f87171; }
+    .tradingOrderBody #settingsStatus { margin-top:10px; min-height:16px; color:#94a3b8; }
     .chartSetupModalBox { width:min(980px, 100%); }
     .replayHeader { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--line); }
     .replayHeader h2 { margin:0; letter-spacing:.01em; }
@@ -989,14 +1026,50 @@
     </div>
   </div>
   <div id="tradingModal" class="modalBackdrop">
-    <div class="modal">
+    <div class="modal tradingOrderModal">
       <div class="modalHeader"><h2>Trading-Einstellungen</h2><button class="closeButton" data-close-modal="tradingModal">Schließen</button></div>
-      <div class="modalBody">
-        <div id="paperToggleBox" class="paperToggleLarge"><input id="paperToggle" class="switchInput" type="checkbox"><label for="paperToggle">Paper-Trading</label><span id="paperToggleState" class="switchState">Aus</span></div>
-        <div id="tradeSizeAssetSelectorWrap"><label for="tradeSizeAssetSelector">Asset Positionsgröße</label><select id="tradeSizeAssetSelector"></select></div>
+      <div class="modalBody tradingOrderBody">
+        <div class="tradingTopBar">
+          <div class="segmentedControl" aria-label="Margin Modus">
+            <button class="ghostButton" type="button" disabled>Cross</button>
+            <button class="active" type="button" disabled>Isoliert</button>
+          </div>
+          <div class="leverageControl">
+            <span>Hebel</span>
+            <strong>10</strong>
+            <small>x</small>
+          </div>
+        </div>
+        <div id="paperToggleBox" class="paperToggleLarge tradingPaperToggle"><input id="paperToggle" class="switchInput" type="checkbox"><label for="paperToggle">Paper-Trading</label><span id="paperToggleState" class="switchState">Aus</span></div>
+        <div id="tradeSizeAssetSelectorWrap" class="tradingField"><label for="tradeSizeAssetSelector">Asset</label><select id="tradeSizeAssetSelector"></select></div>
+        <div class="orderTypeRow">
+          <strong>Ordertyp</strong>
+          <div class="segmentedControl" aria-label="Ordertyp">
+            <button id="tradingOrderLimit" class="active" type="button" data-trading-order-type="limit">Limit</button>
+            <button id="tradingOrderMarket" type="button" data-trading-order-type="market">Market</button>
+          </div>
+        </div>
+        <div class="tradingField">
+          <label for="tradingLimitPrice">Limitpreis</label>
+          <div class="suffixInput"><input id="tradingLimitPrice" type="number" min="0" step="0.0001" placeholder="Letzter Preis"><span id="tradingQuoteCurrency">USDT</span></div>
+        </div>
         <div><label for="sizeMode">Positionsgröße</label><select id="sizeMode"><option value="usd">USD / USDT</option><option value="asset">Asset-Menge</option></select></div>
-        <div id="sizeUsdWrap"><label for="sizeUsd">Betrag USD/USDT</label><input id="sizeUsd" type="number" min="0" step="0.01"></div>
-        <div id="sizeAssetWrap"><label for="sizeAsset">Asset-Menge</label><input id="sizeAsset" type="number" min="0" step="0.000001"></div>
+        <div id="sizeUsdWrap" class="tradingField"><label for="sizeUsd">Betrag</label><div class="suffixInput"><input id="sizeUsd" type="number" min="0" step="0.01"><span>USDT</span></div></div>
+        <div id="sizeAssetWrap" class="tradingField"><label for="sizeAsset">Größe</label><div class="suffixInput"><input id="sizeAsset" type="number" min="0" step="0.000001"><span id="tradingBaseAsset">Asset</span></div></div>
+        <div class="tpSlGrid">
+          <div><label for="tradingTakeProfit">Gewinnziel</label><input id="tradingTakeProfit" type="number" min="0" step="0.0001" placeholder="TP"></div>
+          <div><label for="tradingStopLoss">Verluststopp</label><input id="tradingStopLoss" type="number" min="0" step="0.0001" placeholder="SL"></div>
+        </div>
+        <div class="riskSliderRow">
+          <input id="tradingRiskPercent" type="range" min="0" max="10" step="0.01" value="0">
+          <div class="suffixInput percentInput"><input id="tradingRiskPercentValue" type="number" min="0" max="100" step="0.01" value="0"><span>%</span></div>
+        </div>
+        <div class="availableLine">Verfügbar: <strong id="tradingAvailable">-- USDT</strong></div>
+        <div class="orderSummaryBox">
+          <div><span>Größe</span><strong id="tradingPreviewSize">--</strong></div>
+          <div><span>Kosten</span><strong id="tradingPreviewCost">-- USDT</strong></div>
+          <div><span>Geschätz. Liq. Preis</span><strong id="tradingPreviewLiq">-- / -- USDT</strong></div>
+        </div>
         <div id="settingsStatus" class="label"></div>
       </div>
       <div class="modalActions"><button id="saveSettings" class="primaryActionButton">Speichern</button></div>
@@ -1644,6 +1717,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let botControlRequestRunning = false;
     let dashboardReloadRequestRunning = false;
     let resetConfirmRequest = null;
+    let tradingOrderType = 'limit';
     function loadDetailsOpenState(key, fallback=false) {
       if (!key) return !!fallback;
       try {
@@ -5463,6 +5537,75 @@ Rueckmeldung: ${message}</div>
       const mode = document.getElementById('sizeMode').value;
       document.getElementById('sizeUsdWrap').style.display = mode === 'usd' ? 'block' : 'none';
       document.getElementById('sizeAssetWrap').style.display = mode === 'asset' ? 'block' : 'none';
+      renderTradingPreview();
+    }
+    function tradingSymbolParts(symbol) {
+      const value = String(symbol || 'BTCUSDT').toUpperCase();
+      if (value.endsWith('USDT')) return { base: value.slice(0, -4), quote: 'USDT' };
+      if (value.endsWith('USD')) return { base: value.slice(0, -3), quote: 'USD' };
+      return { base: value, quote: 'USDT' };
+    }
+    function tradingReferencePrice(symbol) {
+      const safeSymbol = String(symbol || '').toUpperCase();
+      const signals = Array.isArray(latestStatusData?.cycle?.signals) ? latestStatusData.cycle.signals : [];
+      const signal = signals.slice().reverse().find(item => String(item?.symbol || item?.setup?.symbol || '').toUpperCase() === safeSymbol);
+      const signalPrice = Number(signal?.entry_price ?? signal?.setup?.entry ?? signal?.price);
+      if (Number.isFinite(signalPrice) && signalPrice > 0) return signalPrice;
+      const trades = Array.isArray(latestStatusData?.paper?.trades) ? latestStatusData.paper.trades : [];
+      const trade = trades.slice().reverse().find(item => String(item?.setup?.symbol || '').toUpperCase() === safeSymbol);
+      const tradePrice = Number(trade?.setup?.entry ?? trade?.setup?.entry_price);
+      return Number.isFinite(tradePrice) && tradePrice > 0 ? tradePrice : null;
+    }
+    function setTradingOrderType(type) {
+      tradingOrderType = type === 'market' ? 'market' : 'limit';
+      document.querySelectorAll('[data-trading-order-type]').forEach(button => {
+        button.classList.toggle('active', button.dataset.tradingOrderType === tradingOrderType);
+      });
+      const price = document.getElementById('tradingLimitPrice');
+      if (price) price.disabled = tradingOrderType === 'market';
+      renderTradingPreview();
+    }
+    function renderTradingPreview() {
+      const selector = document.getElementById('tradeSizeAssetSelector');
+      const symbol = selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || ['BTCUSDT'])[0] || 'BTCUSDT';
+      const parts = tradingSymbolParts(symbol);
+      const baseEl = document.getElementById('tradingBaseAsset');
+      const quoteEl = document.getElementById('tradingQuoteCurrency');
+      if (baseEl) baseEl.textContent = parts.base;
+      if (quoteEl) quoteEl.textContent = parts.quote;
+      const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
+      const availableEl = document.getElementById('tradingAvailable');
+      if (availableEl) availableEl.textContent = Number.isFinite(available) ? `${available.toFixed(4)} ${parts.quote}` : `-- ${parts.quote}`;
+      const priceInput = document.getElementById('tradingLimitPrice');
+      const referencePrice = tradingReferencePrice(symbol);
+      if (priceInput && !priceInput.value && referencePrice) priceInput.value = String(referencePrice);
+      const price = tradingOrderType === 'market' ? (referencePrice || Number(priceInput?.value || 0)) : Number(priceInput?.value || 0);
+      const mode = document.getElementById('sizeMode')?.value || 'usd';
+      const usd = Number(document.getElementById('sizeUsd')?.value || 0);
+      const asset = Number(document.getElementById('sizeAsset')?.value || 0);
+      const quantity = mode === 'asset' ? asset : (price > 0 ? usd / price : 0);
+      const cost = mode === 'usd' ? usd : (price > 0 ? asset * price : 0);
+      const riskPercent = Number(document.getElementById('tradingRiskPercentValue')?.value || 0);
+      const riskCost = cost > 0 && Number.isFinite(riskPercent) ? cost * riskPercent / 100 : 0;
+      const sizeEl = document.getElementById('tradingPreviewSize');
+      const costEl = document.getElementById('tradingPreviewCost');
+      const liqEl = document.getElementById('tradingPreviewLiq');
+      if (sizeEl) sizeEl.textContent = quantity > 0 ? `${quantity.toFixed(quantity >= 1 ? 4 : 6)} ${parts.base}` : `-- ${parts.base}`;
+      if (costEl) {
+        costEl.innerHTML = cost > 0
+          ? `${cost.toFixed(4)} / <span class="riskCost">${riskCost.toFixed(4)}</span> ${parts.quote}`
+          : `-- ${parts.quote}`;
+      }
+      if (liqEl) liqEl.textContent = price > 0 ? `-- / -- ${parts.quote}` : `-- / -- ${parts.quote}`;
+    }
+    function syncTradingRiskInput(source) {
+      const slider = document.getElementById('tradingRiskPercent');
+      const input = document.getElementById('tradingRiskPercentValue');
+      if (!slider || !input) return;
+      const value = Math.max(0, Math.min(100, Number((source === 'slider' ? slider.value : input.value) || 0)));
+      slider.value = String(Math.min(10, value));
+      input.value = String(value);
+      renderTradingPreview();
     }
     function renderTradeSizeAssetSelector(cfg) {
       const wrap = document.getElementById('tradeSizeAssetSelectorWrap');
@@ -5501,6 +5644,7 @@ Rueckmeldung: ${message}</div>
       document.getElementById('sizeUsd').value = fmt(size.usd, 0);
       document.getElementById('sizeAsset').value = fmt(size.asset, 0);
       updateSizeVisibility();
+      renderTradingPreview();
     }
     async function loadTradingSettings() {
       const response = await fetch('/api/status', { cache: 'no-store' });
@@ -5511,6 +5655,8 @@ Rueckmeldung: ${message}</div>
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
       renderTradeSizeAssetSelector(latestConfig);
       loadTradeSizeForSelectedAsset();
+      setTradingOrderType(tradingOrderType);
+      renderTradingPreview();
       openModal('tradingModal');
     }
     async function openSetupFile(target) {
@@ -6008,13 +6154,23 @@ Rueckmeldung: ${message}</div>
     document.getElementById('tradeSizeAssetSelector').addEventListener('change', () => {
       persistCurrentTradeSizeDraft(activeTradeSizeSymbol);
       loadTradeSizeForSelectedAsset();
+      renderTradingPreview();
     });
     document.getElementById('sizeMode').addEventListener('change', () => {
       updateSizeVisibility();
       persistCurrentTradeSizeDraft();
+      renderTradingPreview();
     });
-    document.getElementById('sizeUsd').addEventListener('input', () => persistCurrentTradeSizeDraft());
-    document.getElementById('sizeAsset').addEventListener('input', () => persistCurrentTradeSizeDraft());
+    document.getElementById('sizeUsd').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
+    document.getElementById('sizeAsset').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
+    document.getElementById('tradingLimitPrice')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingTakeProfit')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingStopLoss')?.addEventListener('input', renderTradingPreview);
+    document.getElementById('tradingRiskPercent')?.addEventListener('input', () => syncTradingRiskInput('slider'));
+    document.getElementById('tradingRiskPercentValue')?.addEventListener('input', () => syncTradingRiskInput('input'));
+    document.querySelectorAll('[data-trading-order-type]').forEach(button => {
+      button.addEventListener('click', () => setTradingOrderType(button.dataset.tradingOrderType));
+    });
     document.getElementById('paperToggle').addEventListener('change', () => syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox'));
     document.getElementById('cfgCorrelationBlock').addEventListener('change', () => syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState'));
     document.getElementById('cfgTrendFilter').addEventListener('change', () => syncSwitchState('cfgTrendFilter', 'cfgTrendState'));
@@ -8374,6 +8530,10 @@ Rueckmeldung: ${message}</div>
       .modalBackdrop.open .chartSetupModalBox {
         width:min(1320px, calc(100vw - 36px)) !important;
       }
+      #tradingModal.open .tradingOrderModal {
+        width:min(420px, calc(100vw - 18px)) !important;
+        max-height:calc(100vh - 24px) !important;
+      }
       .modalBackdrop.open .modalHeader {
         min-height:58px !important;
         padding:14px 18px !important;
@@ -8388,6 +8548,10 @@ Rueckmeldung: ${message}</div>
         max-height:calc(100vh - 160px) !important;
         overflow:auto !important;
         padding:16px 18px !important;
+      }
+      #tradingModal.open .tradingOrderBody {
+        max-height:calc(100vh - 120px) !important;
+        padding:14px !important;
       }
       .modalBackdrop.open .modalActions {
         min-height:58px !important;
