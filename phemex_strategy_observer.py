@@ -129,7 +129,7 @@ class Setup:
     fvg_low: float
     fvg_high: float
     features: dict[str, Any]
-    trade_size_mode: str = "usd"
+    trade_size_mode: str = "asset"
     planned_notional_usd: float | None = None
     planned_quantity_asset: float | None = None
     confidence: float = 0.5
@@ -658,7 +658,7 @@ def apply_asset_file_to_config(config: dict[str, Any], config_path: Path | None 
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    config = json.loads(path.read_text(encoding="utf-8"))
+    config = json.loads(path.read_text(encoding="utf-8-sig"))
     config["base_url"] = os.getenv("PHEMEX_BASE_URL", config.get("base_url", "https://api.phemex.com"))
     config["_config_path"] = str(path)
     config.setdefault("paper_trading_enabled", True)
@@ -716,10 +716,19 @@ def load_config(path: Path) -> dict[str, Any]:
         config["symbols"] = config["symbols"][:1]
         path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     apply_asset_file_to_config(config, path)
-    config.setdefault("trade_size_mode", "usd")
-    config.setdefault("trade_size_usd", 100.0)
-    config.setdefault("trade_size_asset", 0.001)
+    config.setdefault("trade_size_mode", "asset")
+    config.setdefault("trade_size_usd", 0.0)
+    config.setdefault("trade_size_asset", 0.0)
     config.setdefault("trade_sizes_by_symbol", {})
+    if (
+        not config.get("trade_sizes_by_symbol")
+        and config.get("trade_size_mode") == "usd"
+        and float(config.get("trade_size_usd") or 0.0) == 100.0
+        and float(config.get("trade_size_asset") or 0.0) == 0.001
+    ):
+        config["trade_size_mode"] = "asset"
+        config["trade_size_usd"] = 0.0
+        config["trade_size_asset"] = 0.0
     config.setdefault("account_balance_currency", "USDT")
     config.setdefault("status_path", "data/runtime_status.json")
     config.setdefault("web_host", "127.0.0.1")
