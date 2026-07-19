@@ -379,7 +379,6 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let botControlRequestRunning = false;
     let dashboardReloadRequestRunning = false;
     let resetConfirmRequest = null;
-    let tradingOrderType = 'limit';
     let tradingMarginMode = 'isolated';
     function loadDetailsOpenState(key, fallback=false) {
       if (!key) return !!fallback;
@@ -4220,15 +4219,6 @@ Rueckmeldung: ${message}</div>
       const tradePrice = Number(trade?.setup?.entry ?? trade?.setup?.entry_price);
       return Number.isFinite(tradePrice) && tradePrice > 0 ? tradePrice : null;
     }
-    function setTradingOrderType(type) {
-      tradingOrderType = type === 'market' ? 'market' : 'limit';
-      document.querySelectorAll('[data-trading-order-type]').forEach(button => {
-        button.classList.toggle('active', button.dataset.tradingOrderType === tradingOrderType);
-      });
-      const price = document.getElementById('tradingLimitPrice');
-      if (price) price.disabled = tradingOrderType === 'market';
-      renderTradingPreview();
-    }
     function setTradingMarginMode(mode) {
       tradingMarginMode = mode === 'cross' ? 'cross' : 'isolated';
       document.querySelectorAll('[data-trading-margin-mode]').forEach(button => {
@@ -4246,10 +4236,8 @@ Rueckmeldung: ${message}</div>
       const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
       const availableEl = document.getElementById('tradingAvailable');
       if (availableEl) availableEl.textContent = Number.isFinite(available) ? `${available.toFixed(4)} ${parts.quote}` : `-- ${parts.quote}`;
-      const priceInput = document.getElementById('tradingLimitPrice');
       const referencePrice = tradingReferencePrice(symbol);
-      if (priceInput && !priceInput.value && referencePrice) priceInput.value = String(referencePrice);
-      const price = tradingOrderType === 'market' ? (referencePrice || Number(priceInput?.value || 0)) : Number(priceInput?.value || 0);
+      const price = referencePrice || 0;
       const mode = document.getElementById('sizeMode')?.value || 'usd';
       const usd = Number(document.getElementById('sizeUsd')?.value || 0);
       const asset = Number(document.getElementById('sizeAsset')?.value || 0);
@@ -4350,7 +4338,6 @@ Rueckmeldung: ${message}</div>
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
       renderTradeSizeAssetSelector(latestConfig);
       loadTradeSizeForSelectedAsset();
-      setTradingOrderType(tradingOrderType);
       renderTradingPreview();
       openModal('tradingModal');
     }
@@ -4858,14 +4845,10 @@ Rueckmeldung: ${message}</div>
     });
     document.getElementById('sizeUsd').addEventListener('input', syncTradingRiskFromAmount);
     document.getElementById('sizeAsset').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
-    document.getElementById('tradingLimitPrice')?.addEventListener('input', renderTradingPreview);
     document.getElementById('tradingTakeProfit')?.addEventListener('input', renderTradingPreview);
     document.getElementById('tradingStopLoss')?.addEventListener('input', renderTradingPreview);
     document.getElementById('tradingRiskPercent')?.addEventListener('input', () => syncTradingRiskInput('slider'));
     document.getElementById('tradingRiskPercentValue')?.addEventListener('input', () => syncTradingRiskInput('input'));
-    document.querySelectorAll('[data-trading-order-type]').forEach(button => {
-      button.addEventListener('click', () => setTradingOrderType(button.dataset.tradingOrderType));
-    });
     document.querySelectorAll('[data-trading-margin-mode]').forEach(button => {
       button.addEventListener('click', () => setTradingMarginMode(button.dataset.tradingMarginMode));
     });
