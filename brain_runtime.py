@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import threading
+import time
 from typing import Any, Literal
 from urllib import error as urlerror, request as urlrequest
 
@@ -81,6 +82,7 @@ _LLM_AUDIT_STATE: dict[str, Any] = {
     "running": False,
     "active_key": None,
     "active_hash": None,
+    "started_at": None,
     "last_hash_by_key": {},
     "last_result_by_key": {},
 }
@@ -902,7 +904,54 @@ def _llm_async_status_response(config: dict[str, Any], message: str, risk_note: 
     return result
 
 
+def _llm_hard_timeout_seconds(config: dict[str, Any]) -> float:
+    provider = str(config.get("llm_provider", "ollama")).lower()
+    if provider == "openai":
+        return max(1.0, min(120.0, _safe_float(config.get("openai_timeout_seconds", config.get("llm_role_timeout_seconds", 30)), 30.0)))
+    return max(1.0, min(300.0, _safe_float(config.get("ollama_timeout_seconds", config.get("llm_role_timeout_seconds", 120)), 120.0)))
+
+
+def _llm_soft_timeout_seconds(config: dict[str, Any]) -> float:
+    hard = _llm_hard_timeout_seconds(config)
+    return max(10.0, min(60.0, hard * 0.5))
+
+
+def _llm_running_response(config: dict[str, Any], elapsed: float, has_previous_result: bool) -> dict[str, Any]:
+    soft = _llm_soft_timeout_seconds(config)
+    hard = _llm_hard_timeout_seconds(config)
+    duration = max(0.001, round(elapsed, 3))
+    if elapsed >= soft:
+        message = f"LLM-Rollenteam laeuft noch seit {duration:.1f}s; Soft-Timeout {soft:.0f}s ueberschritten. Es wird weiter auf das Modell gewartet."
+        risk_note = "LLM ist langsam, aber nicht hart abgebrochen; Trading-Pipeline laeuft deterministisch weiter."
+        advice = f"Warten auf Modellantwort bis maximal {hard:.0f}s Hard-Timeout."
+    else:
+        message = (
+            "LLM-Rollenteam verarbeitet noch den vorherigen Kontext; neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben."
+            if has_previous_result
+            else "LLM-Rollenteam verarbeitet den ersten Kontext im Hintergrund."
+        )
+        risk_note = "LLM-Worker ist beschaeftigt; Trading-Pipeline laeuft deterministisch weiter."
+        advice = f"Warten auf Modellantwort. Soft-Warnung ab {soft:.0f}s, Hard-Abbruch bei {hard:.0f}s."
+    result = _llm_async_status_response(config, message, risk_note, advice)
+    result["verdict"] = "RUNNING"
+    result["duration_seconds"] = duration
+    result["role_duration_seconds"] = 0
+    result["judge_duration_seconds"] = 0
+    result["soft_timeout_seconds"] = soft
+    result["hard_timeout_seconds"] = hard
+    result["timing"] = {
+        "total_seconds": duration,
+        "roles_seconds": 0,
+        "judge_seconds": 0,
+        "role_count": 0,
+        "soft_timeout_seconds": soft,
+        "hard_timeout_seconds": hard,
+    }
+    return result
+
+
 def _run_ollama_audit_worker(context_key: str, context_hash: str, context: dict[str, Any], config: dict[str, Any]) -> None:
+    started = time.perf_counter()
     try:
         result = evaluate_role_team(context, config)
     except (OSError, TimeoutError, ValueError, RuntimeError, json.JSONDecodeError, urlerror.URLError) as exc:
@@ -916,6 +965,15 @@ def _run_ollama_audit_worker(context_key: str, context_hash: str, context: dict[
             enabled=True,
         )
         result["risk_note"] = detail
+        result["duration_seconds"] = max(0.001, round(time.perf_counter() - started, 3))
+        result["role_duration_seconds"] = 0
+        result["judge_duration_seconds"] = 0
+        result["timing"] = {
+            "total_seconds": result["duration_seconds"],
+            "roles_seconds": 0,
+            "judge_seconds": 0,
+            "role_count": 0,
+        }
         result["advice"] = (
             "Ollama Dienst, Modell und Timeout pruefen."
             if provider == "ollama"
@@ -926,6 +984,7 @@ def _run_ollama_audit_worker(context_key: str, context_hash: str, context: dict[
         _LLM_AUDIT_STATE["running"] = False
         _LLM_AUDIT_STATE["active_key"] = None
         _LLM_AUDIT_STATE["active_hash"] = None
+        _LLM_AUDIT_STATE["started_at"] = None
         _LLM_AUDIT_STATE.setdefault("last_result_by_key", {})[context_key] = result
         if result.get("verdict") != "ERROR":
             _LLM_AUDIT_STATE.setdefault("last_hash_by_key", {})[context_key] = context_hash
@@ -938,12 +997,18 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         last_hash = (_LLM_AUDIT_STATE.get("last_hash_by_key") or {}).get(context_key)
         last_result = (_LLM_AUDIT_STATE.get("last_result_by_key") or {}).get(context_key)
         if _LLM_AUDIT_STATE.get("running"):
+            started_at = _LLM_AUDIT_STATE.get("started_at")
+            elapsed = time.perf_counter() - float(started_at) if started_at else 0.0
+            running_result = _llm_running_response(config, elapsed, bool(last_result))
             if last_result:
                 result = dict(last_result)
+                result.update(running_result)
+                return result
                 result["message"] = "LLM-Rollenteam verarbeitet noch den vorherigen Kontext; neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben."
                 result["risk_note"] = "LLM-Worker ist beschäftigt; Trading-Pipeline läuft deterministisch weiter."
                 result["advice"] = "Warten bis der LLM-Worker frei ist."
                 return result
+            return running_result
             return _llm_async_status_response(
                 config,
                 "LLM-Rollenteam verarbeitet den ersten Kontext im Hintergrund.",
@@ -955,12 +1020,17 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         _LLM_AUDIT_STATE["running"] = True
         _LLM_AUDIT_STATE["active_key"] = context_key
         _LLM_AUDIT_STATE["active_hash"] = context_hash
+        _LLM_AUDIT_STATE["started_at"] = time.perf_counter()
         thread = threading.Thread(
             target=_run_ollama_audit_worker,
             args=(context_key, context_hash, json.loads(json.dumps(context)), dict(config)),
             daemon=True,
         )
         thread.start()
+    result = _llm_running_response(config, 0.001, False)
+    result["message"] = "LLM-Rollenteam wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick."
+    result["risk_note"] = "LLM laeuft getrennt von der Trading-Pipeline; keine Blockade durch Modelllaufzeit."
+    return result
     return _llm_async_status_response(
         config,
         "LLM-Rollenteam wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick.",

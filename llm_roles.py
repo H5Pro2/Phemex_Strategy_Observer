@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 import requests
@@ -71,6 +72,10 @@ def llm_provider_enabled(config: dict[str, Any]) -> bool:
     if provider == "ollama":
         return bool(config.get("ollama_enabled", False))
     return False
+
+
+def _elapsed_seconds(started: float) -> float:
+    return max(0.001, round(time.perf_counter() - started, 3))
 
 
 def default_role_team_response(
@@ -159,6 +164,7 @@ def build_role_context(
 
 
 def evaluate_role_team(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    started = time.perf_counter()
     if not llm_roles_enabled(config):
         return default_role_team_response(
             config,
@@ -177,7 +183,10 @@ def evaluate_role_team(context: dict[str, Any], config: dict[str, Any]) -> dict[
             continue
         role_reports.append(_run_role(role_key, context, config))
 
+    judge_started = time.perf_counter()
     judge = _run_judge(context, role_reports, config)
+    judge_duration = _elapsed_seconds(judge_started)
+    judge["duration_seconds"] = judge_duration
     verdict = "BLOCK_HINT" if judge.get("decision") == "BLOCK" else "OK" if judge.get("decision") == "APPROVE" else "WARN"
     result = default_role_team_response(
         config,
@@ -195,6 +204,16 @@ def evaluate_role_team(context: dict[str, Any], config: dict[str, Any]) -> dict[
     result["block_hint"] = judge.get("decision") == "BLOCK"
     result["context_trace"] = _context_trace(context, config)
     result["usage_estimate"] = estimate_llm_usage(result["context_trace"], role_reports, judge, config)
+    total_duration = _elapsed_seconds(started)
+    result["duration_seconds"] = total_duration
+    result["role_duration_seconds"] = round(sum(_safe_float(report.get("duration_seconds"), 0.0) for report in role_reports), 3)
+    result["judge_duration_seconds"] = judge_duration
+    result["timing"] = {
+        "total_seconds": total_duration,
+        "roles_seconds": result["role_duration_seconds"],
+        "judge_seconds": judge_duration,
+        "role_count": len(role_reports),
+    }
     return result
 
 
@@ -261,8 +280,11 @@ def _run_role(role_key: str, context: dict[str, Any], config: dict[str, Any]) ->
         },
         "context": role_context,
     }
+    started = time.perf_counter()
     parsed = _call_llm_json(system, user, config)
-    return _normalize_role_report(role_key, role["name"], parsed)
+    report = _normalize_role_report(role_key, role["name"], parsed)
+    report["duration_seconds"] = _elapsed_seconds(started)
+    return report
 
 
 def _run_judge(context: dict[str, Any], role_reports: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:

@@ -103,6 +103,15 @@
     return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(number);
   }
 
+  function durationLabel(seconds, fallback = '-') {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return fallback;
+    if (value < 60) return `${value.toFixed(value < 10 ? 2 : 1)}s`;
+    const minutes = Math.floor(value / 60);
+    const rest = Math.round(value % 60);
+    return `${minutes}m ${rest}s`;
+  }
+
   function llmCostStats() {
     const data = statusData();
     const history = Array.isArray(data?.llm_analysis_history) ? data.llm_analysis_history : [];
@@ -122,6 +131,7 @@
       const usage = item?.usage_estimate || {};
       const provider = String(item?.provider || usage.provider || '').toLowerCase();
       const type = String(item?.type || '').toLowerCase();
+      if (type === 'completed') stats.last = item;
       const cost = Number(usage.cost_usd);
       if (provider !== 'openai' || type !== 'completed' || !Number.isFinite(cost)) return;
       const timestamp = Number(item?.time || 0) * 1000;
@@ -129,7 +139,6 @@
       const iso = date ? date.toISOString() : '';
       stats.runs += 1;
       stats.totalTokens += Number(usage.total_tokens || 0);
-      stats.last = item;
       if (iso.startsWith(dayKey)) {
         stats.todayRuns += 1;
         stats.todayCost += cost;
@@ -175,6 +184,11 @@
     if (String(layer?.verdict || '').toUpperCase() === 'ERROR' || /error|fehler|timeout|failed|exception/.test(message)) {
       return { label: 'Fehler', detail: layer?.message || layer?.advice || 'LLM-Lauf ist fehlgeschlagen.', decision, tone: 'bad' };
     }
+    if (String(layer?.verdict || '').toUpperCase() === 'RUNNING') {
+      const elapsed = durationLabel(layer?.duration_seconds || layer?.timing?.total_seconds);
+      const hard = durationLabel(layer?.hard_timeout_seconds || layer?.timing?.hard_timeout_seconds);
+      return { label: 'LLM laeuft', detail: `Seit ${elapsed}; Hard-Abbruch bei ${hard}.`, decision, tone: 'wait' };
+    }
     if (trace && roles.length > 0) {
       return { label: 'Antwort erhalten', detail: `${roles.length} Rollenberichte | ${trace.symbol || activeSymbolFromStatus(data)} | ${model}`, decision, tone: 'good' };
     }
@@ -216,6 +230,7 @@
     const last = stats.last;
     const lastUsage = last?.usage_estimate || {};
     const lastCost = provider === 'ollama' ? 'lokal' : (last ? money(lastUsage.cost_usd) : '$0.00000');
+    const lastDuration = durationLabel(last?.duration_seconds || last?.timing?.total_seconds);
     const note = provider === 'ollama'
       ? 'Lokaler Provider: keine OpenAI API-Kosten. Strom/Hardware werden nicht berechnet.'
       : 'Schätzung aus Textlänge und Modellpreis. Die echte OpenAI-Abrechnung kann leicht abweichen.';
@@ -223,7 +238,7 @@
       <div class="botViewLlmCostGrid compact">
         <div class="wide status ${status.tone}"><span>LLM Status</span><strong>${status.label}</strong><small>${status.detail}</small></div>
         <div><span>CEO/Judge</span><strong>${status.decision}</strong><small>${provider} / ${model}</small></div>
-        <div><span>Letzter Lauf</span><strong>${lastCost}</strong><small>${last?.time_utc || 'Noch kein OpenAI-Lauf'}</small></div>
+        <div><span>Letzter Lauf</span><strong>${lastDuration}</strong><small>${lastCost} | ${last?.time_utc || 'Noch kein Lauf'}</small></div>
         <div><span>Heute</span><strong>${money(stats.todayCost)}</strong><small>${shortNumber(stats.todayRuns)} Läufe</small></div>
         <div><span>Monat</span><strong>${money(stats.monthCost)}</strong><small>~${shortNumber(stats.totalTokens)} Tokens</small></div>
       </div>

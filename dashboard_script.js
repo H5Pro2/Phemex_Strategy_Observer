@@ -415,6 +415,29 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const map = {60:'1m', 300:'5m', 900:'15m', 1800:'30m', 3600:'1h', 14400:'4h', 86400:'1D'};
       return map[Number(seconds)] || `${seconds}s`;
     }
+    function durationLabel(seconds, fallback='-') {
+      const value = Number(seconds);
+      if (!Number.isFinite(value) || value <= 0) return fallback;
+      if (value < 60) return `${value.toFixed(value < 10 ? 2 : 1)}s`;
+      const minutes = Math.floor(value / 60);
+      const rest = Math.round(value % 60);
+      return `${minutes}m ${rest}s`;
+    }
+    function llmErrorDurationDetail(layer, durationText) {
+      const provider = String(layer?.provider || latestConfig?.llm_provider || 'LLM').trim();
+      const label = provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : 'LLM';
+      const text = String(layer?.risk_note || layer?.message || layer?.judge?.summary || layer?.advice || '').trim();
+      const httpMatch = text.match(/HTTP\s*(\d{3})/i) || text.match(/(\d{3})\s+Server Error/i) || text.match(/(\d{3})\s+Client Error/i);
+      let cause = 'Fehler';
+      if (/timeout|timed out|zeit/i.test(text)) {
+        cause = 'Timeout';
+      } else if (httpMatch) {
+        cause = `HTTP ${httpMatch[1]}`;
+      } else if (/connection|verbindung|refused|unreachable|erreichbar/i.test(text)) {
+        cause = 'Verbindung';
+      }
+      return `${label} ${cause} nach ${durationText}`;
+    }
     function emaSourceLabel(source, signalTf) {
       if (source === 'daily') return 'Daily EMA';
       return `EMA auf ${timeframeLabel(signalTf)}`;
@@ -1715,6 +1738,20 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       const connectionLabel = keyMissing ? 'Key fehlt' : enabled ? 'Verbunden' : 'Aus';
       const runStatus = llmRunStatus(layer, cfg, trace, keyMissing, enabled);
       const runLabel = trace ? `${escapeHtml(trace.symbol || '-')} | ${timeframeLabel(trace.timeframe_seconds || 0)}` : 'Noch kein Rollenlauf';
+      const totalDuration = durationLabel(layer?.duration_seconds || layer?.timing?.total_seconds);
+      const hasTiming = Number(layer?.duration_seconds || layer?.timing?.total_seconds || 0) > 0;
+      const verdictError = String(layer?.verdict || '').toUpperCase() === 'ERROR';
+      const verdictRunning = String(layer?.verdict || '').toUpperCase() === 'RUNNING';
+      const roleCountForTiming = Array.isArray(layer?.roles) ? layer.roles.length : Number(layer?.timing?.role_count || 0);
+      const hardTimeout = durationLabel(layer?.hard_timeout_seconds || layer?.timing?.hard_timeout_seconds);
+      const softTimeout = durationLabel(layer?.soft_timeout_seconds || layer?.timing?.soft_timeout_seconds);
+      const timingDetail = !hasTiming
+        ? 'Noch keine Laufzeitmessung.'
+        : verdictRunning
+          ? `Wartet weiter | Soft ${softTimeout} | Hard ${hardTimeout}`
+        : verdictError && roleCountForTiming === 0
+          ? llmErrorDurationDetail(layer, totalDuration)
+          : `Rollen ${durationLabel(layer?.role_duration_seconds ?? layer?.timing?.roles_seconds, '0s')} | Judge ${durationLabel(layer?.judge_duration_seconds ?? layer?.timing?.judge_seconds, '0s')}`;
       const sentLabel = trace
         ? `${fmt(activeSources.length, 0)} Quellen | ${fmt(reports.length, 0)} Reports | ${fmt(snapshotKeys.length, 0)} Datenbereiche`
         : 'Wartet auf Trade-Kandidat';
@@ -1730,6 +1767,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         <div class="llmControlGrid">
           <div><span>Verbindung</span><strong>${escapeHtml(connectionLabel)}</strong><small>${escapeHtml(provider)} / ${escapeHtml(model)}</small></div>
           <div><span>LLM Status</span><strong>${escapeHtml(runStatus.label)}</strong><small>${escapeHtml(runStatus.detail)}</small></div>
+          <div><span>Dauer</span><strong>${escapeHtml(totalDuration)}</strong><small>${escapeHtml(timingDetail)}</small></div>
           <div><span>Letzter Lauf</span><strong>${runLabel}</strong><small>${escapeHtml(trace?.pipeline_decision ? `Pipeline ${trace.pipeline_decision}` : 'Noch keine LLM-Auswertung im Status.')}</small></div>
           <div><span>Gesendet</span><strong>${escapeHtml(sentLabel)}</strong><small>${escapeHtml(activeSources.slice(0, 5).join(', ') || 'Keine aktiven Quellen im Trace.')}${activeSources.length > 5 ? ` +${activeSources.length - 5}` : ''}</small></div>
           <div><span>Rollen</span><strong>${fmt(roleCount, 0)} Berichte</strong><small>Market Structure, Momentum, Risk, Skeptic, Execution</small></div>
@@ -1766,6 +1804,12 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       if (verdict === 'ERROR' || /error|fehler|timeout|abgelehnt|failed|exception/.test(message)) {
         return { label:'Fehler', cls:'bad', detail: layer?.message || layer?.advice || 'LLM-Lauf ist fehlgeschlagen.' };
       }
+      if (verdict === 'RUNNING') {
+        const elapsed = durationLabel(layer?.duration_seconds || layer?.timing?.total_seconds);
+        const soft = durationLabel(layer?.soft_timeout_seconds || layer?.timing?.soft_timeout_seconds);
+        const hard = durationLabel(layer?.hard_timeout_seconds || layer?.timing?.hard_timeout_seconds);
+        return { label:'LLM läuft', cls:'wait', detail:`Seit ${elapsed}. Soft-Warnung ab ${soft}, Hard-Abbruch bei ${hard}.` };
+      }
       if (roleCount > 0 && trace) {
         return { label:'Antwort erhalten', cls:'good', detail:'Rollenberichte und CEO/Judge-Auswertung liegen vor.' };
       }
@@ -1799,7 +1843,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           <div class="llmTalkMeta"><span>Prompt</span><p>${escapeHtml(promptExtra || roleInput.focus || 'Default-Rollenprompt aktiv.')}</p></div>
           <div class="llmTalkMeta"><span>Daten</span><p>${escapeHtml(reportNames.slice(0, 6).join(', ') || 'Keine zugeordneten Quellen')}${reportNames.length > 6 ? ` +${reportNames.length - 6}` : ''}${snapshotKeys.length ? ` | ${escapeHtml(snapshotKeys.slice(0, 4).join(', '))}` : ''}</p></div>
           <div class="llmTalkMeta answer"><span>Antwort</span><p>${escapeHtml(reasons.filter(Boolean).join(' | ') || '-')}</p></div>
-          <small>Confidence ${fmt(Number(role.confidence ?? role.score ?? 0), 0)} | Hard Block ${role.hard_block || role.blocking ? 'Ja' : 'Nein'}</small>
+          <small>Dauer ${durationLabel(role.duration_seconds)} | Confidence ${fmt(Number(role.confidence ?? role.score ?? 0), 0)} | Hard Block ${role.hard_block || role.blocking ? 'Ja' : 'Nein'}</small>
         </div>`;
       }).join('');
       return `<div class="llmTalkPanel">
@@ -1809,7 +1853,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           <strong>${escapeHtml(judge.decision || layer?.decision || '-')}</strong>
           <div class="llmTalkMeta"><span>Prompt</span><p>${escapeHtml(judgeInput.prompt_extra || 'Default CEO/Judge Prompt aktiv.')}</p></div>
           <p>${escapeHtml(judge.summary || layer?.risk_note || layer?.message || 'Noch keine finale Rollen-Zusammenfassung.')}</p>
-          <small>${escapeHtml(judge.conflict_note || layer?.conflict_note || '-')} | ${escapeHtml(judge.advice || layer?.advice || '-')}</small>
+          <small>Dauer ${durationLabel(judge.duration_seconds || layer?.judge_duration_seconds)} | ${escapeHtml(judge.conflict_note || layer?.conflict_note || '-')} | ${escapeHtml(judge.advice || layer?.advice || '-')}</small>
         </div>
         <div class="llmTalkGrid">${roleCards || '<div class="llmAuditItem fullWidth"><div class="llmNote">Noch keine Rollenberichte. Sie erscheinen nach dem nächsten abgeschlossenen LLM-Rollenlauf.</div></div>'}</div>
       </div>`;
@@ -1824,14 +1868,15 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           <td>${escapeHtml(role.role || role.role_key || '-')}</td>
           <td><span class="llmDecisionPill ${cls}">${escapeHtml(decision)}</span></td>
           <td>${fmt(Number(role.confidence ?? role.score ?? 0), 0)}</td>
+          <td>${durationLabel(role.duration_seconds)}</td>
           <td>${role.hard_block || role.blocking ? 'Ja' : 'Nein'}</td>
           <td>${escapeHtml(reasons)}</td>
         </tr>`;
       }).join('');
       return `<div class="llmRoleStatusTable">
         <table>
-          <thead><tr><th>Rolle</th><th>Entscheid</th><th>Conf</th><th>Block</th><th>Grund</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="5">Noch keine Rollenberichte im aktuellen Status.</td></tr>'}</tbody>
+          <thead><tr><th>Rolle</th><th>Entscheid</th><th>Conf</th><th>Dauer</th><th>Block</th><th>Grund</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6">Noch keine Rollenberichte im aktuellen Status.</td></tr>'}</tbody>
         </table>
       </div>`;
     }
@@ -1854,7 +1899,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
           </div>
           <div class="llmHistoryDecision">${escapeHtml(item?.decision || '-')} <small>${escapeHtml(item?.provider || '-')} / ${escapeHtml(item?.model || '-')}</small></div>
           <p>${escapeHtml(detail)}</p>
-          <small>${escapeHtml(item?.time_utc || '-')} | Rollen ${fmt(item?.role_count || 0, 0)} | Tokens ~${fmt(usage.total_tokens || 0, 0)} | Kosten ${escapeHtml(cost)}${Number(item?.repeat_count || 1) > 1 ? ` | x${fmt(item.repeat_count, 0)}` : ''}</small>
+          <small>${escapeHtml(item?.time_utc || '-')} | Dauer ${durationLabel(item?.duration_seconds || item?.timing?.total_seconds)} | Rollen ${fmt(item?.role_count || 0, 0)} | Tokens ~${fmt(usage.total_tokens || 0, 0)} | Kosten ${escapeHtml(cost)}${Number(item?.repeat_count || 1) > 1 ? ` | x${fmt(item.repeat_count, 0)}` : ''}</small>
           <small>${escapeHtml(sources.slice(0, 5).join(', ') || 'Keine Quellen im Trace')}${sources.length > 5 ? ` +${sources.length - 5}` : ''}</small>
         </div>`;
       }).join('');
