@@ -4105,12 +4105,18 @@ Rueckmeldung: ${message}</div>
     }
     async function saveSettings() {
       persistCurrentTradeSizeDraft();
+      const tradingStopLoss = Number(document.getElementById('tradingStopLoss')?.value || 1);
+      const tradingTakeProfit = Number(document.getElementById('tradingTakeProfit')?.value || 1.2);
       const payload = {
         paper_trading_enabled: document.getElementById('paperToggle').checked,
         margin_mode: tradingMarginMode,
         trade_size_mode: document.getElementById('sizeMode').value,
         trade_size_usd: Number(document.getElementById('sizeUsd').value || 0),
         trade_size_asset: Number(document.getElementById('sizeAsset').value || 0),
+        reward_risk: tradingStopLoss > 0 ? tradingTakeProfit / tradingStopLoss : 0,
+        risk_unit: tradingStopLoss,
+        take_profit_mode: 'reward_risk',
+        allow_reward_risk_fallback_tp: true,
         trade_sizes_by_symbol: localTradeSizes
       };
       const response = await fetch('/api/settings', {
@@ -4263,6 +4269,11 @@ Rueckmeldung: ${message}</div>
       const value = Number(document.querySelector('.tradingOrderModal .leverageControl strong')?.textContent || 10);
       return Number.isFinite(value) && value > 0 ? value : 10;
     }
+    function formatTradingConfigNumber(value, fallback) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return fallback;
+      return Number(number.toFixed(4)).toString();
+    }
     function renderTradingPreview() {
       const selector = document.getElementById('tradeSizeAssetSelector');
       const symbol = selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || ['BTCUSDT'])[0] || 'BTCUSDT';
@@ -4378,10 +4389,16 @@ Rueckmeldung: ${message}</div>
       document.getElementById('paperToggle').checked = !!latestConfig.paper_trading_enabled;
       syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
       setTradingMarginMode(latestConfig.margin_mode || 'isolated');
+      const riskUnit = Number(latestConfig.risk_unit ?? 1) || 1;
+      const rewardRisk = Number(latestConfig.reward_risk ?? 1.2) || 1.2;
+      const tpInput = document.getElementById('tradingTakeProfit');
+      const slInput = document.getElementById('tradingStopLoss');
+      if (tpInput) tpInput.value = formatTradingConfigNumber(rewardRisk * riskUnit, '1.2');
+      if (slInput) slInput.value = formatTradingConfigNumber(riskUnit, '1');
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
       renderTradeSizeAssetSelector(latestConfig);
       loadTradeSizeForSelectedAsset();
-      loadTradingReferencePrice(symbol, true).catch(() => {});
+      loadTradingReferencePrice(activeTradeSizeSymbol, true).catch(() => {});
       renderTradingPreview();
       openModal('tradingModal');
     }
@@ -4741,7 +4758,7 @@ Rueckmeldung: ${message}</div>
         kline_limit: Number(document.getElementById('cfgKlineLimit').value),
         reward_risk: document.getElementById('cfgRewardRisk')
           ? Number(document.getElementById('cfgRewardRisk').value) / Number(document.getElementById('cfgRiskUnit')?.value || 1)
-          : Number(latestConfig.reward_risk ?? 1.5),
+          : Number(latestConfig.reward_risk ?? 1.2),
         risk_unit: document.getElementById('cfgRiskUnit')
           ? Number(document.getElementById('cfgRiskUnit').value || 1)
           : Number(latestConfig.risk_unit ?? 1),

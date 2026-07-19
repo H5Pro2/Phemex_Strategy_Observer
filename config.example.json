@@ -10,7 +10,7 @@
   "phemex_poll_seconds": 30,
   "system_loop_seconds": 1,
   "risk_per_trade_fraction": 0.01,
-  "reward_risk": 1.5,
+  "reward_risk": 1.2,
   "entry_mode": "edge",
   "stop_loss_mode": "structure",
   "stop_loss_percent": 0.25,

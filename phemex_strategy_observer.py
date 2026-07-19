@@ -674,6 +674,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("stop_loss_buffer_percent", 0.0)
     config.setdefault("stop_loss_atr_period", 14)
     config.setdefault("stop_loss_atr_multiplier", 1.5)
+    config.setdefault("reward_risk", 1.2)
     config.setdefault("risk_unit", 1.0)
     config.setdefault("min_rr", 0.0)
     config.setdefault("min_tp_distance_fraction", 0.0)
@@ -886,7 +887,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("brain_stop_lookback_candles", 8)
     config.setdefault("brain_allow_rr_target_fallback", False)
     config.setdefault("brain_cap_target_to_max_rr", True)
-    config.setdefault("brain_max_target_rr", float(config.get("reward_risk", 1.5)))
+    config.setdefault("brain_max_target_rr", float(config.get("reward_risk", 1.2)))
     config.setdefault("brain_llm_layer_enabled", True)
     config.setdefault("llm_role_team_enabled", True)
     config.setdefault("llm_provider", "ollama")
@@ -3967,7 +3968,7 @@ def create_setup_from_brain_candidate(candidate: dict[str, Any], config: dict[st
         entry=round(entry, 8),
         stop_loss=round(float(candidate["sl_price"]), 8),
         take_profit=round(float(candidate["tp_price"]), 8),
-        reward_risk=float(config.get("reward_risk", 1.5)),
+        reward_risk=float(config.get("reward_risk", 1.2)),
         fvg_low=round(float(candidate.get("entry_zone_low", entry)), 8),
         fvg_high=round(float(candidate.get("entry_zone_high", entry)), 8),
         features=dict(candidate.get("features") or {}),
