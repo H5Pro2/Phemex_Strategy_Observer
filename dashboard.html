@@ -1697,6 +1697,8 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let localMaxSlDistanceFractions = {};
     let valueGatePriceCache = {};
     let valueGatePreviewToken = 0;
+    let tradingPriceCache = {};
+    let tradingPricePreviewToken = 0;
     let lastActionMessage = null;
     let lastIndicatorData = null;
     let lastChartRows = [];
@@ -5540,14 +5542,41 @@ Rueckmeldung: ${message}</div>
     }
     function tradingReferencePrice(symbol) {
       const safeSymbol = String(symbol || '').toUpperCase();
+      const cached = tradingPriceCache[safeSymbol];
+      if (cached && Date.now() - cached.at < 60000) return Number(cached.price) || null;
       const signals = Array.isArray(latestStatusData?.cycle?.signals) ? latestStatusData.cycle.signals : [];
       const signal = signals.slice().reverse().find(item => String(item?.symbol || item?.setup?.symbol || '').toUpperCase() === safeSymbol);
       const signalPrice = Number(signal?.entry_price ?? signal?.setup?.entry ?? signal?.price);
       if (Number.isFinite(signalPrice) && signalPrice > 0) return signalPrice;
+      const cycleSymbols = latestStatusData?.cycle?.symbols || {};
+      const symbolData = cycleSymbols?.[safeSymbol] || cycleSymbols?.[`${safeSymbol}.P`] || null;
+      const candlePrice = Number(symbolData?.last_signal_candle?.close ?? symbolData?.last_confirmation_candle?.close);
+      if (Number.isFinite(candlePrice) && candlePrice > 0) return candlePrice;
       const trades = Array.isArray(latestStatusData?.paper?.trades) ? latestStatusData.paper.trades : [];
       const trade = trades.slice().reverse().find(item => String(item?.setup?.symbol || '').toUpperCase() === safeSymbol);
       const tradePrice = Number(trade?.setup?.entry ?? trade?.setup?.entry_price);
       return Number.isFinite(tradePrice) && tradePrice > 0 ? tradePrice : null;
+    }
+    async function loadTradingReferencePrice(symbol, force = false) {
+      const safeSymbol = String(symbol || '').toUpperCase();
+      if (!safeSymbol) return;
+      const cached = tradingPriceCache[safeSymbol];
+      if (!force && cached && Date.now() - cached.at < 60000) return;
+      const token = ++tradingPricePreviewToken;
+      const resolution = Number(latestConfig?.signal_timeframe_seconds || 300);
+      try {
+        const response = await fetch(`/api/chart-data?symbol=${encodeURIComponent(safeSymbol)}&resolution=${encodeURIComponent(resolution)}&limit=2`, { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Preis nicht geladen');
+        const candles = data.candles || [];
+        const last = candles[candles.length - 1] || null;
+        const price = Number(last?.close);
+        if (!Number.isFinite(price) || price <= 0) throw new Error('kein gültiger Close');
+        tradingPriceCache[safeSymbol] = { price, at: Date.now() };
+        if (token === tradingPricePreviewToken) renderTradingPreview();
+      } catch (error) {
+        if (token === tradingPricePreviewToken) renderTradingPreview();
+      }
     }
     function setTradingMarginMode(mode) {
       tradingMarginMode = mode === 'cross' ? 'cross' : 'isolated';
@@ -5575,6 +5604,9 @@ Rueckmeldung: ${message}</div>
       const cost = mode === 'usd' ? usd : (price > 0 ? asset * price : 0);
       const riskPercent = Number(document.getElementById('tradingRiskPercentValue')?.value || 0);
       const riskCost = cost > 0 && Number.isFinite(riskPercent) ? cost * riskPercent / 100 : 0;
+      const leverage = 10;
+      const longLiq = price > 0 ? price * (1 - 1 / leverage) : 0;
+      const shortLiq = price > 0 ? price * (1 + 1 / leverage) : 0;
       const sizeEl = document.getElementById('tradingPreviewSize');
       const costEl = document.getElementById('tradingPreviewCost');
       const liqEl = document.getElementById('tradingPreviewLiq');
@@ -5584,7 +5616,7 @@ Rueckmeldung: ${message}</div>
           ? `${cost.toFixed(4)} / <span class="riskCost">${riskCost.toFixed(4)}</span> ${parts.quote}`
           : `-- ${parts.quote}`;
       }
-      if (liqEl) liqEl.textContent = price > 0 ? `-- / -- ${parts.quote}` : `-- / -- ${parts.quote}`;
+      if (liqEl) liqEl.textContent = price > 0 ? `${longLiq.toFixed(2)} / ${shortLiq.toFixed(2)} ${parts.quote}` : `-- / -- ${parts.quote}`;
     }
     function tradingAvailableBalance() {
       const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
@@ -5631,6 +5663,7 @@ Rueckmeldung: ${message}</div>
       }).join('');
       if (selectedAsset && symbols.includes(selectedAsset)) select.value = selectedAsset;
       activeTradeSizeSymbol = select.value || symbols[0] || null;
+      loadTradingReferencePrice(activeTradeSizeSymbol, true).catch(() => {});
     }
     function persistCurrentTradeSizeDraft(symbolOverride = null) {
       const selector = document.getElementById('tradeSizeAssetSelector');
@@ -5656,6 +5689,7 @@ Rueckmeldung: ${message}</div>
       document.getElementById('sizeAsset').value = fmt(size.asset, 0);
       updateSizeVisibility();
       syncTradingRiskFromAmount();
+      loadTradingReferencePrice(symbol, true).catch(() => {});
       renderTradingPreview();
     }
     async function loadTradingSettings() {
