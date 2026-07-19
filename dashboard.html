@@ -1062,8 +1062,8 @@
         <div class="availableLine">Verfügbar: <strong id="tradingAvailable">-- USDT</strong></div>
         <div class="orderSummaryBox">
           <div><span>Größe</span><strong id="tradingPreviewSize">--</strong></div>
-          <div><span>Kosten</span><strong id="tradingPreviewCost">-- USDT</strong></div>
-          <div><span>Geschätz. Liq. Preis</span><strong id="tradingPreviewLiq">-- / -- USDT</strong></div>
+          <div><span>Margin / Position</span><strong id="tradingPreviewCost">-- USDT</strong></div>
+          <div><span>Liq. ca. Long / Short</span><strong id="tradingPreviewLiq">-- / -- USDT</strong></div>
         </div>
         <div id="settingsStatus" class="label"></div>
       </div>
@@ -5584,6 +5584,10 @@ Rueckmeldung: ${message}</div>
         button.classList.toggle('active', button.dataset.tradingMarginMode === tradingMarginMode);
       });
     }
+    function tradingLeverageValue() {
+      const value = Number(document.querySelector('.tradingOrderModal .leverageControl strong')?.textContent || 10);
+      return Number.isFinite(value) && value > 0 ? value : 10;
+    }
     function renderTradingPreview() {
       const selector = document.getElementById('tradeSizeAssetSelector');
       const symbol = selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || ['BTCUSDT'])[0] || 'BTCUSDT';
@@ -5600,11 +5604,10 @@ Rueckmeldung: ${message}</div>
       const mode = document.getElementById('sizeMode')?.value || 'usd';
       const usd = Number(document.getElementById('sizeUsd')?.value || 0);
       const asset = Number(document.getElementById('sizeAsset')?.value || 0);
-      const quantity = mode === 'asset' ? asset : (price > 0 ? usd / price : 0);
-      const cost = mode === 'usd' ? usd : (price > 0 ? asset * price : 0);
-      const riskPercent = Number(document.getElementById('tradingRiskPercentValue')?.value || 0);
-      const riskCost = cost > 0 && Number.isFinite(riskPercent) ? cost * riskPercent / 100 : 0;
-      const leverage = 10;
+      const leverage = tradingLeverageValue();
+      const margin = mode === 'usd' ? usd : (price > 0 ? (asset * price) / leverage : 0);
+      const notional = mode === 'usd' ? usd * leverage : (price > 0 ? asset * price : 0);
+      const quantity = mode === 'asset' ? asset : (price > 0 ? notional / price : 0);
       const longLiq = price > 0 ? price * (1 - 1 / leverage) : 0;
       const shortLiq = price > 0 ? price * (1 + 1 / leverage) : 0;
       const sizeEl = document.getElementById('tradingPreviewSize');
@@ -5612,8 +5615,8 @@ Rueckmeldung: ${message}</div>
       const liqEl = document.getElementById('tradingPreviewLiq');
       if (sizeEl) sizeEl.textContent = quantity > 0 ? `${quantity.toFixed(quantity >= 1 ? 4 : 6)} ${parts.base}` : `-- ${parts.base}`;
       if (costEl) {
-        costEl.innerHTML = cost > 0
-          ? `${cost.toFixed(4)} / <span class="riskCost">${riskCost.toFixed(4)}</span> ${parts.quote}`
+        costEl.innerHTML = margin > 0 || notional > 0
+          ? `${margin.toFixed(4)} / <span class="riskCost">${notional.toFixed(4)}</span> ${parts.quote}`
           : `-- ${parts.quote}`;
       }
       if (liqEl) liqEl.textContent = price > 0 ? `${longLiq.toFixed(2)} / ${shortLiq.toFixed(2)} ${parts.quote}` : `-- / -- ${parts.quote}`;
