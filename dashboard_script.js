@@ -376,6 +376,9 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let refreshRunning = false;
     let refreshFailedCount = 0;
     let agentSettingsSaveResetTimer = null;
+    let botControlRequestRunning = false;
+    let dashboardReloadRequestRunning = false;
+    let resetConfirmRequest = null;
     function loadDetailsOpenState(key, fallback=false) {
       if (!key) return !!fallback;
       try {
@@ -524,6 +527,11 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         const button = event.target.closest('#startBot, #stopBot, #reloadBot, #resetBot');
         if (!button || button.disabled) return;
         event.preventDefault();
+        event.stopPropagation();
+        if (botControlRequestRunning || dashboardReloadRequestRunning) {
+          setControlMessage('Aktion laeuft bereits...', 'warn');
+          return;
+        }
         if (button.id === 'reloadBot') {
           reloadDashboardData();
           return;
@@ -535,32 +543,34 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         };
         const action = actions[button.id];
         if (action) botControl(action);
-      });
+      }, true);
     }
     function bindBotControlButtons() {
-      const bind = (id, handler) => {
+      const bind = id => {
         const button = document.getElementById(id);
         if (!button) return;
         button.dataset.botControlBound = '1';
-        button.onclick = event => {
-          if (button.disabled) return;
-          event.preventDefault();
-          handler();
-        };
+        button.type = 'button';
+        button.onclick = null;
+        button.onpointerup = null;
+        button.removeAttribute('onclick');
+        button.removeAttribute('onpointerup');
       };
-      bind('startBot', () => botControl('start'));
-      bind('stopBot', () => botControl('stop'));
-      bind('reloadBot', reloadDashboardData);
-      bind('resetBot', () => botControl('reset'));
+      bind('startBot');
+      bind('stopBot');
+      bind('reloadBot');
+      bind('resetBot');
     }
     function renderBotControls(cfg) {
       const running = !!cfg.observer_enabled;
       const start = document.getElementById('startBot');
       const stop = document.getElementById('stopBot');
+      const reset = document.getElementById('resetBot');
       const activeSymbols = cfg.symbols || [];
       const active = cfg.observer_asset_mode === 'multi'
         ? `${activeSymbols.length} Assets`
         : (activeSymbols[0] || '-');
+      const resetPending = resetConfirmRequest && resetConfirmRequest.until > Date.now();
       if (start) {
         start.classList.toggle('available', !running);
         start.classList.toggle('running', running);
@@ -574,6 +584,11 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         stop.disabled = !running;
         stop.textContent = running ? 'Stop' : 'Gestoppt';
         stop.title = running ? 'Scanner stoppen' : 'Scanner ist bereits gestoppt';
+      }
+      if (reset) {
+        reset.classList.toggle('confirm', !!resetPending);
+        reset.textContent = resetPending ? 'Reset bestaetigen' : 'Reset Speicher';
+        reset.title = resetPending ? 'Nochmals klicken, um den Reset auszufuehren' : 'Reset vorbereiten';
       }
       bindBotControlButtons();
       renderControlMessage(running ? `Scanner aktiv: ${active}` : `Scanner gestoppt: ${active}`);
@@ -4106,43 +4121,78 @@ Rueckmeldung: ${message}</div>
       }
     }
     async function botControl(action) {
+      if (botControlRequestRunning || dashboardReloadRequestRunning) {
+        setControlMessage('Aktion laeuft bereits...', 'warn');
+        return;
+      }
       const dropdownValue = document.getElementById('assetFilter')?.value || selectedAssetValue();
       const resetSymbol = dropdownValue === ALL_ASSETS_VALUE ? null : dropdownValue;
       const resetLabel = resetSymbol || 'Gesamt';
       if (action === 'reset') {
-        const scopeText = resetSymbol
-          ? `nur für ${resetSymbol}`
-          : 'für alle Assets';
-        const ok = window.confirm(`Reset ${scopeText} wirklich ausfuehren? Das loescht Paper-Trades und Lernspeicher ${scopeText} und setzt den Scanner auf Stop.`);
-        if (!ok) return;
+        const scopeKey = resetSymbol || '__ALL__';
+        const confirmed = resetConfirmRequest && resetConfirmRequest.scopeKey === scopeKey && resetConfirmRequest.until > Date.now();
+        if (!confirmed) {
+          resetConfirmRequest = { scopeKey, until: Date.now() + 8000 };
+          setControlMessage(`Reset ${resetLabel}: nochmals klicken zum Bestaetigen`, 'warn');
+          renderBotControls(latestConfig || {});
+          window.setTimeout(() => {
+            if (resetConfirmRequest?.scopeKey === scopeKey && resetConfirmRequest.until <= Date.now()) {
+              resetConfirmRequest = null;
+              renderBotControls(latestConfig || {});
+            }
+          }, 8200);
+          return;
+        }
+        resetConfirmRequest = null;
       }
       const pendingLabels = {
         start: 'Scanner wird gestartet...',
         stop: 'Scanner wird gestoppt...',
         reset: `Reset ${resetLabel} in Arbeit...`
       };
-      setControlMessage(pendingLabels[action] || 'Aktion in Arbeit...', 'warn');
-      const response = await fetch('/api/bot-control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, symbol: action === 'reset' ? resetSymbol : null })
-      });
-      const result = await response.json();
-      const doneLabels = {
-        start: 'Scanner gestartet',
-        stop: 'Scanner gestoppt',
-        reset: `Speicher ${resetLabel} zurückgesetzt`
-      };
-      setControlMessage(response.ok ? (doneLabels[action] || 'Aktion ausgefuehrt') : (result.error || 'Fehler'), response.ok ? 'ok' : 'warn');
-      await refresh();
+      botControlRequestRunning = true;
+      try {
+        setControlMessage(pendingLabels[action] || 'Aktion in Arbeit...', 'warn');
+        const response = await fetch('/api/bot-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, symbol: action === 'reset' ? resetSymbol : null })
+        });
+        const result = await response.json();
+        const doneLabels = {
+          start: 'Scanner gestartet',
+          stop: 'Scanner gestoppt',
+          reset: `Speicher ${resetLabel} zurückgesetzt`
+        };
+        setControlMessage(response.ok ? (doneLabels[action] || 'Aktion ausgefuehrt') : (result.error || 'Fehler'), response.ok ? 'ok' : 'warn');
+        if (response.ok && result.config) {
+          renderBotControls(mergeConfigState(result.config));
+        }
+        await refresh();
+      } catch (error) {
+        setControlMessage(`Aktion fehlgeschlagen: ${error.message || error}`, 'warn');
+      } finally {
+        botControlRequestRunning = false;
+      }
     }
     async function reloadDashboardData() {
-      flashButton('reloadBot');
-      setControlMessage('Reload in Arbeit...', 'warn');
-      lastChartKey = '';
-      await refresh();
-      if (currentView === 'chart') await loadChartData(true);
-      setControlMessage('Reload abgeschlossen', 'ok');
+      if (botControlRequestRunning || dashboardReloadRequestRunning) {
+        setControlMessage('Aktion laeuft bereits...', 'warn');
+        return;
+      }
+      dashboardReloadRequestRunning = true;
+      try {
+        flashButton('reloadBot');
+        setControlMessage('Reload in Arbeit...', 'warn');
+        lastChartKey = '';
+        await refresh();
+        if (currentView === 'chart') await loadChartData(true);
+        setControlMessage('Reload abgeschlossen', 'ok');
+      } catch (error) {
+        setControlMessage(`Reload fehlgeschlagen: ${error.message || error}`, 'warn');
+      } finally {
+        dashboardReloadRequestRunning = false;
+      }
     }
     function updateSizeVisibility() {
       const mode = document.getElementById('sizeMode').value;
