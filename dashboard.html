@@ -5642,6 +5642,11 @@ Rueckmeldung: ${message}</div>
       const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
       return Number.isFinite(available) && available > 0 ? available : 0;
     }
+    function clampTradingMarginToAvailable(value) {
+      const margin = Math.max(0, Number(value) || 0);
+      const available = tradingAvailableBalance();
+      return available > 0 ? Math.min(margin, available) : margin;
+    }
     function formatTradingAssetAmount(value) {
       const amount = Number(value);
       if (!Number.isFinite(amount) || amount <= 0) return '0';
@@ -5656,7 +5661,7 @@ Rueckmeldung: ${message}</div>
       const mode = document.getElementById('sizeMode')?.value || 'usd';
       const usdInput = document.getElementById('sizeUsd');
       const assetInput = document.getElementById('sizeAsset');
-      const safeMargin = Math.max(0, Number(margin) || 0);
+      const safeMargin = clampTradingMarginToAvailable(margin);
       if (mode === 'usd') {
         if (usdInput) usdInput.value = Number(safeMargin.toFixed(2)).toString();
         return true;
@@ -5713,7 +5718,11 @@ Rueckmeldung: ${message}</div>
       const leverage = tradingLeverageValue();
       const usd = Number(document.getElementById('sizeUsd')?.value || 0);
       const asset = Number(document.getElementById('sizeAsset')?.value || 0);
-      const margin = mode === 'asset' && price > 0 ? (asset * price) / leverage : usd;
+      let margin = mode === 'asset' && price > 0 ? (asset * price) / leverage : usd;
+      if (available > 0 && margin > available) {
+        margin = available;
+        applyTradingMarginToActiveMode(available, false);
+      }
       if (mode === 'asset' && price <= 0) loadTradingReferencePrice(symbol, true).catch(() => {});
       setTradingRiskPercent(available > 0 ? (margin / available) * 100 : 0);
       persistCurrentTradeSizeDraft();
