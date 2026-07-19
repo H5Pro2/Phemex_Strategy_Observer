@@ -368,6 +368,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let valueGatePriceCache = {};
     let valueGatePreviewToken = 0;
     let tradingPriceCache = {};
+    let tradingPriceLoading = {};
     let tradingPricePreviewToken = 0;
     let lastActionMessage = null;
     let lastIndicatorData = null;
@@ -4232,6 +4233,8 @@ Rueckmeldung: ${message}</div>
       if (!safeSymbol) return;
       const cached = tradingPriceCache[safeSymbol];
       if (!force && cached && Date.now() - cached.at < 60000) return;
+      if (!force && tradingPriceLoading[safeSymbol]) return;
+      tradingPriceLoading[safeSymbol] = true;
       const token = ++tradingPricePreviewToken;
       const resolution = Number(latestConfig?.signal_timeframe_seconds || 300);
       try {
@@ -4246,6 +4249,8 @@ Rueckmeldung: ${message}</div>
         if (token === tradingPricePreviewToken) renderTradingPreview();
       } catch (error) {
         if (token === tradingPricePreviewToken) renderTradingPreview();
+      } finally {
+        tradingPriceLoading[safeSymbol] = false;
       }
     }
     function setTradingMarginMode(mode) {
@@ -4271,6 +4276,7 @@ Rueckmeldung: ${message}</div>
       if (availableEl) availableEl.textContent = Number.isFinite(available) ? `${available.toFixed(4)} ${parts.quote}` : `-- ${parts.quote}`;
       const referencePrice = tradingReferencePrice(symbol);
       const price = referencePrice || 0;
+      if (price <= 0) loadTradingReferencePrice(symbol).catch(() => {});
       const mode = document.getElementById('sizeMode')?.value || 'usd';
       const usd = Number(document.getElementById('sizeUsd')?.value || 0);
       const asset = Number(document.getElementById('sizeAsset')?.value || 0);
@@ -4283,13 +4289,13 @@ Rueckmeldung: ${message}</div>
       const sizeEl = document.getElementById('tradingPreviewSize');
       const costEl = document.getElementById('tradingPreviewCost');
       const liqEl = document.getElementById('tradingPreviewLiq');
-      if (sizeEl) sizeEl.textContent = quantity > 0 ? `${quantity.toFixed(quantity >= 1 ? 4 : 6)} ${parts.base}` : `-- ${parts.base}`;
+      if (sizeEl) sizeEl.textContent = quantity > 0 ? `${quantity.toFixed(quantity >= 1 ? 4 : 6)} ${parts.base}` : (price <= 0 && notional > 0 ? `Preis laden...` : `0 ${parts.base}`);
       if (costEl) {
         costEl.innerHTML = margin > 0 || notional > 0
           ? `${margin.toFixed(4)} / <span class="riskCost">${notional.toFixed(4)}</span> ${parts.quote}`
-          : `-- ${parts.quote}`;
+          : `0.0000 / <span class="riskCost">0.0000</span> ${parts.quote}`;
       }
-      if (liqEl) liqEl.textContent = price > 0 ? `${longLiq.toFixed(2)} / ${shortLiq.toFixed(2)} ${parts.quote}` : `-- / -- ${parts.quote}`;
+      if (liqEl) liqEl.textContent = price > 0 && notional > 0 ? `${longLiq.toFixed(2)} / ${shortLiq.toFixed(2)} ${parts.quote}` : (notional > 0 ? `Preis laden...` : `-- / -- ${parts.quote}`);
     }
     function tradingAvailableBalance() {
       const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
