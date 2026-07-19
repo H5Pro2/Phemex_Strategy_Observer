@@ -4312,6 +4312,60 @@ Rueckmeldung: ${message}</div>
       const available = Number(latestStatusData?.account?.available_balance_estimate ?? latestStatusData?.account?.account_balance);
       return Number.isFinite(available) && available > 0 ? available : 0;
     }
+    function formatTradingAssetAmount(value) {
+      const amount = Number(value);
+      if (!Number.isFinite(amount) || amount <= 0) return '0';
+      const digits = amount >= 1 ? 4 : 6;
+      return Number(amount.toFixed(digits)).toString();
+    }
+    function activeTradingSymbol() {
+      const selector = document.getElementById('tradeSizeAssetSelector');
+      return selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || [selectedAsset || 'BTCUSDT'])[0] || 'BTCUSDT';
+    }
+    function applyTradingMarginToActiveMode(margin, forcePriceLoad = true) {
+      const mode = document.getElementById('sizeMode')?.value || 'usd';
+      const usdInput = document.getElementById('sizeUsd');
+      const assetInput = document.getElementById('sizeAsset');
+      const safeMargin = Math.max(0, Number(margin) || 0);
+      if (mode === 'usd') {
+        if (usdInput) usdInput.value = Number(safeMargin.toFixed(2)).toString();
+        return true;
+      }
+      const symbol = activeTradingSymbol();
+      const price = Number(tradingReferencePrice(symbol) || 0);
+      const leverage = tradingLeverageValue();
+      if (price > 0 && assetInput) {
+        assetInput.value = formatTradingAssetAmount((safeMargin * leverage) / price);
+        return true;
+      }
+      if (forcePriceLoad && !tradingPriceLoading[String(symbol || '').toUpperCase()]) {
+        loadTradingReferencePrice(symbol, true).then(() => {
+          const latestPrice = Number(tradingReferencePrice(symbol) || 0);
+          if (latestPrice > 0 && document.getElementById('sizeMode')?.value === 'asset' && assetInput) {
+            assetInput.value = formatTradingAssetAmount((safeMargin * tradingLeverageValue()) / latestPrice);
+            persistCurrentTradeSizeDraft();
+            renderTradingPreview();
+          }
+        }).catch(() => {});
+      }
+      return false;
+    }
+    function convertTradingSizeMode(previousMode, nextMode) {
+      if (previousMode === nextMode) return;
+      const symbol = activeTradingSymbol();
+      const price = Number(tradingReferencePrice(symbol) || 0);
+      const leverage = tradingLeverageValue();
+      const usdInput = document.getElementById('sizeUsd');
+      const assetInput = document.getElementById('sizeAsset');
+      if (nextMode === 'asset') {
+        applyTradingMarginToActiveMode(Number(usdInput?.value || 0), true);
+      } else if (price > 0 && usdInput) {
+        const asset = Number(assetInput?.value || 0);
+        usdInput.value = Number(((asset * price) / leverage).toFixed(2)).toString();
+      } else if (!tradingPriceLoading[String(symbol || '').toUpperCase()]) {
+        loadTradingReferencePrice(symbol, true).then(() => convertTradingSizeMode(previousMode, nextMode)).catch(() => {});
+      }
+    }
     function setTradingRiskPercent(value) {
       const slider = document.getElementById('tradingRiskPercent');
       const input = document.getElementById('tradingRiskPercentValue');
@@ -4323,8 +4377,15 @@ Rueckmeldung: ${message}</div>
     }
     function syncTradingRiskFromAmount() {
       const available = tradingAvailableBalance();
+      const mode = document.getElementById('sizeMode')?.value || 'usd';
+      const symbol = activeTradingSymbol();
+      const price = Number(tradingReferencePrice(symbol) || 0);
+      const leverage = tradingLeverageValue();
       const usd = Number(document.getElementById('sizeUsd')?.value || 0);
-      setTradingRiskPercent(available > 0 ? (usd / available) * 100 : 0);
+      const asset = Number(document.getElementById('sizeAsset')?.value || 0);
+      const margin = mode === 'asset' && price > 0 ? (asset * price) / leverage : usd;
+      if (mode === 'asset' && price <= 0) loadTradingReferencePrice(symbol, true).catch(() => {});
+      setTradingRiskPercent(available > 0 ? (margin / available) * 100 : 0);
       persistCurrentTradeSizeDraft();
       renderTradingPreview();
     }
@@ -4335,8 +4396,8 @@ Rueckmeldung: ${message}</div>
       const value = Math.max(0, Math.min(100, Number((source === 'slider' ? slider.value : input.value) || 0)));
       setTradingRiskPercent(value);
       const available = tradingAvailableBalance();
-      const usdInput = document.getElementById('sizeUsd');
-      if (usdInput && available > 0) usdInput.value = Number((available * value / 100).toFixed(2)).toString();
+      const margin = available > 0 ? available * value / 100 : 0;
+      applyTradingMarginToActiveMode(margin, true);
       persistCurrentTradeSizeDraft();
       renderTradingPreview();
     }
@@ -4374,7 +4435,9 @@ Rueckmeldung: ${message}</div>
         usd: latestConfig.trade_size_usd || 0,
         asset: latestConfig.trade_size_asset || 0
       };
-      document.getElementById('sizeMode').value = size.mode || 'asset';
+      const sizeModeInput = document.getElementById('sizeMode');
+      sizeModeInput.value = size.mode || 'asset';
+      sizeModeInput.dataset.previousMode = sizeModeInput.value;
       document.getElementById('sizeUsd').value = fmt(size.usd, 0);
       document.getElementById('sizeAsset').value = fmt(size.asset, 0);
       updateSizeVisibility();
@@ -4910,12 +4973,16 @@ Rueckmeldung: ${message}</div>
       renderTradingPreview();
     });
     document.getElementById('sizeMode').addEventListener('change', () => {
-      updateSizeVisibility();
+      const sizeModeInput = document.getElementById('sizeMode');
+      const previousMode = sizeModeInput.dataset.previousMode || (sizeModeInput.value === 'asset' ? 'usd' : 'asset');
+      convertTradingSizeMode(previousMode, sizeModeInput.value);
+      sizeModeInput.dataset.previousMode = sizeModeInput.value;
       persistCurrentTradeSizeDraft();
+      updateSizeVisibility();
       renderTradingPreview();
     });
     document.getElementById('sizeUsd').addEventListener('input', syncTradingRiskFromAmount);
-    document.getElementById('sizeAsset').addEventListener('input', () => { persistCurrentTradeSizeDraft(); renderTradingPreview(); });
+    document.getElementById('sizeAsset').addEventListener('input', syncTradingRiskFromAmount);
     document.getElementById('tradingTakeProfit')?.addEventListener('input', renderTradingPreview);
     document.getElementById('tradingStopLoss')?.addEventListener('input', renderTradingPreview);
     document.getElementById('tradingRiskPercent')?.addEventListener('input', () => syncTradingRiskInput('slider'));
