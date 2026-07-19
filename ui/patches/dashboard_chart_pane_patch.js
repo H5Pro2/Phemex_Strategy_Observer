@@ -116,7 +116,7 @@
     if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
     const style = document.createElement('style');
     style.id = 'chart-pane-technical-style';
-    style.textContent = '.chartTechnicalToolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;padding:8px;border:1px solid rgba(148,163,184,.25);border-radius:4px;background:rgba(15,23,42,.14)}.chartTechTitle{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);margin-right:4px}.chartTechButton{min-height:28px;padding:5px 8px;border-radius:3px;font-size:11px;font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace;background:rgba(30,41,59,.84);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}.chartTechButton.active{color:#ecfeff;border-color:#0f766e;background:#0f766e}.chartPluginStatus{margin-left:auto;font-size:10px;color:var(--muted);font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace}';
+    style.textContent = '.chartTechnicalToolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;padding:8px;border:1px solid rgba(148,163,184,.18);border-radius:4px;background:rgba(15,23,42,.10)}.chartTechTitle{font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-right:4px}.chartTechButton{min-height:28px;padding:5px 8px;border-radius:3px;font-size:11px;font-family:Arial,sans-serif;background:rgba(30,41,59,.72);color:#cbd5e1;border:1px solid rgba(148,163,184,.22)}.chartTechButton.active{color:#ecfeff;border-color:#0f766e;background:#0f766e}.chartPluginStatus{display:none}';
     document.head.appendChild(style);
   }
 

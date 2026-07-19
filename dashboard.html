@@ -62,6 +62,7 @@
     .botDataCard tr { display:grid; grid-template-columns:minmax(95px, .8fr) minmax(110px, 1fr); border-bottom:1px solid var(--line); }
     .botDataCard th, .botDataCard td { display:block; border-bottom:0; }
     .controls { display:grid; grid-template-columns: minmax(180px, 220px) minmax(150px, 180px) minmax(150px, 180px) minmax(190px, 1fr) minmax(160px, 240px); gap:16px; align-items:end; max-width:1180px; }
+    .botControlForm { display:contents; }
     label { display:block; color:var(--muted); font-size:12px; margin-bottom:5px; }
     input, select { width:100%; border:1px solid var(--line); border-radius:6px; padding:9px 10px; font:inherit; background:#fff; color:var(--ink); }
     .presetButtonGroup { display:flex; flex-wrap:wrap; gap:6px; }
@@ -263,8 +264,8 @@
     .agentSetupToggle.active { background:#0f766e; color:#ecfeff; border-color:#2dd4bf; box-shadow:0 0 0 2px rgba(45,212,191,.14); }
     .agentSetupToggle.active .agentSetupIcon { transform:rotate(20deg); }
     .agentSetupPanel { display:none; grid-column:1 / -1; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; padding:16px; border:1px solid var(--line); border-left:5px solid var(--agent-card-color, var(--accent)); border-radius:10px; background:var(--panel); }
-    .agentSetupPanel.open { display:grid; position:fixed; z-index:2600; top:50%; left:50%; transform:translate(-50%, -50%); width:min(760px, calc(100vw - 42px)); max-height:82vh; overflow:auto; box-shadow:0 24px 72px rgba(0,0,0,.45); }
-    .agentSetupPanel.open::before { content:""; position:fixed; inset:-100vh; z-index:-1; background:rgba(2,6,23,.62); }
+    .agentSetupPanel.open { display:grid; position:relative; z-index:20; width:100%; max-height:none; overflow:visible; box-shadow:0 12px 30px rgba(0,0,0,.24); }
+    .agentSetupPanel.open::before { display:none; }
     .agentSetupPopupHeader { grid-column:1 / -1; display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:10px; border-bottom:1px solid var(--line); }
     .agentSetupPopupHeader strong { font-size:15px; color:var(--ink); }
     .agentSetupClose { background:#243044; color:#e5e7eb; border:1px solid #475569; border-radius:7px; padding:8px 12px; }
@@ -635,6 +636,11 @@
     .llmNoteGrid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; margin-top:8px; }
     .llmNoteGrid div { border:1px solid var(--line); border-radius:5px; background:var(--panel); padding:7px 8px; min-width:0; }
     .llmNoteGrid p { margin:3px 0 0; line-height:1.35; overflow-wrap:anywhere; }
+    .llmHardwareStatus { border:1px solid var(--line); border-left:4px solid #b45309; border-radius:5px; background:var(--panel-soft); padding:9px 11px; margin-bottom:8px; }
+    .llmHardwareStatus.good { border-left-color:#0f766e; }
+    .llmHardwareStatus.bad { border-left-color:#991b1b; }
+    .llmHardwareStatus strong { color:var(--ink); font-weight:900; margin-right:6px; }
+    .llmHardwareStatus .label { margin-top:4px; line-height:1.35; overflow-wrap:anywhere; }
     .agentLlmTeamDetails { border:1px solid var(--line); border-radius:6px; background:var(--panel-soft); overflow:hidden; }
     .agentLlmTeamSummary { cursor:pointer; list-style:none; min-height:56px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border-left:4px solid #22d3ee; background:rgba(15,23,42,.2); }
     .agentLlmTeamSummary::-webkit-details-marker { display:none; }
@@ -781,10 +787,10 @@
     <section class="card settingsCard">
       <h2>Bot-Steuerung</h2>
       <div class="controls">
-        <button id="startBot" class="controlButton startButton">Start</button>
-        <button id="stopBot" class="controlButton stopButton">Stop</button>
-        <button id="reloadBot" class="controlButton actionButton">Reload</button>
-        <button id="resetBot" class="controlButton dangerButton">Reset Speicher</button>
+        <form class="botControlForm" method="get" action="/api/bot-control-ui"><input type="hidden" name="action" value="start"><button id="startBot" class="controlButton startButton" type="submit" onclick="botControl('start')" onpointerup="botControl('start')">Start</button></form>
+        <form class="botControlForm" method="get" action="/api/bot-control-ui"><input type="hidden" name="action" value="stop"><button id="stopBot" class="controlButton stopButton" type="submit" onclick="botControl('stop')" onpointerup="botControl('stop')">Stop</button></form>
+        <button id="reloadBot" class="controlButton actionButton" type="button" onclick="reloadDashboardData()">Reload</button>
+        <button id="resetBot" class="controlButton dangerButton" type="button" onclick="botControl('reset')">Reset Speicher</button>
         <div><label for="assetFilter">Asset Anzeige (nur Ansicht)</label><select id="assetFilter"></select></div>
         <div id="controlStatus" class="controlStatus">Bereit</div>
       </div>
@@ -1208,11 +1214,11 @@
             <div class="fullWidth providerPanel providerOllama providerHidden"><div class="switchLine"><input id="cfgOllamaEnabled" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgOllamaEnabled">Ollama lokal aktiv <button class="helpButton" type="button" data-help-target="ollamaEnabledHelp">?</button></label><span id="cfgOllamaEnabledState" class="switchState">Aus</span></div><div id="ollamaEnabledHelp" class="helpText">Nutzt den lokalen Ollama Server als Provider für das Rollen-Team.</div></div>
             <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaBaseUrl">Ollama Base URL <button class="helpButton" type="button" data-help-target="ollamaBaseUrlHelp">?</button></label><input id="cfgOllamaBaseUrl" type="text"><div id="ollamaBaseUrlHelp" class="helpText">Lokale Ollama-Adresse. Standard: http://127.0.0.1:11434</div></div>
             <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaModel">Ollama Modell <button class="helpButton" type="button" data-help-target="ollamaModelHelp">?</button></label><input id="cfgOllamaModel" type="text"><div id="ollamaModelHelp" class="helpText">Empfohlen für diesen Bot: qwen2.5:3b.</div></div>
-            <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaTimeout">Timeout Sekunden <button class="helpButton" type="button" data-help-target="ollamaTimeoutHelp">?</button></label><input id="cfgOllamaTimeout" type="number" min="1" max="60" step="1"><div id="ollamaTimeoutHelp" class="helpText">Maximale Wartezeit auf die lokale Ollama-Antwort.</div></div>
+            <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaTimeout">Timeout Sekunden <button class="helpButton" type="button" data-help-target="ollamaTimeoutHelp">?</button></label><input id="cfgOllamaTimeout" type="number" min="1" max="180" step="1"><div id="ollamaTimeoutHelp" class="helpText">Maximale Wartezeit auf die lokale Ollama-Antwort.</div></div>
             <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaMaxPrompt">Max Prompt Zeichen <button class="helpButton" type="button" data-help-target="ollamaPromptHelp">?</button></label><input id="cfgOllamaMaxPrompt" type="number" min="500" max="20000" step="100"><div id="ollamaPromptHelp" class="helpText">Begrenzt den Audit-Kontext, der an Ollama gesendet wird.</div></div>
             <div class="providerPanel providerOllama providerHidden"><label class="fieldLabel" for="cfgOllamaTemperature">Temperature <button class="helpButton" type="button" data-help-target="ollamaTempHelp">?</button></label><input id="cfgOllamaTemperature" type="number" min="0" max="1" step="0.1"><div id="ollamaTempHelp" class="helpText">0 = deterministischer Audit. Höhere Werte sind für diesen Bot nicht empfohlen.</div></div>
             <div class="fullWidth providerPanel providerOllama providerHidden"><div class="switchLine"><input id="cfgOllamaBlockHint" class="switchInput" type="checkbox"><label class="fieldLabel" for="cfgOllamaBlockHint">Block-Hinweis auswerten <button class="helpButton" type="button" data-help-target="ollamaBlockHintHelp">?</button></label><span id="cfgOllamaBlockHintState" class="switchState">Aus</span></div><div id="ollamaBlockHintHelp" class="helpText">Nur Hinweis-Schicht. Das Economic Gate bleibt die harte Sperre.</div></div>
-            <div class="apiTestRow fullWidth providerPanel providerOllama providerHidden"><button id="testOllamaConnection" type="button">Ollama testen</button><span id="ollamaTestStatus" class="label">Noch nicht geprüft.</span></div>
+            <div class="apiTestRow fullWidth providerPanel providerOllama providerHidden"><button id="testOllamaConnection" type="button">Ollama testen</button><button id="testOllamaSpeed" type="button">Speed-Test</button><span id="ollamaTestStatus" class="label">Noch nicht geprüft.</span><span id="ollamaSpeedStatus" class="label">Noch nicht gemessen.</span></div>
           </div>
         </div>
         <div id="agentSettingsStatus" class="agentSaveStatus" data-state="idle"></div>
@@ -1706,6 +1712,42 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       el.textContent = fallback;
       el.className = 'controlStatus';
     }
+    function installBotControlHandler() {
+      if (document.body.dataset.botControlHandler === '1') return;
+      document.body.dataset.botControlHandler = '1';
+      document.addEventListener('click', event => {
+        const button = event.target.closest('#startBot, #stopBot, #reloadBot, #resetBot');
+        if (!button || button.disabled) return;
+        event.preventDefault();
+        if (button.id === 'reloadBot') {
+          reloadDashboardData();
+          return;
+        }
+        const actions = {
+          startBot: 'start',
+          stopBot: 'stop',
+          resetBot: 'reset'
+        };
+        const action = actions[button.id];
+        if (action) botControl(action);
+      });
+    }
+    function bindBotControlButtons() {
+      const bind = (id, handler) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.dataset.botControlBound = '1';
+        button.onclick = event => {
+          if (button.disabled) return;
+          event.preventDefault();
+          handler();
+        };
+      };
+      bind('startBot', () => botControl('start'));
+      bind('stopBot', () => botControl('stop'));
+      bind('reloadBot', reloadDashboardData);
+      bind('resetBot', () => botControl('reset'));
+    }
     function renderBotControls(cfg) {
       const running = !!cfg.observer_enabled;
       const start = document.getElementById('startBot');
@@ -1728,6 +1770,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         stop.textContent = running ? 'Stop' : 'Gestoppt';
         stop.title = running ? 'Scanner stoppen' : 'Scanner ist bereits gestoppt';
       }
+      bindBotControlButtons();
       renderControlMessage(running ? `Scanner aktiv: ${active}` : `Scanner gestoppt: ${active}`);
     }
     function renderDayCandleStatus(data, cfg) {
@@ -1894,11 +1937,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       syncTradeHistoryFilters(tradesAll);
       document.getElementById('tradesTitle').textContent = `Trade-History (${viewLabel})`;
       const assetStats = selectedAsset ? data.paper?.per_symbol?.[selectedAsset] : null;
-      if (assetStats && !lastActionMessage) {
-        renderControlMessage(`Ansicht ${selectedAsset}: ${assetStats.closed} geschlossen, Winrate ${pct(assetStats.win_rate)}, Sum R ${assetStats.sum_r}`);
-      } else if (!selectedAsset && !lastActionMessage) {
-        renderControlMessage(`Gesamtansicht: ${fmt(perf.closed, 0)} geschlossen, ${fmt(data.paper?.open_trades, 0)} offen, ${fmt(data.paper?.pending_trades, 0)} pending`);
-      }
+      // Keep this line focused on scanner control; trade stats already have their own cards/table.
 
       const trades = tradesAll.filter(tradeMatchesFilters).slice().reverse().slice(0, 50);
       const tradeFilterInfo = document.getElementById('tradeFilterInfo');
@@ -1967,6 +2006,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
         ['TP/SL', `${data.config?.reward_risk}:1`],
         ['Value Gate', `min Netto ${percentDisplay(cfg.min_net_profit_fraction)} | max SL ${percentDisplay(cfg.max_sl_distance_fraction)} | max Fee/R ${percentDisplay(cfg.max_fee_to_risk_fraction)}`],
         ['LLM Rollenteam', `${llmAuditEnabled(cfg) ? 'aktiv' : 'aus'} | ${fmt((cfg.llm_provider === 'ollama' ? cfg.ollama_model : cfg.openai_model) || 'gpt-4.1-mini')}`],
+        ['LLM Hardware', llmHardwareLabel(data.llm_hardware)],
         ['Paper-Trades', `${fmt(perf.closed, 0)} geschlossen / ${fmt(data.paper?.open_trades, 0)} offen / ${fmt(data.paper?.pending_trades, 0)} pending`],
       ];
       document.getElementById('botRows').innerHTML = botRows.map(([k,v]) => `<tr><th>${k}</th><td>${fmt(v)}</td></tr>`).join('');
@@ -3170,6 +3210,23 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       if (!cfg?.ollama_enabled) return { badge:'Aus', main:'Ollama deaktiviert', detail:'Ollama aktiv im Strategie Setup einschalten.', cls:'off' };
       return { badge:'Aktiv', main:'Wartet auf Kontext', detail:'Ollama und Rollen steuern diesen Schritt.', cls:'warn' };
     }
+    function llmHardwareLabel(hw) {
+      if (!hw || typeof hw !== 'object') return '-';
+      const library = hw.configured_library || hw.user_library || hw.process_library || 'auto';
+      const runner = hw.runner_active ? `Runner PID ${hw.runner_pid || '-'}` : 'kein Runner';
+      const backend = library === 'vulkan' ? 'Vulkan/GPU' : String(library).startsWith('cpu') ? 'CPU' : library;
+      return `${backend} | ${runner}`;
+    }
+    function renderLlmHardwareStatus(hw) {
+      if (!hw || typeof hw !== 'object') return '';
+      const library = hw.configured_library || 'auto';
+      const cls = library === 'vulkan' && hw.runner_active && !hw.runner_no_mmap ? 'good' : String(library).startsWith('cpu') ? 'bad' : 'warn';
+      const backends = Array.isArray(hw.available_backends) && hw.available_backends.length ? hw.available_backends.join(', ') : '-';
+      return `<div class="llmHardwareStatus ${cls}">
+        <div><strong>Hardware</strong> ${escapeHtml(llmHardwareLabel(hw))}</div>
+        <div class="label">${escapeHtml(hw.detail || '-')} | Backends: ${escapeHtml(backends)}</div>
+      </div>`;
+    }
     function liveFlowClass(kind, active=false) {
       const value = String(kind || '').toUpperCase();
       if (!active) return 'off';
@@ -3250,7 +3307,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
       if (section) section.style.display = '';
       const activeSymbols = cfg?.symbols || [];
       const symbol = selectedAgentAsset || selectedAsset || activeSymbols[0] || 'BTCUSDT';
-      panel.innerHTML = renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg);
+      panel.innerHTML = renderLlmHardwareStatus(data?.llm_hardware) + renderLlmAuditContent(llmLayerForSymbol(data, cfg, symbol), cfg);
     }
     function signalClass(signal) {
       const value = String(signal || 'NEUTRAL').toLowerCase();
@@ -4429,115 +4486,140 @@ Rueckmeldung: ${message}</div>
       });
     }
     function applyIndicatorSettingsToForm(data) {
-      document.getElementById('cfgIndicatorEnabled').checked = data.indicator_enabled !== false;
-      document.getElementById('cfgIndicatorShowBosChoch').checked = data.indicator_show_bos_choch !== false;
-      document.getElementById('cfgIndicatorShowBoxes').checked = data.indicator_show_boxes !== false;
-      document.getElementById('cfgIndicatorShowSwingLabels').checked = data.indicator_show_swing_labels !== false;
-      document.getElementById('cfgIndicatorShowHma').checked = data.indicator_show_hma === true;
-      document.getElementById('cfgIndicatorShowSma').checked = data.indicator_show_sma !== false;
-      document.getElementById('cfgIndicatorShowTripleEma').checked = data.indicator_show_triple_ema === true;
-      document.getElementById('cfgIndicatorShowMfi').checked = data.indicator_show_mfi !== false;
-      document.getElementById('cfgIndicatorShowMacd').checked = data.indicator_show_macd !== false;
-      document.getElementById('cfgIndicatorShowSupportResistance').checked = data.indicator_show_support_resistance !== false;
-      document.getElementById('cfgIndicatorSwingSize').value = data.indicator_swing_size ?? 5;
-      document.getElementById('cfgIndicatorHhllRange').value = data.indicator_hhll_range ?? 50;
-      document.getElementById('cfgIndicatorBoxExtendCandles').value = data.indicator_box_extend_candles ?? 4;
-      document.getElementById('cfgIndicatorBosChochLookbackDays').value = data.indicator_bos_choch_lookback_days ?? data.indicator_lookback_days ?? 3;
-      document.getElementById('cfgIndicatorBoxesLookbackDays').value = data.indicator_boxes_lookback_days ?? data.indicator_lookback_days ?? 3;
-      document.getElementById('cfgIndicatorSwingLabelsLookbackDays').value = data.indicator_swing_labels_lookback_days ?? data.indicator_lookback_days ?? 3;
-      document.getElementById('cfgIndicatorHmaLookbackDays').value = data.indicator_hma_lookback_days ?? 0;
-      document.getElementById('cfgIndicatorSmaLookbackDays').value = data.indicator_sma_lookback_days ?? 0;
-      document.getElementById('cfgIndicatorTripleEmaLookbackDays').value = data.indicator_triple_ema_lookback_days ?? 0;
-      document.getElementById('cfgIndicatorMfiLookbackDays').value = data.indicator_mfi_lookback_days ?? 0;
-      document.getElementById('cfgIndicatorMacdLookbackDays').value = data.indicator_macd_lookback_days ?? 0;
-      document.getElementById('cfgIndicatorBosConfirmation').value = data.indicator_bos_confirmation || 'Wicks';
-      document.getElementById('cfgIndicatorHmaPeriod').value = data.indicator_hma_period ?? 20;
-      document.getElementById('cfgIndicatorSmaPeriod').value = data.indicator_sma_period ?? 50;
-      document.getElementById('cfgIndicatorTripleEmaPeriod').value = data.indicator_triple_ema_period ?? 20;
-      document.getElementById('cfgIndicatorTripleEmaSlowPeriod').value = data.indicator_triple_ema_slow_period ?? 50;
-      document.getElementById('cfgIndicatorMfiPeriod').value = data.indicator_mfi_period ?? 14;
-      document.getElementById('cfgIndicatorMacdFastPeriod').value = data.indicator_macd_fast_period ?? 12;
-      document.getElementById('cfgIndicatorMacdSlowPeriod').value = data.indicator_macd_slow_period ?? 26;
-      document.getElementById('cfgIndicatorMacdSignalPeriod').value = data.indicator_macd_signal_period ?? 9;
-      document.getElementById('cfgIndicatorSrPivotPeriod').value = data.indicator_sr_pivot_period ?? 10;
-      document.getElementById('cfgIndicatorSrSource').value = data.indicator_sr_source || 'High/Low';
-      document.getElementById('cfgIndicatorSrMaxPivots').value = data.indicator_sr_max_pivots ?? 20;
-      document.getElementById('cfgIndicatorSrChannelWidthPercent').value = data.indicator_sr_channel_width_percent ?? 10;
-      document.getElementById('cfgIndicatorSrMaxLevels').value = data.indicator_sr_max_levels ?? 5;
-      document.getElementById('cfgIndicatorSrMinStrength').value = data.indicator_sr_min_strength ?? 2;
+      const setChecked = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = value;
+      };
+      const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+      };
+      setChecked('cfgIndicatorEnabled', data.indicator_enabled !== false);
+      setChecked('cfgIndicatorShowBosChoch', data.indicator_show_bos_choch !== false);
+      setChecked('cfgIndicatorShowBoxes', data.indicator_show_boxes !== false);
+      setChecked('cfgIndicatorShowSwingLabels', data.indicator_show_swing_labels !== false);
+      setChecked('cfgIndicatorShowHma', data.indicator_show_hma === true);
+      setChecked('cfgIndicatorShowSma', data.indicator_show_sma !== false);
+      setChecked('cfgIndicatorShowTripleEma', data.indicator_show_triple_ema === true);
+      setChecked('cfgIndicatorShowMfi', data.indicator_show_mfi !== false);
+      setChecked('cfgIndicatorShowMacd', data.indicator_show_macd !== false);
+      setChecked('cfgIndicatorShowSupportResistance', data.indicator_show_support_resistance !== false);
+      setValue('cfgIndicatorSwingSize', data.indicator_swing_size ?? 5);
+      setValue('cfgIndicatorHhllRange', data.indicator_hhll_range ?? 50);
+      setValue('cfgIndicatorBoxExtendCandles', data.indicator_box_extend_candles ?? 4);
+      setValue('cfgIndicatorBosChochLookbackDays', data.indicator_bos_choch_lookback_days ?? data.indicator_lookback_days ?? 3);
+      setValue('cfgIndicatorBoxesLookbackDays', data.indicator_boxes_lookback_days ?? data.indicator_lookback_days ?? 3);
+      setValue('cfgIndicatorSwingLabelsLookbackDays', data.indicator_swing_labels_lookback_days ?? data.indicator_lookback_days ?? 3);
+      setValue('cfgIndicatorHmaLookbackDays', data.indicator_hma_lookback_days ?? 0);
+      setValue('cfgIndicatorSmaLookbackDays', data.indicator_sma_lookback_days ?? 0);
+      setValue('cfgIndicatorTripleEmaLookbackDays', data.indicator_triple_ema_lookback_days ?? 0);
+      setValue('cfgIndicatorMfiLookbackDays', data.indicator_mfi_lookback_days ?? 0);
+      setValue('cfgIndicatorMacdLookbackDays', data.indicator_macd_lookback_days ?? 0);
+      setValue('cfgIndicatorBosConfirmation', data.indicator_bos_confirmation || 'Wicks');
+      setValue('cfgIndicatorHmaPeriod', data.indicator_hma_period ?? 20);
+      setValue('cfgIndicatorSmaPeriod', data.indicator_sma_period ?? 50);
+      setValue('cfgIndicatorTripleEmaPeriod', data.indicator_triple_ema_period ?? 20);
+      setValue('cfgIndicatorTripleEmaSlowPeriod', data.indicator_triple_ema_slow_period ?? 50);
+      setValue('cfgIndicatorMfiPeriod', data.indicator_mfi_period ?? 14);
+      setValue('cfgIndicatorMacdFastPeriod', data.indicator_macd_fast_period ?? 12);
+      setValue('cfgIndicatorMacdSlowPeriod', data.indicator_macd_slow_period ?? 26);
+      setValue('cfgIndicatorMacdSignalPeriod', data.indicator_macd_signal_period ?? 9);
+      setValue('cfgIndicatorSrPivotPeriod', data.indicator_sr_pivot_period ?? 10);
+      setValue('cfgIndicatorSrSource', data.indicator_sr_source || 'High/Low');
+      setValue('cfgIndicatorSrMaxPivots', data.indicator_sr_max_pivots ?? 20);
+      setValue('cfgIndicatorSrChannelWidthPercent', data.indicator_sr_channel_width_percent ?? 10);
+      setValue('cfgIndicatorSrMaxLevels', data.indicator_sr_max_levels ?? 5);
+      setValue('cfgIndicatorSrMinStrength', data.indicator_sr_min_strength ?? 2);
       applyChartSettingsToForm(data);
-      document.getElementById('cfgIndicatorRisingColor').value = safeHexColor(data.indicator_bos_rising_color || data.indicator_rising_color, '#047857');
-      document.getElementById('cfgIndicatorFallingColor').value = safeHexColor(data.indicator_bos_falling_color || data.indicator_falling_color, '#b42318');
-      document.getElementById('cfgIndicatorSwingRisingColor').value = safeHexColor(data.indicator_swing_rising_color || data.indicator_rising_color, '#047857');
-      document.getElementById('cfgIndicatorSwingFallingColor').value = safeHexColor(data.indicator_swing_falling_color || data.indicator_falling_color, '#b42318');
-      document.getElementById('cfgIndicatorBoxHighColor').value = safeHexColor(data.indicator_box_high_color, '#b42318');
-      document.getElementById('cfgIndicatorBoxLowColor').value = safeHexColor(data.indicator_box_low_color, '#047857');
-      document.getElementById('cfgIndicatorHmaColor').value = safeHexColor(data.indicator_hma_color, '#7c3aed');
-      document.getElementById('cfgIndicatorSmaColor').value = safeHexColor(data.indicator_sma_color, '#06b6d4');
-      document.getElementById('cfgIndicatorTripleEmaColor').value = safeHexColor(data.indicator_triple_ema_color, '#d97706');
-      document.getElementById('cfgIndicatorTripleEmaSlowColor').value = safeHexColor(data.indicator_triple_ema_slow_color, '#2563eb');
-      document.getElementById('cfgIndicatorMfiColor').value = safeHexColor(data.indicator_mfi_color, '#db2777');
-      document.getElementById('cfgIndicatorMacdColor').value = safeHexColor(data.indicator_macd_color, '#0ea5e9');
-      document.getElementById('cfgIndicatorMacdSignalColor').value = safeHexColor(data.indicator_macd_signal_color, '#f97316');
-      document.getElementById('cfgIndicatorMacdHistogramColor').value = safeHexColor(data.indicator_macd_histogram_color, '#64748b');
-      document.getElementById('cfgIndicatorSrSupportColor').value = safeHexColor(data.indicator_sr_support_color, '#22c55e');
-      document.getElementById('cfgIndicatorSrResistanceColor').value = safeHexColor(data.indicator_sr_resistance_color, '#ef4444');
+      setValue('cfgIndicatorRisingColor', safeHexColor(data.indicator_bos_rising_color || data.indicator_rising_color, '#047857'));
+      setValue('cfgIndicatorFallingColor', safeHexColor(data.indicator_bos_falling_color || data.indicator_falling_color, '#b42318'));
+      setValue('cfgIndicatorSwingRisingColor', safeHexColor(data.indicator_swing_rising_color || data.indicator_rising_color, '#047857'));
+      setValue('cfgIndicatorSwingFallingColor', safeHexColor(data.indicator_swing_falling_color || data.indicator_falling_color, '#b42318'));
+      setValue('cfgIndicatorBoxHighColor', safeHexColor(data.indicator_box_high_color, '#b42318'));
+      setValue('cfgIndicatorBoxLowColor', safeHexColor(data.indicator_box_low_color, '#047857'));
+      setValue('cfgIndicatorHmaColor', safeHexColor(data.indicator_hma_color, '#7c3aed'));
+      setValue('cfgIndicatorSmaColor', safeHexColor(data.indicator_sma_color, '#06b6d4'));
+      setValue('cfgIndicatorTripleEmaColor', safeHexColor(data.indicator_triple_ema_color, '#d97706'));
+      setValue('cfgIndicatorTripleEmaSlowColor', safeHexColor(data.indicator_triple_ema_slow_color, '#2563eb'));
+      setValue('cfgIndicatorMfiColor', safeHexColor(data.indicator_mfi_color, '#db2777'));
+      setValue('cfgIndicatorMacdColor', safeHexColor(data.indicator_macd_color, '#0ea5e9'));
+      setValue('cfgIndicatorMacdSignalColor', safeHexColor(data.indicator_macd_signal_color, '#f97316'));
+      setValue('cfgIndicatorMacdHistogramColor', safeHexColor(data.indicator_macd_histogram_color, '#64748b'));
+      setValue('cfgIndicatorSrSupportColor', safeHexColor(data.indicator_sr_support_color, '#22c55e'));
+      setValue('cfgIndicatorSrResistanceColor', safeHexColor(data.indicator_sr_resistance_color, '#ef4444'));
       syncAllSwitchStates();
     }
     function indicatorSettingsPayload() {
+      const byId = (id) => document.getElementById(id);
+      const checkedValue = (id, key, fallback = false) => {
+        const node = byId(id);
+        return node ? !!node.checked : !!(latestConfig?.[key] ?? fallback);
+      };
+      const numberValue = (id, key, fallback = 0) => {
+        const node = byId(id);
+        return Number(node ? node.value : (latestConfig?.[key] ?? fallback));
+      };
+      const textValue = (id, key, fallback = '') => {
+        const node = byId(id);
+        return String(node ? node.value : (latestConfig?.[key] ?? fallback));
+      };
+      const colorValue = (id, key, fallback = '#000000') => {
+        const node = byId(id);
+        return node ? node.value : safeHexColor(latestConfig?.[key], fallback);
+      };
       return {
-        indicator_enabled: document.getElementById('cfgIndicatorEnabled').checked,
-        indicator_show_bos_choch: document.getElementById('cfgIndicatorShowBosChoch').checked,
-        indicator_show_boxes: document.getElementById('cfgIndicatorShowBoxes').checked,
-        indicator_show_swing_labels: document.getElementById('cfgIndicatorShowSwingLabels').checked,
-        indicator_show_hma: document.getElementById('cfgIndicatorShowHma').checked,
-        indicator_show_sma: document.getElementById('cfgIndicatorShowSma').checked,
-        indicator_show_triple_ema: document.getElementById('cfgIndicatorShowTripleEma').checked,
-        indicator_show_mfi: document.getElementById('cfgIndicatorShowMfi').checked,
-        indicator_show_macd: document.getElementById('cfgIndicatorShowMacd').checked,
-        indicator_show_support_resistance: document.getElementById('cfgIndicatorShowSupportResistance').checked,
-        indicator_swing_size: Number(document.getElementById('cfgIndicatorSwingSize').value),
-        indicator_hhll_range: Number(document.getElementById('cfgIndicatorHhllRange').value),
-        indicator_box_extend_candles: Number(document.getElementById('cfgIndicatorBoxExtendCandles').value),
-        indicator_bos_choch_lookback_days: Number(document.getElementById('cfgIndicatorBosChochLookbackDays').value),
-        indicator_boxes_lookback_days: Number(document.getElementById('cfgIndicatorBoxesLookbackDays').value),
-        indicator_swing_labels_lookback_days: Number(document.getElementById('cfgIndicatorSwingLabelsLookbackDays').value),
-        indicator_hma_lookback_days: Number(document.getElementById('cfgIndicatorHmaLookbackDays').value),
-        indicator_sma_lookback_days: Number(document.getElementById('cfgIndicatorSmaLookbackDays').value),
-        indicator_triple_ema_lookback_days: Number(document.getElementById('cfgIndicatorTripleEmaLookbackDays').value),
-        indicator_mfi_lookback_days: Number(document.getElementById('cfgIndicatorMfiLookbackDays').value),
-        indicator_macd_lookback_days: Number(document.getElementById('cfgIndicatorMacdLookbackDays').value),
-        indicator_bos_confirmation: document.getElementById('cfgIndicatorBosConfirmation').value,
-        indicator_hma_period: Number(document.getElementById('cfgIndicatorHmaPeriod').value),
-        indicator_sma_period: Number(document.getElementById('cfgIndicatorSmaPeriod').value),
-        indicator_triple_ema_period: Number(document.getElementById('cfgIndicatorTripleEmaPeriod').value),
-        indicator_triple_ema_slow_period: Number(document.getElementById('cfgIndicatorTripleEmaSlowPeriod').value),
-        indicator_mfi_period: Number(document.getElementById('cfgIndicatorMfiPeriod').value),
-        indicator_macd_fast_period: Number(document.getElementById('cfgIndicatorMacdFastPeriod').value),
-        indicator_macd_slow_period: Number(document.getElementById('cfgIndicatorMacdSlowPeriod').value),
-        indicator_macd_signal_period: Number(document.getElementById('cfgIndicatorMacdSignalPeriod').value),
-        indicator_sr_pivot_period: Number(document.getElementById('cfgIndicatorSrPivotPeriod').value),
-        indicator_sr_source: document.getElementById('cfgIndicatorSrSource').value,
-        indicator_sr_max_pivots: Number(document.getElementById('cfgIndicatorSrMaxPivots').value),
-        indicator_sr_channel_width_percent: Number(document.getElementById('cfgIndicatorSrChannelWidthPercent').value),
-        indicator_sr_max_levels: Number(document.getElementById('cfgIndicatorSrMaxLevels').value),
-        indicator_sr_min_strength: Number(document.getElementById('cfgIndicatorSrMinStrength').value),
-        indicator_bos_rising_color: document.getElementById('cfgIndicatorRisingColor').value,
-        indicator_bos_falling_color: document.getElementById('cfgIndicatorFallingColor').value,
-        indicator_swing_rising_color: document.getElementById('cfgIndicatorSwingRisingColor').value,
-        indicator_swing_falling_color: document.getElementById('cfgIndicatorSwingFallingColor').value,
-        indicator_box_high_color: document.getElementById('cfgIndicatorBoxHighColor').value,
-        indicator_box_low_color: document.getElementById('cfgIndicatorBoxLowColor').value,
-        indicator_hma_color: document.getElementById('cfgIndicatorHmaColor').value,
-        indicator_sma_color: document.getElementById('cfgIndicatorSmaColor').value,
-        indicator_triple_ema_color: document.getElementById('cfgIndicatorTripleEmaColor').value,
-        indicator_triple_ema_slow_color: document.getElementById('cfgIndicatorTripleEmaSlowColor').value,
-        indicator_mfi_color: document.getElementById('cfgIndicatorMfiColor').value,
-        indicator_macd_color: document.getElementById('cfgIndicatorMacdColor').value,
-        indicator_macd_signal_color: document.getElementById('cfgIndicatorMacdSignalColor').value,
-        indicator_macd_histogram_color: document.getElementById('cfgIndicatorMacdHistogramColor').value,
-        indicator_sr_support_color: document.getElementById('cfgIndicatorSrSupportColor').value,
-        indicator_sr_resistance_color: document.getElementById('cfgIndicatorSrResistanceColor').value,
+        indicator_enabled: checkedValue('cfgIndicatorEnabled', 'indicator_enabled', true),
+        indicator_show_bos_choch: checkedValue('cfgIndicatorShowBosChoch', 'indicator_show_bos_choch', true),
+        indicator_show_boxes: checkedValue('cfgIndicatorShowBoxes', 'indicator_show_boxes', true),
+        indicator_show_swing_labels: checkedValue('cfgIndicatorShowSwingLabels', 'indicator_show_swing_labels', true),
+        indicator_show_hma: checkedValue('cfgIndicatorShowHma', 'indicator_show_hma', false),
+        indicator_show_sma: checkedValue('cfgIndicatorShowSma', 'indicator_show_sma', true),
+        indicator_show_triple_ema: checkedValue('cfgIndicatorShowTripleEma', 'indicator_show_triple_ema', false),
+        indicator_show_mfi: checkedValue('cfgIndicatorShowMfi', 'indicator_show_mfi', true),
+        indicator_show_macd: checkedValue('cfgIndicatorShowMacd', 'indicator_show_macd', true),
+        indicator_show_support_resistance: checkedValue('cfgIndicatorShowSupportResistance', 'indicator_show_support_resistance', true),
+        indicator_swing_size: numberValue('cfgIndicatorSwingSize', 'indicator_swing_size', 5),
+        indicator_hhll_range: numberValue('cfgIndicatorHhllRange', 'indicator_hhll_range', 50),
+        indicator_box_extend_candles: numberValue('cfgIndicatorBoxExtendCandles', 'indicator_box_extend_candles', 4),
+        indicator_bos_choch_lookback_days: numberValue('cfgIndicatorBosChochLookbackDays', 'indicator_bos_choch_lookback_days', 3),
+        indicator_boxes_lookback_days: numberValue('cfgIndicatorBoxesLookbackDays', 'indicator_boxes_lookback_days', 3),
+        indicator_swing_labels_lookback_days: numberValue('cfgIndicatorSwingLabelsLookbackDays', 'indicator_swing_labels_lookback_days', 3),
+        indicator_hma_lookback_days: numberValue('cfgIndicatorHmaLookbackDays', 'indicator_hma_lookback_days', 0),
+        indicator_sma_lookback_days: numberValue('cfgIndicatorSmaLookbackDays', 'indicator_sma_lookback_days', 0),
+        indicator_triple_ema_lookback_days: numberValue('cfgIndicatorTripleEmaLookbackDays', 'indicator_triple_ema_lookback_days', 0),
+        indicator_mfi_lookback_days: numberValue('cfgIndicatorMfiLookbackDays', 'indicator_mfi_lookback_days', 0),
+        indicator_macd_lookback_days: numberValue('cfgIndicatorMacdLookbackDays', 'indicator_macd_lookback_days', 0),
+        indicator_bos_confirmation: textValue('cfgIndicatorBosConfirmation', 'indicator_bos_confirmation', 'Wicks'),
+        indicator_hma_period: numberValue('cfgIndicatorHmaPeriod', 'indicator_hma_period', 20),
+        indicator_sma_period: numberValue('cfgIndicatorSmaPeriod', 'indicator_sma_period', 50),
+        indicator_triple_ema_period: numberValue('cfgIndicatorTripleEmaPeriod', 'indicator_triple_ema_period', 20),
+        indicator_triple_ema_slow_period: numberValue('cfgIndicatorTripleEmaSlowPeriod', 'indicator_triple_ema_slow_period', 50),
+        indicator_mfi_period: numberValue('cfgIndicatorMfiPeriod', 'indicator_mfi_period', 14),
+        indicator_macd_fast_period: numberValue('cfgIndicatorMacdFastPeriod', 'indicator_macd_fast_period', 12),
+        indicator_macd_slow_period: numberValue('cfgIndicatorMacdSlowPeriod', 'indicator_macd_slow_period', 26),
+        indicator_macd_signal_period: numberValue('cfgIndicatorMacdSignalPeriod', 'indicator_macd_signal_period', 9),
+        indicator_sr_pivot_period: numberValue('cfgIndicatorSrPivotPeriod', 'indicator_sr_pivot_period', 10),
+        indicator_sr_source: textValue('cfgIndicatorSrSource', 'indicator_sr_source', 'High/Low'),
+        indicator_sr_max_pivots: numberValue('cfgIndicatorSrMaxPivots', 'indicator_sr_max_pivots', 20),
+        indicator_sr_channel_width_percent: numberValue('cfgIndicatorSrChannelWidthPercent', 'indicator_sr_channel_width_percent', 10),
+        indicator_sr_max_levels: numberValue('cfgIndicatorSrMaxLevels', 'indicator_sr_max_levels', 5),
+        indicator_sr_min_strength: numberValue('cfgIndicatorSrMinStrength', 'indicator_sr_min_strength', 2),
+        indicator_bos_rising_color: colorValue('cfgIndicatorRisingColor', 'indicator_bos_rising_color', '#047857'),
+        indicator_bos_falling_color: colorValue('cfgIndicatorFallingColor', 'indicator_bos_falling_color', '#b42318'),
+        indicator_swing_rising_color: colorValue('cfgIndicatorSwingRisingColor', 'indicator_swing_rising_color', '#047857'),
+        indicator_swing_falling_color: colorValue('cfgIndicatorSwingFallingColor', 'indicator_swing_falling_color', '#b42318'),
+        indicator_box_high_color: colorValue('cfgIndicatorBoxHighColor', 'indicator_box_high_color', '#b42318'),
+        indicator_box_low_color: colorValue('cfgIndicatorBoxLowColor', 'indicator_box_low_color', '#047857'),
+        indicator_hma_color: colorValue('cfgIndicatorHmaColor', 'indicator_hma_color', '#7c3aed'),
+        indicator_sma_color: colorValue('cfgIndicatorSmaColor', 'indicator_sma_color', '#06b6d4'),
+        indicator_triple_ema_color: colorValue('cfgIndicatorTripleEmaColor', 'indicator_triple_ema_color', '#d97706'),
+        indicator_triple_ema_slow_color: colorValue('cfgIndicatorTripleEmaSlowColor', 'indicator_triple_ema_slow_color', '#2563eb'),
+        indicator_mfi_color: colorValue('cfgIndicatorMfiColor', 'indicator_mfi_color', '#db2777'),
+        indicator_macd_color: colorValue('cfgIndicatorMacdColor', 'indicator_macd_color', '#0ea5e9'),
+        indicator_macd_signal_color: colorValue('cfgIndicatorMacdSignalColor', 'indicator_macd_signal_color', '#f97316'),
+        indicator_macd_histogram_color: colorValue('cfgIndicatorMacdHistogramColor', 'indicator_macd_histogram_color', '#64748b'),
+        indicator_sr_support_color: colorValue('cfgIndicatorSrSupportColor', 'indicator_sr_support_color', '#22c55e'),
+        indicator_sr_resistance_color: colorValue('cfgIndicatorSrResistanceColor', 'indicator_sr_resistance_color', '#ef4444'),
       };
     }
     function applyChartSettingsToForm(data) {
@@ -4733,6 +4815,7 @@ Rueckmeldung: ${message}</div>
           document.querySelectorAll('[data-agent-setup-toggle]').forEach(item => setAgentSetupToggleState(item, false));
           if (panel) panel.classList.toggle('open', open);
           setAgentSetupToggleState(button, open);
+          if (open && panel) window.setTimeout(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30);
         });
       });
       root.querySelectorAll('[data-agent-setup-close]').forEach(button => {
@@ -5052,6 +5135,25 @@ Rueckmeldung: ${message}</div>
       } catch (error) {
         status.textContent = 'Ollama Test fehlgeschlagen.';
         window.alert('Ollama Test fehlgeschlagen. Die lokale App konnte den Test-Endpunkt nicht erreichen.');
+      }
+    }
+    async function testOllamaSpeed() {
+      const status = document.getElementById('ollamaSpeedStatus') || document.getElementById('ollamaTestStatus');
+      if (!status) return;
+      status.textContent = 'Messe Ollama...';
+      try {
+        const response = await fetch('/api/ollama-speed-test', { cache: 'no-store' });
+        const result = await response.json();
+        const hw = result.hardware || {};
+        const library = hw.configured_library === 'vulkan' ? 'Vulkan/GPU' : String(hw.configured_library || '').startsWith('cpu') ? 'CPU' : (hw.configured_library || 'auto');
+        const speed = result.tokens_per_second ? ` | ${result.tokens_per_second} tok/s` : '';
+        status.textContent = result.ok
+          ? `OK ${result.seconds}s | ${library}${speed} | JSON gueltig`
+          : `${result.reason || 'Speed-Test fehlgeschlagen'} | ${library}`;
+        if (!result.ok) window.alert(result.reason || 'Ollama Speed-Test fehlgeschlagen.');
+      } catch (error) {
+        status.textContent = 'Ollama Speed-Test fehlgeschlagen.';
+        window.alert('Ollama Speed-Test fehlgeschlagen. Die lokale App konnte den Test-Endpunkt nicht erreichen.');
       }
     }
     async function saveAgentSettings() {
@@ -5738,10 +5840,8 @@ Rueckmeldung: ${message}</div>
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
-    document.getElementById('startBot').addEventListener('click', () => botControl('start'));
-    document.getElementById('stopBot').addEventListener('click', () => botControl('stop'));
-    document.getElementById('reloadBot').addEventListener('click', reloadDashboardData);
-    document.getElementById('resetBot').addEventListener('click', () => botControl('reset'));
+    installBotControlHandler();
+    bindBotControlButtons();
     document.getElementById('assetFilter').addEventListener('change', event => {
       setSelectedAssetFromDropdown(event.target.value);
       refresh();
@@ -5898,6 +5998,7 @@ Rueckmeldung: ${message}</div>
     document.getElementById('testOpenAiConnection').addEventListener('click', testOpenAiConnection);
     document.getElementById('testOpenAiAgentConnection')?.addEventListener('click', () => testOpenAiConnection('openAiAgentTestStatus'));
     document.getElementById('testOllamaConnection')?.addEventListener('click', testOllamaConnection);
+    document.getElementById('testOllamaSpeed')?.addEventListener('click', testOllamaSpeed);
     document.getElementById('saveConfigSettings').addEventListener('click', saveConfigSettings);
     document.getElementById('saveStrategyConfigSettings').addEventListener('click', saveStrategyConfigSettings);
     document.getElementById('saveAgentSettings').addEventListener('click', saveAgentSettings);
@@ -6543,7 +6644,7 @@ Rueckmeldung: ${message}</div>
     if (oldStyle && oldStyle.parentNode) oldStyle.parentNode.removeChild(oldStyle);
     const style = document.createElement('style');
     style.id = 'chart-pane-technical-style';
-    style.textContent = '.chartTechnicalToolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;padding:8px;border:1px solid rgba(148,163,184,.25);border-radius:4px;background:rgba(15,23,42,.14)}.chartTechTitle{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);margin-right:4px}.chartTechButton{min-height:28px;padding:5px 8px;border-radius:3px;font-size:11px;font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace;background:rgba(30,41,59,.84);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}.chartTechButton.active{color:#ecfeff;border-color:#0f766e;background:#0f766e}.chartPluginStatus{margin-left:auto;font-size:10px;color:var(--muted);font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace}';
+    style.textContent = '.chartTechnicalToolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;padding:8px;border:1px solid rgba(148,163,184,.18);border-radius:4px;background:rgba(15,23,42,.10)}.chartTechTitle{font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-right:4px}.chartTechButton{min-height:28px;padding:5px 8px;border-radius:3px;font-size:11px;font-family:Arial,sans-serif;background:rgba(30,41,59,.72);color:#cbd5e1;border:1px solid rgba(148,163,184,.22)}.chartTechButton.active{color:#ecfeff;border-color:#0f766e;background:#0f766e}.chartPluginStatus{display:none}';
     document.head.appendChild(style);
   }
 
@@ -8442,6 +8543,13 @@ Rueckmeldung: ${message}</div>
   };
   let orderScheduled = false;
   let suppressOrderObserverUntil = 0;
+  const DEFAULT_COLLAPSED_SHELLS = new Set([
+    'agentSetupPlannerGroup',
+    'agentSetupLlmRoleGroup',
+    'agentSetupStructureGroup',
+    'agentSetupChartViewGroup',
+    'agentSetupChartStatusGroup'
+  ]);
 
   function setupView() {
     return document.getElementById('agentSetupView') || null;
@@ -8537,11 +8645,12 @@ Rueckmeldung: ${message}</div>
   }
 
   function shellStorageKey(shell) {
-    return `agentSetupCategoryCollapsed:${shell.id}`;
+    return `agentSetupCategoryCollapsedClean:${shell.id}`;
   }
 
   function restoreShellState(shell) {
-    const collapsed = localStorage.getItem(shellStorageKey(shell)) === 'true';
+    const stored = localStorage.getItem(shellStorageKey(shell));
+    const collapsed = stored == null ? DEFAULT_COLLAPSED_SHELLS.has(shell.id) : stored === 'true';
     setShellCollapsed(shell, collapsed, false);
   }
 
@@ -8939,6 +9048,16 @@ Rueckmeldung: ${message}</div>
       #agentSetupView .agentDecisionPipeline { display:flex !important; align-items:center !important; flex-wrap:wrap !important; gap:6px !important; margin:10px 12px 10px !important; padding:7px 9px !important; border:1px solid rgba(245,158,11,.22) !important; border-radius:5px !important; background:rgba(245,158,11,.08) !important; color:#cbd5e1 !important; font-size:11px !important; line-height:1.2 !important; }
       #agentSetupView .agentDecisionPipeline span { display:inline-flex !important; align-items:center !important; min-height:22px !important; padding:3px 7px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:5px !important; background:rgba(15,23,42,.22) !important; color:#e2e8f0 !important; font-weight:800 !important; white-space:nowrap !important; }
       #agentSetupView .agentDecisionPipeline b { color:#fbbf24 !important; font-weight:900 !important; }
+      #agentSetupView .helpButton,
+      .modalBackdrop .helpButton { opacity:.36 !important; transform:scale(.92) !important; }
+      #agentSetupView label:hover .helpButton,
+      #agentSetupView .settingsGroup:focus-within .helpButton,
+      .modalBackdrop label:hover .helpButton,
+      .modalBackdrop .settingsGroup:focus-within .helpButton { opacity:1 !important; }
+      #agentSetupView .settingsGroup,
+      #agentSetupView .agentSetupFinalGroup,
+      #agentSetupView .llmRoleCard,
+      #agentSetupView .providerPanel { box-shadow:none !important; }
       #agentSetupView .plannerGroup, #agentSetupView .llmTeamGroup { position:relative !important; }
       #agentSetupView .plannerGroup { border-left-color:#f59e0b !important; background:rgba(15,23,42,.18) !important; }
       #agentSetupView .llmTeamGroup { border-left-color:#22d3ee !important; background:rgba(15,23,42,.18) !important; margin-top:0 !important; }
@@ -8963,6 +9082,8 @@ Rueckmeldung: ${message}</div>
       #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalEmpty { display:none !important; }
       #agentSetupView .agentSetupFinalGroupCollapsed > .agentDecisionPipeline { display:none !important; }
       #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalGroupHeader { min-height:48px !important; margin-bottom:0 !important; padding:9px 14px !important; border-bottom:0 !important; }
+      #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalGroupHeader span { display:none !important; }
+      #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalMeta { margin-top:0 !important; }
       #agentSetupView .agentSetupFinalEmpty { min-height:38px !important; display:flex !important; align-items:center !important; padding:9px 10px !important; border:1px dashed rgba(148,163,184,.28) !important; border-radius:7px !important; color:var(--muted) !important; font-size:12px !important; }
       #agentSetupView .agentSetupFinalEmpty[hidden] { display:none !important; }
       #agentSetupView .agentSetupFinalCards { display:grid !important; grid-template-columns:repeat(2, minmax(0, 1fr)) !important; gap:8px !important; align-items:start !important; overflow:visible !important; padding:10px 12px 12px !important; border-top:1px solid rgba(148,163,184,.16) !important; background:rgba(15,23,42,.10) !important; }
@@ -9032,8 +9153,9 @@ Rueckmeldung: ${message}</div>
       #agentSetupView .agentSetupFinalCards .agentControlHeader .switchState { min-width:62px !important; justify-content:center !important; }
       #agentSetupView .agentSetupFinalCards .agentControlHeader .agentSetupToggle { width:34px !important; height:34px !important; min-width:34px !important; min-height:34px !important; padding:0 !important; display:grid !important; place-items:center !important; border-radius:5px !important; }
       #agentSetupView .agentSetupFinalCards .agentControlHeader .helpText { grid-column:1 / -1 !important; margin-top:4px !important; }
-      #agentSetupView .agentSetupFinalCards .agentSetupPanel { grid-column:1 / -1 !important; padding:12px !important; gap:10px !important; border-radius:6px !important; border-left-width:3px !important; width:min(640px, calc(100vw - 42px)) !important; max-height:78vh !important; }
-      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { grid-template-columns:repeat(2, minmax(0, 1fr)) !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel { grid-column:1 / -1 !important; padding:12px !important; gap:10px !important; border-radius:6px !important; border-left-width:3px !important; width:100% !important; max-width:100% !important; max-height:none !important; overflow:visible !important; box-sizing:border-box !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { position:relative !important; inset:auto !important; transform:none !important; display:grid !important; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)) !important; align-items:start !important; width:100% !important; max-width:100% !important; max-height:none !important; overflow:visible !important; box-shadow:0 12px 30px rgba(0,0,0,.24) !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open::before { display:none !important; }
       #agentSetupView .agentSetupPopupHeader { padding-bottom:8px !important; gap:10px !important; }
       #agentSetupView .agentSetupPopupHeader strong { font-size:12px !important; line-height:1.2 !important; letter-spacing:.04em !important; text-transform:uppercase !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
       #agentSetupView .agentSetupClose { min-height:30px !important; padding:6px 10px !important; border-radius:5px !important; font-size:12px !important; }
@@ -9433,11 +9555,44 @@ Rueckmeldung: ${message}</div>
 
   function activeIndicatorText() {
     const status = String(document.getElementById('chartPluginStatus')?.textContent || '');
-    const direct = (status.split('Signalquellen').pop() || status.split('Agent-Indikatoren').pop() || '');
+    const hasSignalList = /Signalquellen|Agent-Indikatoren/i.test(status);
+    const direct = hasSignalList ? (status.split('Signalquellen').pop() || status.split('Agent-Indikatoren').pop() || '') : '';
     const cleaned = direct.replace('bereit', '').trim();
-    if (cleaned) return cleaned;
+    if (cleaned && !/KLineCharts|scrollToRealTime|zoomAtCoordinate|createIndicator|createOverlay|resize/i.test(cleaned)) return compactIndicatorList(cleaned);
     const meta = String(document.getElementById('indicatorChartSettings')?.textContent || '').trim();
-    return meta || '-';
+    return meta ? compactIndicatorList(meta) : 'Basis-Chart';
+  }
+
+  function compactIndicatorList(text) {
+    const names = String(text || '')
+      .split(/[\/,|]+/)
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => part
+        .replace(/Fast|Slow|Split|Main|Direct|Agent|Indikator/gi, '')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+      )
+      .filter(Boolean);
+    const unique = Array.from(new Set(names.map(name => {
+      const lower = name.toLowerCase();
+      const fixed = {
+        macd: 'MACD',
+        mfi: 'MFI',
+        hma: 'HMA',
+        sma: 'SMA',
+        rsi: 'RSI',
+        vwap: 'VWAP',
+        volume: 'Volume',
+        bos: 'BOS',
+        choch: 'CHoCH'
+      };
+      return fixed[lower] || name.replace(/\b\w/g, chr => chr.toUpperCase());
+    })));
+    if (!unique.length) return '-';
+    const shown = unique.slice(0, 4);
+    const more = unique.length - shown.length;
+    return `${shown.join(', ')}${more > 0 ? ` +${more}` : ''}`;
   }
 
   function chartStateText() {
@@ -9581,7 +9736,7 @@ Rueckmeldung: ${message}</div>
       #chartView .chartViewFocusCard.status { border-left:4px solid #f59e0b !important; }
       #chartView .chartViewFocusCard span { display:block !important; color:var(--muted) !important; font-size:10px !important; line-height:1.1 !important; font-weight:800 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
       #chartView .chartViewFocusCard strong { display:block !important; margin-top:3px !important; color:var(--ink) !important; font-size:11px !important; font-weight:900 !important; line-height:1.15 !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
-      #chartView .chartViewFocusCard.indicators strong, #chartView .chartViewFocusCard.status strong { font-size:10.5px !important; white-space:nowrap !important; display:block !important; }
+      #chartView .chartViewFocusCard.indicators strong, #chartView .chartViewFocusCard.status strong { font-size:11.5px !important; white-space:nowrap !important; display:block !important; letter-spacing:0 !important; text-transform:none !important; }
       #chartView .chartViewLegendPanel { margin:0 0 8px !important; padding:8px 10px !important; border:1px solid var(--line) !important; border-radius:7px !important; background:rgba(15,23,42,.16) !important; }
       #chartView .chartViewLegendHeader { display:flex !important; align-items:center !important; justify-content:space-between !important; gap:10px !important; margin:0 !important; padding:0 !important; border:0 !important; }
       #chartView .chartViewLegendHeader strong { color:var(--ink) !important; font-size:12px !important; font-weight:900 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
@@ -9914,9 +10069,50 @@ Rueckmeldung: ${message}</div>
 
 (function () {
   const PATCH_VERSION = '2026-05-31-bot-view-collapse-v16-open-header-state';
+  const MODE_STORAGE_KEY = 'botViewMode';
+  const EXPERT_ONLY_GROUPS = new Set(['debug', 'cycle']);
 
   function botView() {
     return document.getElementById('dashboardView') || null;
+  }
+
+  function botViewMode() {
+    try {
+      return window.localStorage.getItem(MODE_STORAGE_KEY) === 'expert' ? 'expert' : 'simple';
+    } catch (_) {
+      return 'simple';
+    }
+  }
+
+  function setBotViewMode(mode) {
+    const next = mode === 'expert' ? 'expert' : 'simple';
+    try {
+      window.localStorage.setItem(MODE_STORAGE_KEY, next);
+    } catch (_) {}
+    applyBotViewMode();
+  }
+
+  function applyBotViewMode() {
+    const view = botView();
+    if (!view) return;
+    const mode = botViewMode();
+    view.dataset.botViewMode = mode;
+    document.querySelectorAll('[data-bot-view-mode]').forEach(button => {
+      const active = button.dataset.botViewMode === mode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('#dashboardView .botViewSectionHeader').forEach(header => {
+      const expertOnly = EXPERT_ONLY_GROUPS.has(header.dataset.collapseKey || '');
+      header.hidden = mode !== 'expert' && expertOnly;
+    });
+    Object.entries(collapseGroups(view)).forEach(([key, group]) => {
+      if (!EXPERT_ONLY_GROUPS.has(key)) return;
+      group.targets().filter(Boolean).forEach(target => {
+        const header = document.getElementById(group.headerId);
+        target.hidden = mode !== 'expert' || !!header?.classList.contains('collapsed');
+      });
+    });
   }
 
   function createHeader(id, title, detail, mode) {
@@ -10115,7 +10311,13 @@ Rueckmeldung: ${message}</div>
       header = document.createElement('div');
       header.id = 'botViewShellHeader';
       header.className = 'botViewShellHeader';
-      header.innerHTML = '<h2>Dashboard</h2><span>Live-Analyse, LLM-Rollenteam, Kosten, Trades und Bot-Daten auf einen Blick.</span>';
+      header.innerHTML = `
+        <div><h2>Dashboard</h2><span>Live-Analyse, LLM-Rollenteam, Kosten, Trades und Bot-Daten auf einen Blick.</span></div>
+        <div class="botViewModeSwitch" role="group" aria-label="Dashboard Modus">
+          <button type="button" data-bot-view-mode="simple" aria-pressed="true">Simple</button>
+          <button type="button" data-bot-view-mode="expert" aria-pressed="false">Expert</button>
+        </div>
+      `;
     }
     if (header.parentNode !== view || view.firstElementChild !== header) {
       view.insertBefore(header, view.firstElementChild);
@@ -10185,6 +10387,41 @@ Rueckmeldung: ${message}</div>
       });
       header.dataset.collapseReady = PATCH_VERSION;
     });
+    applyBotViewMode();
+  }
+
+  function toggleHeader(header) {
+    const view = botView();
+    if (!view || !header) return;
+    const key = header.dataset.collapseKey;
+    const group = collapseGroups(view)[key];
+    if (!key || !group) return;
+    const next = !header.classList.contains('collapsed');
+    storeCollapsed(key, next);
+    setTargetsCollapsed(header, group.targets(), next);
+    applyBotViewMode();
+  }
+
+  function installGlobalCollapseHandler() {
+    if (document.body.dataset.botViewGlobalCollapseHandler === PATCH_VERSION) return;
+    document.body.dataset.botViewGlobalCollapseHandler = PATCH_VERSION;
+    document.addEventListener('click', event => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const header = target.closest('#dashboardView .botViewSectionHeader');
+      if (!header || target.closest('button, a, input, select, textarea, summary')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleHeader(header);
+    }, true);
+    document.addEventListener('keydown', event => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const header = target.closest('#dashboardView .botViewSectionHeader');
+      if (!header || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      toggleHeader(header);
+    }, true);
   }
 
   function tagElements() {
@@ -10265,7 +10502,7 @@ Rueckmeldung: ${message}</div>
       }
       #dashboardView .botViewShellHeader {
         display:grid !important;
-        grid-template-columns:minmax(180px, .45fr) minmax(260px, 1fr) !important;
+        grid-template-columns:minmax(260px, 1fr) auto !important;
         align-items:center !important;
         gap:16px !important;
         min-height:58px !important;
@@ -10284,13 +10521,44 @@ Rueckmeldung: ${message}</div>
         text-transform:none !important;
       }
       #dashboardView .botViewShellHeader span {
-        justify-self:end !important;
         color:var(--muted) !important;
         font-size:12px !important;
         line-height:1.25 !important;
         letter-spacing:.04em !important;
         text-transform:uppercase !important;
-        text-align:right !important;
+      }
+      #dashboardView .botViewModeSwitch {
+        justify-self:end !important;
+        display:inline-grid !important;
+        grid-template-columns:1fr 1fr !important;
+        gap:3px !important;
+        padding:3px !important;
+        border:1px solid rgba(148,163,184,.20) !important;
+        border-radius:6px !important;
+        background:rgba(2,6,23,.24) !important;
+      }
+      #dashboardView .botViewModeSwitch button {
+        min-width:74px !important;
+        min-height:30px !important;
+        padding:5px 10px !important;
+        border:0 !important;
+        border-radius:4px !important;
+        background:transparent !important;
+        color:var(--muted) !important;
+        font-size:12px !important;
+        font-weight:900 !important;
+        cursor:pointer !important;
+      }
+      #dashboardView .botViewModeSwitch button.active {
+        background:#0f766e !important;
+        color:#ecfeff !important;
+      }
+      #dashboardView[data-bot-view-mode="simple"] .botViewSectionHeader.debug,
+      #dashboardView[data-bot-view-mode="simple"] .botViewSectionHeader.cycle,
+      #dashboardView[data-bot-view-mode="simple"] .botViewDebugCard,
+      #dashboardView[data-bot-view-mode="simple"] .botViewMemoryCard,
+      #dashboardView[data-bot-view-mode="simple"] .botViewCycleCard {
+        display:none !important;
       }
       #dashboardView .botViewSectionHeader {
         display:flex !important;
@@ -10625,6 +10893,10 @@ Rueckmeldung: ${message}</div>
           justify-self:start !important;
           text-align:left !important;
         }
+        #dashboardView .botViewModeSwitch {
+          justify-self:start !important;
+          width:100% !important;
+        }
         #dashboardView .botViewKpiGrid {
           grid-template-columns:1fr !important;
         }
@@ -10638,16 +10910,27 @@ Rueckmeldung: ${message}</div>
 
   function install() {
     installStyles();
+    installGlobalCollapseHandler();
     insertHeaders();
     wireCollapsibleSections();
-    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); }, 250);
-    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); }, 1000);
-    window.setInterval(() => { renderLlmCostSummary(); wireCollapsibleSections(); }, 2500);
+    applyBotViewMode();
+    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); applyBotViewMode(); }, 250);
+    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); applyBotViewMode(); }, 1000);
+    window.setInterval(() => { renderLlmCostSummary(); wireCollapsibleSections(); applyBotViewMode(); }, 2500);
     document.body.dataset.botViewLayoutPatch = PATCH_VERSION;
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   else install();
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest('[data-bot-view-mode]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setBotViewMode(button.dataset.botViewMode);
+  }, true);
 })();
 
 </script>

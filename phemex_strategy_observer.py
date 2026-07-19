@@ -19,6 +19,11 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import requests
 from dotenv import load_dotenv
 
+try:
+    import winreg
+except ImportError:  # pragma: no cover - Windows-only detail.
+    winreg = None
+
 from trade_value_gate import TradeValueGate
 from indikator import build_indicator_response
 from agent_runtime import build_agent_board, refresh_risk_agent_report
@@ -892,8 +897,8 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("ollama_enabled", True)
     config.setdefault("ollama_base_url", "http://127.0.0.1:11434")
     config.setdefault("ollama_model", "qwen2.5:3b")
-    config.setdefault("ollama_timeout_seconds", 60)
-    config.setdefault("ollama_max_prompt_chars", 4000)
+    config.setdefault("ollama_timeout_seconds", 120)
+    config.setdefault("ollama_max_prompt_chars", 2000)
     config.setdefault("ollama_temperature", 0.0)
     config.setdefault("ollama_block_hint_enabled", False)
     config.setdefault("replay_rule_weight_enabled", False)
@@ -1900,7 +1905,7 @@ def test_openai_connection(config: dict[str, Any]) -> dict[str, Any]:
 def test_ollama_connection(config: dict[str, Any]) -> dict[str, Any]:
     base_url = str(config.get("ollama_base_url", "http://127.0.0.1:11434")).rstrip("/")
     model = str(config.get("ollama_model", "qwen2.5:3b")).strip() or "qwen2.5:3b"
-    timeout = max(1.0, min(30.0, float(config.get("ollama_timeout_seconds", 10) or 10)))
+    timeout = max(1.0, min(180.0, float(config.get("ollama_timeout_seconds", 60) or 60)))
     try:
         tags_response = requests.get(f"{base_url}/api/tags", timeout=min(5.0, timeout))
         if tags_response.status_code != 200:
@@ -1964,6 +1969,169 @@ def test_ollama_connection(config: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "reason": f"Ollama Test Timeout nach {timeout:g}s. Modell {model} ist eventuell zu langsam oder lädt noch.", "status": "timeout", "base_url": base_url, "model": model}
     except (requests.RequestException, ValueError) as exc:
         return {"ok": False, "reason": f"Ollama Test fehlgeschlagen: {type(exc).__name__}: {exc}", "status": "error", "base_url": base_url, "model": model}
+
+
+def test_ollama_speed(config: dict[str, Any]) -> dict[str, Any]:
+    base_url = str(config.get("ollama_base_url", "http://127.0.0.1:11434")).rstrip("/")
+    model = str(config.get("ollama_model", "qwen2.5:3b")).strip() or "qwen2.5:3b"
+    timeout = max(1.0, min(180.0, float(config.get("ollama_timeout_seconds", 60) or 60)))
+    payload = {
+        "model": model,
+        "prompt": 'Antworte nur mit diesem JSON Objekt: {"decision":"WAIT","reason":"Risiko pruefen"}',
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0, "num_predict": 40},
+    }
+    started = time.perf_counter()
+    try:
+        response = requests.post(f"{base_url}/api/generate", json=payload, timeout=timeout)
+        elapsed = time.perf_counter() - started
+        if response.status_code != 200:
+            error_text = (response.text or "").strip()[:300]
+            return {
+                "ok": False,
+                "status": "generate_failed",
+                "reason": f"Ollama Speed-Test fehlgeschlagen: HTTP {response.status_code}. {error_text}".strip(),
+                "seconds": round(elapsed, 3),
+                "base_url": base_url,
+                "model": model,
+                "hardware": ollama_hardware_status(config),
+            }
+        generated = response.json()
+        text = str(generated.get("response", "")).strip()
+        try:
+            parsed = json.loads(text or "{}")
+            json_valid = isinstance(parsed, dict)
+        except ValueError:
+            parsed = None
+            json_valid = False
+        eval_count = int(generated.get("eval_count") or 0)
+        eval_duration_ns = int(generated.get("eval_duration") or 0)
+        tokens_per_second = None
+        if eval_count > 0 and eval_duration_ns > 0:
+            tokens_per_second = round(eval_count / (eval_duration_ns / 1_000_000_000), 2)
+        ok = json_valid and elapsed <= timeout
+        return {
+            "ok": ok,
+            "status": "ok" if ok else "invalid_json",
+            "reason": (
+                f"Ollama Speed-Test OK: {elapsed:.2f}s, JSON gueltig."
+                if ok
+                else f"Ollama antwortet in {elapsed:.2f}s, aber JSON ist ungueltig."
+            ),
+            "seconds": round(elapsed, 3),
+            "json_valid": json_valid,
+            "response": text[:300],
+            "parsed": parsed,
+            "eval_count": eval_count,
+            "tokens_per_second": tokens_per_second,
+            "base_url": base_url,
+            "model": model,
+            "hardware": ollama_hardware_status(config),
+        }
+    except requests.Timeout:
+        elapsed = time.perf_counter() - started
+        return {
+            "ok": False,
+            "status": "timeout",
+            "reason": f"Ollama Speed-Test Timeout nach {timeout:g}s.",
+            "seconds": round(elapsed, 3),
+            "base_url": base_url,
+            "model": model,
+            "hardware": ollama_hardware_status(config),
+        }
+    except (requests.RequestException, ValueError) as exc:
+        elapsed = time.perf_counter() - started
+        return {
+            "ok": False,
+            "status": "error",
+            "reason": f"Ollama Speed-Test fehlgeschlagen: {type(exc).__name__}: {exc}",
+            "seconds": round(elapsed, 3),
+            "base_url": base_url,
+            "model": model,
+            "hardware": ollama_hardware_status(config),
+        }
+
+
+def _windows_user_env(name: str) -> str:
+    if winreg is None:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _value_type = winreg.QueryValueEx(key, name)
+            return str(value or "")
+    except OSError:
+        return ""
+
+
+def _ollama_processes() -> list[dict[str, Any]]:
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.Name -match 'ollama|llama-server' } | "
+            "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
+        ),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=4, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    text = (result.stdout or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def ollama_hardware_status(config: dict[str, Any]) -> dict[str, Any]:
+    process_library = str(os.environ.get("OLLAMA_LLM_LIBRARY", "") or "")
+    user_library = _windows_user_env("OLLAMA_LLM_LIBRARY")
+    configured_library = user_library or process_library or "auto"
+    ollama_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "lib" / "ollama"
+    backends = [name for name in ("vulkan", "rocm_v7_1", "cuda_v12", "cuda_v13") if (ollama_dir / name).exists()]
+    processes = _ollama_processes()
+    runner = next((proc for proc in processes if str(proc.get("Name", "")).lower() == "llama-server.exe"), None)
+    runner_command = str((runner or {}).get("CommandLine") or "")
+    runner_active = runner is not None
+    no_mmap = "--no-mmap" in runner_command
+    if configured_library == "vulkan":
+        status = "vulkan_configured"
+        detail = "Vulkan ist als Ollama-Backend gesetzt."
+    elif configured_library.startswith("cpu"):
+        status = "cpu_forced"
+        detail = "Ollama wird per OLLAMA_LLM_LIBRARY auf CPU gezwungen."
+    elif configured_library == "auto":
+        status = "auto"
+        detail = "Ollama waehlt das Backend automatisch."
+    else:
+        status = "custom"
+        detail = f"Ollama Backend ist auf {configured_library} gesetzt."
+    if runner_active and no_mmap and configured_library == "vulkan":
+        detail += " Der aktuelle Runner sieht trotzdem CPU-typisch aus; Ollama neu starten."
+    return {
+        "provider": str(config.get("llm_provider", "ollama")),
+        "model": str(config.get("ollama_model", "")),
+        "configured_library": configured_library,
+        "process_library": process_library or "-",
+        "user_library": user_library or "-",
+        "status": status,
+        "detail": detail,
+        "runner_active": runner_active,
+        "runner_pid": (runner or {}).get("ProcessId"),
+        "runner_no_mmap": no_mmap,
+        "available_backends": backends,
+        "ollama_process_count": len(processes),
+    }
 
 
 def reset_persistent_data(config: dict[str, Any], memory: MemoryAgent, broker: PaperBroker, symbol: str | None = None) -> dict[str, Any]:
@@ -4638,8 +4806,31 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                 self._send(200, "application/json; charset=utf-8", payload)
                 return
             if request_path == "/api/status":
-                payload = json.dumps(status_store.snapshot()).encode("utf-8")
+                status_payload = status_store.snapshot()
+                status_payload["llm_hardware"] = ollama_hardware_status(config)
+                payload = json.dumps(status_payload).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", payload)
+                return
+            if request_path == "/api/bot-control-ui":
+                try:
+                    query = parse_qs(parsed_url.query)
+                    action = str((query.get("action") or [""])[0]).lower()
+                    if action == "start":
+                        update_config_file(config, {"observer_enabled": True})
+                    elif action == "stop":
+                        update_config_file(config, {"observer_enabled": False})
+                    else:
+                        raise ValueError("action must be start or stop")
+                    current = status_store.snapshot()
+                    current["config"] = public_config(config)
+                    current.setdefault("bot", {})["scanner_status"] = "running" if config.get("observer_enabled") else "stopped"
+                    status_store.update(current)
+                    self.send_response(303)
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                except Exception as exc:
+                    body = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode("utf-8")
+                    self._send(400, "application/json; charset=utf-8", body)
                 return
             if request_path == "/api/settings":
                 payload = json.dumps(public_config(config)).encode("utf-8")
@@ -4655,6 +4846,10 @@ def start_dashboard(status_store: StatusStore, config: dict[str, Any], client: P
                 return
             if request_path == "/api/ollama-test":
                 payload = json.dumps(test_ollama_connection(config)).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", payload)
+                return
+            if request_path == "/api/ollama-speed-test":
+                payload = json.dumps(test_ollama_speed(config)).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", payload)
                 return
             if request_path == "/api/config-json":

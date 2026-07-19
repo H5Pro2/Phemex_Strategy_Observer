@@ -51,6 +51,13 @@
   };
   let orderScheduled = false;
   let suppressOrderObserverUntil = 0;
+  const DEFAULT_COLLAPSED_SHELLS = new Set([
+    'agentSetupPlannerGroup',
+    'agentSetupLlmRoleGroup',
+    'agentSetupStructureGroup',
+    'agentSetupChartViewGroup',
+    'agentSetupChartStatusGroup'
+  ]);
 
   function setupView() {
     return document.getElementById('agentSetupView') || null;
@@ -146,11 +153,12 @@
   }
 
   function shellStorageKey(shell) {
-    return `agentSetupCategoryCollapsed:${shell.id}`;
+    return `agentSetupCategoryCollapsedClean:${shell.id}`;
   }
 
   function restoreShellState(shell) {
-    const collapsed = localStorage.getItem(shellStorageKey(shell)) === 'true';
+    const stored = localStorage.getItem(shellStorageKey(shell));
+    const collapsed = stored == null ? DEFAULT_COLLAPSED_SHELLS.has(shell.id) : stored === 'true';
     setShellCollapsed(shell, collapsed, false);
   }
 
@@ -548,6 +556,16 @@
       #agentSetupView .agentDecisionPipeline { display:flex !important; align-items:center !important; flex-wrap:wrap !important; gap:6px !important; margin:10px 12px 10px !important; padding:7px 9px !important; border:1px solid rgba(245,158,11,.22) !important; border-radius:5px !important; background:rgba(245,158,11,.08) !important; color:#cbd5e1 !important; font-size:11px !important; line-height:1.2 !important; }
       #agentSetupView .agentDecisionPipeline span { display:inline-flex !important; align-items:center !important; min-height:22px !important; padding:3px 7px !important; border:1px solid rgba(148,163,184,.18) !important; border-radius:5px !important; background:rgba(15,23,42,.22) !important; color:#e2e8f0 !important; font-weight:800 !important; white-space:nowrap !important; }
       #agentSetupView .agentDecisionPipeline b { color:#fbbf24 !important; font-weight:900 !important; }
+      #agentSetupView .helpButton,
+      .modalBackdrop .helpButton { opacity:.36 !important; transform:scale(.92) !important; }
+      #agentSetupView label:hover .helpButton,
+      #agentSetupView .settingsGroup:focus-within .helpButton,
+      .modalBackdrop label:hover .helpButton,
+      .modalBackdrop .settingsGroup:focus-within .helpButton { opacity:1 !important; }
+      #agentSetupView .settingsGroup,
+      #agentSetupView .agentSetupFinalGroup,
+      #agentSetupView .llmRoleCard,
+      #agentSetupView .providerPanel { box-shadow:none !important; }
       #agentSetupView .plannerGroup, #agentSetupView .llmTeamGroup { position:relative !important; }
       #agentSetupView .plannerGroup { border-left-color:#f59e0b !important; background:rgba(15,23,42,.18) !important; }
       #agentSetupView .llmTeamGroup { border-left-color:#22d3ee !important; background:rgba(15,23,42,.18) !important; margin-top:0 !important; }
@@ -572,6 +590,8 @@
       #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalEmpty { display:none !important; }
       #agentSetupView .agentSetupFinalGroupCollapsed > .agentDecisionPipeline { display:none !important; }
       #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalGroupHeader { min-height:48px !important; margin-bottom:0 !important; padding:9px 14px !important; border-bottom:0 !important; }
+      #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalGroupHeader span { display:none !important; }
+      #agentSetupView .agentSetupFinalGroupCollapsed .agentSetupFinalMeta { margin-top:0 !important; }
       #agentSetupView .agentSetupFinalEmpty { min-height:38px !important; display:flex !important; align-items:center !important; padding:9px 10px !important; border:1px dashed rgba(148,163,184,.28) !important; border-radius:7px !important; color:var(--muted) !important; font-size:12px !important; }
       #agentSetupView .agentSetupFinalEmpty[hidden] { display:none !important; }
       #agentSetupView .agentSetupFinalCards { display:grid !important; grid-template-columns:repeat(2, minmax(0, 1fr)) !important; gap:8px !important; align-items:start !important; overflow:visible !important; padding:10px 12px 12px !important; border-top:1px solid rgba(148,163,184,.16) !important; background:rgba(15,23,42,.10) !important; }
@@ -641,8 +661,9 @@
       #agentSetupView .agentSetupFinalCards .agentControlHeader .switchState { min-width:62px !important; justify-content:center !important; }
       #agentSetupView .agentSetupFinalCards .agentControlHeader .agentSetupToggle { width:34px !important; height:34px !important; min-width:34px !important; min-height:34px !important; padding:0 !important; display:grid !important; place-items:center !important; border-radius:5px !important; }
       #agentSetupView .agentSetupFinalCards .agentControlHeader .helpText { grid-column:1 / -1 !important; margin-top:4px !important; }
-      #agentSetupView .agentSetupFinalCards .agentSetupPanel { grid-column:1 / -1 !important; padding:12px !important; gap:10px !important; border-radius:6px !important; border-left-width:3px !important; width:min(640px, calc(100vw - 42px)) !important; max-height:78vh !important; }
-      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { grid-template-columns:repeat(2, minmax(0, 1fr)) !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel { grid-column:1 / -1 !important; padding:12px !important; gap:10px !important; border-radius:6px !important; border-left-width:3px !important; width:100% !important; max-width:100% !important; max-height:none !important; overflow:visible !important; box-sizing:border-box !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open { position:relative !important; inset:auto !important; transform:none !important; display:grid !important; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)) !important; align-items:start !important; width:100% !important; max-width:100% !important; max-height:none !important; overflow:visible !important; box-shadow:0 12px 30px rgba(0,0,0,.24) !important; }
+      #agentSetupView .agentSetupFinalCards .agentSetupPanel.open::before { display:none !important; }
       #agentSetupView .agentSetupPopupHeader { padding-bottom:8px !important; gap:10px !important; }
       #agentSetupView .agentSetupPopupHeader strong { font-size:12px !important; line-height:1.2 !important; letter-spacing:.04em !important; text-transform:uppercase !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
       #agentSetupView .agentSetupClose { min-height:30px !important; padding:6px 10px !important; border-radius:5px !important; font-size:12px !important; }

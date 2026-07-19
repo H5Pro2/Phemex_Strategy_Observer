@@ -24,11 +24,44 @@
 
   function activeIndicatorText() {
     const status = String(document.getElementById('chartPluginStatus')?.textContent || '');
-    const direct = (status.split('Signalquellen').pop() || status.split('Agent-Indikatoren').pop() || '');
+    const hasSignalList = /Signalquellen|Agent-Indikatoren/i.test(status);
+    const direct = hasSignalList ? (status.split('Signalquellen').pop() || status.split('Agent-Indikatoren').pop() || '') : '';
     const cleaned = direct.replace('bereit', '').trim();
-    if (cleaned) return cleaned;
+    if (cleaned && !/KLineCharts|scrollToRealTime|zoomAtCoordinate|createIndicator|createOverlay|resize/i.test(cleaned)) return compactIndicatorList(cleaned);
     const meta = String(document.getElementById('indicatorChartSettings')?.textContent || '').trim();
-    return meta || '-';
+    return meta ? compactIndicatorList(meta) : 'Basis-Chart';
+  }
+
+  function compactIndicatorList(text) {
+    const names = String(text || '')
+      .split(/[\/,|]+/)
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => part
+        .replace(/Fast|Slow|Split|Main|Direct|Agent|Indikator/gi, '')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+      )
+      .filter(Boolean);
+    const unique = Array.from(new Set(names.map(name => {
+      const lower = name.toLowerCase();
+      const fixed = {
+        macd: 'MACD',
+        mfi: 'MFI',
+        hma: 'HMA',
+        sma: 'SMA',
+        rsi: 'RSI',
+        vwap: 'VWAP',
+        volume: 'Volume',
+        bos: 'BOS',
+        choch: 'CHoCH'
+      };
+      return fixed[lower] || name.replace(/\b\w/g, chr => chr.toUpperCase());
+    })));
+    if (!unique.length) return '-';
+    const shown = unique.slice(0, 4);
+    const more = unique.length - shown.length;
+    return `${shown.join(', ')}${more > 0 ? ` +${more}` : ''}`;
   }
 
   function chartStateText() {
@@ -172,7 +205,7 @@
       #chartView .chartViewFocusCard.status { border-left:4px solid #f59e0b !important; }
       #chartView .chartViewFocusCard span { display:block !important; color:var(--muted) !important; font-size:10px !important; line-height:1.1 !important; font-weight:800 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }
       #chartView .chartViewFocusCard strong { display:block !important; margin-top:3px !important; color:var(--ink) !important; font-size:11px !important; font-weight:900 !important; line-height:1.15 !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
-      #chartView .chartViewFocusCard.indicators strong, #chartView .chartViewFocusCard.status strong { font-size:10.5px !important; white-space:nowrap !important; display:block !important; }
+      #chartView .chartViewFocusCard.indicators strong, #chartView .chartViewFocusCard.status strong { font-size:11.5px !important; white-space:nowrap !important; display:block !important; letter-spacing:0 !important; text-transform:none !important; }
       #chartView .chartViewLegendPanel { margin:0 0 8px !important; padding:8px 10px !important; border:1px solid var(--line) !important; border-radius:7px !important; background:rgba(15,23,42,.16) !important; }
       #chartView .chartViewLegendHeader { display:flex !important; align-items:center !important; justify-content:space-between !important; gap:10px !important; margin:0 !important; padding:0 !important; border:0 !important; }
       #chartView .chartViewLegendHeader strong { color:var(--ink) !important; font-size:12px !important; font-weight:900 !important; letter-spacing:.04em !important; text-transform:uppercase !important; }

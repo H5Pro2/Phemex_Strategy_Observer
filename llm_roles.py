@@ -15,6 +15,12 @@ ROLE_ORDER = [
     "execution",
 ]
 
+OLLAMA_FAST_ROLE_ORDER = [
+    "market_structure",
+    "risk_officer",
+    "skeptic",
+]
+
 ROLE_DEFINITIONS: dict[str, dict[str, str]] = {
     "market_structure": {
         "name": "Market Structure Analyst",
@@ -166,7 +172,7 @@ def evaluate_role_team(context: dict[str, Any], config: dict[str, Any]) -> dict[
         return default_role_team_response(config, "NO_DATA", reason, enabled=False)
 
     role_reports: list[dict[str, Any]] = []
-    for role_key in ROLE_ORDER:
+    for role_key in _active_role_order(config):
         if not role_enabled(config, role_key):
             continue
         role_reports.append(_run_role(role_key, context, config))
@@ -190,6 +196,14 @@ def evaluate_role_team(context: dict[str, Any], config: dict[str, Any]) -> dict[
     result["context_trace"] = _context_trace(context, config)
     result["usage_estimate"] = estimate_llm_usage(result["context_trace"], role_reports, judge, config)
     return result
+
+
+def _active_role_order(config: dict[str, Any]) -> list[str]:
+    provider = str(config.get("llm_provider", "openai")).lower()
+    mode = str(config.get("ollama_role_mode", "fast") or "fast").lower()
+    if provider == "ollama" and mode != "full":
+        return OLLAMA_FAST_ROLE_ORDER
+    return ROLE_ORDER
 
 
 def estimate_llm_usage(
@@ -320,7 +334,7 @@ def _context_trace(context: dict[str, Any], config: dict[str, Any] | None = None
                 ],
                 "snapshot_keys": sorted((_role_context(context, role_key).get("indicator_snapshot") or {}).keys()),
             }
-            for role_key in ROLE_ORDER
+            for role_key in _active_role_order(cfg)
         },
         "judge_input": {
             "role": JUDGE_NAME,
@@ -336,7 +350,8 @@ def _role_prompt_extra(config: dict[str, Any], role_key: str) -> str:
     value = str(config.get(key, "") or "").strip()
     if not value:
         return ""
-    value = _short_text(value, 1600)
+    provider = str(config.get("llm_provider", "openai")).lower()
+    value = _short_text(value, 700 if provider == "ollama" else 1600)
     return f"Zusätzliche Verhaltensanweisung aus der lokalen Konfiguration: {value} "
 
 
@@ -405,7 +420,7 @@ def _openai_error_message(response: requests.Response) -> str:
 def _call_ollama_json(system: str, user: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     base_url = str(config.get("ollama_base_url", "http://127.0.0.1:11434")).rstrip("/")
     model = str(config.get("ollama_model", "qwen2.5:3b"))
-    timeout = max(1.0, min(300.0, _safe_float(config.get("llm_role_timeout_seconds", config.get("ollama_timeout_seconds", 60)), 60.0)))
+    timeout = max(1.0, min(300.0, _safe_float(config.get("ollama_timeout_seconds", config.get("llm_role_timeout_seconds", 60)), 60.0)))
     temperature = max(0.0, min(1.0, _safe_float(config.get("llm_role_temperature", config.get("ollama_temperature", 0.0)), 0.0)))
     payload = {
         "model": model,

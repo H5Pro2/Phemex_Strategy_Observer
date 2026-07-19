@@ -907,14 +907,20 @@ def _run_ollama_audit_worker(context_key: str, context_hash: str, context: dict[
         result = evaluate_role_team(context, config)
     except (OSError, TimeoutError, ValueError, RuntimeError, json.JSONDecodeError, urlerror.URLError) as exc:
         detail = str(exc).strip() or type(exc).__name__
+        provider = str(config.get("llm_provider", "ollama")).lower()
+        provider_label = "Ollama" if provider == "ollama" else "OpenAI"
         result = default_role_team_response(
             config,
             "ERROR",
-            f"OpenAI/LLM-Rollenteam fehlgeschlagen: {detail}; Pipeline läuft deterministisch weiter.",
+            f"{provider_label}/LLM-Rollenteam fehlgeschlagen: {detail}; Pipeline laeuft deterministisch weiter.",
             enabled=True,
         )
         result["risk_note"] = detail
-        result["advice"] = "OpenAI API Connection testen und Billing/Guthaben, Key, Projekt und Modell prüfen."
+        result["advice"] = (
+            "Ollama Dienst, Modell und Timeout pruefen."
+            if provider == "ollama"
+            else "OpenAI API Connection testen und Billing/Guthaben, Key, Projekt und Modell pruefen."
+        )
 
     with _LLM_AUDIT_LOCK:
         _LLM_AUDIT_STATE["running"] = False
@@ -934,15 +940,15 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         if _LLM_AUDIT_STATE.get("running"):
             if last_result:
                 result = dict(last_result)
-                result["message"] = "OpenAI/LLM-Rollenteam verarbeitet noch den vorherigen Kontext; neuer Kontext wird erst nach Abschluss im nächsten Tick übergeben."
+                result["message"] = "LLM-Rollenteam verarbeitet noch den vorherigen Kontext; neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben."
                 result["risk_note"] = "LLM-Worker ist beschäftigt; Trading-Pipeline läuft deterministisch weiter."
                 result["advice"] = "Warten bis der LLM-Worker frei ist."
                 return result
             return _llm_async_status_response(
                 config,
-                "OpenAI/LLM-Rollenteam verarbeitet den ersten Kontext im Hintergrund.",
+                "LLM-Rollenteam verarbeitet den ersten Kontext im Hintergrund.",
                 "LLM-Worker ist beschäftigt; Trading-Pipeline läuft deterministisch weiter.",
-                "Neuer Kontext wird erst nach Abschluss im nächsten Tick übergeben.",
+                "Neuer Kontext wird erst nach Abschluss im naechsten Tick uebergeben.",
             )
         if last_hash == context_hash and last_result:
             return dict(last_result)
@@ -957,7 +963,7 @@ def _submit_llm_audit_async(context: dict[str, Any], config: dict[str, Any]) -> 
         thread.start()
     return _llm_async_status_response(
         config,
-        "OpenAI/LLM-Rollenteam wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick.",
+        "LLM-Rollenteam wurde asynchron gestartet; Ergebnis erscheint nach Abschluss in einem folgenden Tick.",
         "LLM läuft getrennt von der Trading-Pipeline; keine Blockade durch Modelllaufzeit.",
         "Warten auf LLM-Worker.",
     )
@@ -1295,7 +1301,7 @@ def build_brain_decision(
         llm_layer = default_role_team_response(
             cfg,
             "NO_DATA",
-            "OpenAI/LLM-Rollenteam wartet auf Economic-Gate-Ergebnis.",
+            "LLM-Rollenteam wartet auf Economic-Gate-Ergebnis.",
             enabled=bool(cfg.get("llm_role_team_enabled", cfg.get("brain_llm_layer_enabled", False))),
         )
     else:

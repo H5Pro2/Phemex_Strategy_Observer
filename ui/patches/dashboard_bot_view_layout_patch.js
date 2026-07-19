@@ -6,9 +6,50 @@
 
 (function () {
   const PATCH_VERSION = '2026-05-31-bot-view-collapse-v16-open-header-state';
+  const MODE_STORAGE_KEY = 'botViewMode';
+  const EXPERT_ONLY_GROUPS = new Set(['debug', 'cycle']);
 
   function botView() {
     return document.getElementById('dashboardView') || null;
+  }
+
+  function botViewMode() {
+    try {
+      return window.localStorage.getItem(MODE_STORAGE_KEY) === 'expert' ? 'expert' : 'simple';
+    } catch (_) {
+      return 'simple';
+    }
+  }
+
+  function setBotViewMode(mode) {
+    const next = mode === 'expert' ? 'expert' : 'simple';
+    try {
+      window.localStorage.setItem(MODE_STORAGE_KEY, next);
+    } catch (_) {}
+    applyBotViewMode();
+  }
+
+  function applyBotViewMode() {
+    const view = botView();
+    if (!view) return;
+    const mode = botViewMode();
+    view.dataset.botViewMode = mode;
+    document.querySelectorAll('[data-bot-view-mode]').forEach(button => {
+      const active = button.dataset.botViewMode === mode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('#dashboardView .botViewSectionHeader').forEach(header => {
+      const expertOnly = EXPERT_ONLY_GROUPS.has(header.dataset.collapseKey || '');
+      header.hidden = mode !== 'expert' && expertOnly;
+    });
+    Object.entries(collapseGroups(view)).forEach(([key, group]) => {
+      if (!EXPERT_ONLY_GROUPS.has(key)) return;
+      group.targets().filter(Boolean).forEach(target => {
+        const header = document.getElementById(group.headerId);
+        target.hidden = mode !== 'expert' || !!header?.classList.contains('collapsed');
+      });
+    });
   }
 
   function createHeader(id, title, detail, mode) {
@@ -207,7 +248,13 @@
       header = document.createElement('div');
       header.id = 'botViewShellHeader';
       header.className = 'botViewShellHeader';
-      header.innerHTML = '<h2>Dashboard</h2><span>Live-Analyse, LLM-Rollenteam, Kosten, Trades und Bot-Daten auf einen Blick.</span>';
+      header.innerHTML = `
+        <div><h2>Dashboard</h2><span>Live-Analyse, LLM-Rollenteam, Kosten, Trades und Bot-Daten auf einen Blick.</span></div>
+        <div class="botViewModeSwitch" role="group" aria-label="Dashboard Modus">
+          <button type="button" data-bot-view-mode="simple" aria-pressed="true">Simple</button>
+          <button type="button" data-bot-view-mode="expert" aria-pressed="false">Expert</button>
+        </div>
+      `;
     }
     if (header.parentNode !== view || view.firstElementChild !== header) {
       view.insertBefore(header, view.firstElementChild);
@@ -277,6 +324,41 @@
       });
       header.dataset.collapseReady = PATCH_VERSION;
     });
+    applyBotViewMode();
+  }
+
+  function toggleHeader(header) {
+    const view = botView();
+    if (!view || !header) return;
+    const key = header.dataset.collapseKey;
+    const group = collapseGroups(view)[key];
+    if (!key || !group) return;
+    const next = !header.classList.contains('collapsed');
+    storeCollapsed(key, next);
+    setTargetsCollapsed(header, group.targets(), next);
+    applyBotViewMode();
+  }
+
+  function installGlobalCollapseHandler() {
+    if (document.body.dataset.botViewGlobalCollapseHandler === PATCH_VERSION) return;
+    document.body.dataset.botViewGlobalCollapseHandler = PATCH_VERSION;
+    document.addEventListener('click', event => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const header = target.closest('#dashboardView .botViewSectionHeader');
+      if (!header || target.closest('button, a, input, select, textarea, summary')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleHeader(header);
+    }, true);
+    document.addEventListener('keydown', event => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const header = target.closest('#dashboardView .botViewSectionHeader');
+      if (!header || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      toggleHeader(header);
+    }, true);
   }
 
   function tagElements() {
@@ -357,7 +439,7 @@
       }
       #dashboardView .botViewShellHeader {
         display:grid !important;
-        grid-template-columns:minmax(180px, .45fr) minmax(260px, 1fr) !important;
+        grid-template-columns:minmax(260px, 1fr) auto !important;
         align-items:center !important;
         gap:16px !important;
         min-height:58px !important;
@@ -376,13 +458,44 @@
         text-transform:none !important;
       }
       #dashboardView .botViewShellHeader span {
-        justify-self:end !important;
         color:var(--muted) !important;
         font-size:12px !important;
         line-height:1.25 !important;
         letter-spacing:.04em !important;
         text-transform:uppercase !important;
-        text-align:right !important;
+      }
+      #dashboardView .botViewModeSwitch {
+        justify-self:end !important;
+        display:inline-grid !important;
+        grid-template-columns:1fr 1fr !important;
+        gap:3px !important;
+        padding:3px !important;
+        border:1px solid rgba(148,163,184,.20) !important;
+        border-radius:6px !important;
+        background:rgba(2,6,23,.24) !important;
+      }
+      #dashboardView .botViewModeSwitch button {
+        min-width:74px !important;
+        min-height:30px !important;
+        padding:5px 10px !important;
+        border:0 !important;
+        border-radius:4px !important;
+        background:transparent !important;
+        color:var(--muted) !important;
+        font-size:12px !important;
+        font-weight:900 !important;
+        cursor:pointer !important;
+      }
+      #dashboardView .botViewModeSwitch button.active {
+        background:#0f766e !important;
+        color:#ecfeff !important;
+      }
+      #dashboardView[data-bot-view-mode="simple"] .botViewSectionHeader.debug,
+      #dashboardView[data-bot-view-mode="simple"] .botViewSectionHeader.cycle,
+      #dashboardView[data-bot-view-mode="simple"] .botViewDebugCard,
+      #dashboardView[data-bot-view-mode="simple"] .botViewMemoryCard,
+      #dashboardView[data-bot-view-mode="simple"] .botViewCycleCard {
+        display:none !important;
       }
       #dashboardView .botViewSectionHeader {
         display:flex !important;
@@ -717,6 +830,10 @@
           justify-self:start !important;
           text-align:left !important;
         }
+        #dashboardView .botViewModeSwitch {
+          justify-self:start !important;
+          width:100% !important;
+        }
         #dashboardView .botViewKpiGrid {
           grid-template-columns:1fr !important;
         }
@@ -730,14 +847,25 @@
 
   function install() {
     installStyles();
+    installGlobalCollapseHandler();
     insertHeaders();
     wireCollapsibleSections();
-    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); }, 250);
-    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); }, 1000);
-    window.setInterval(() => { renderLlmCostSummary(); wireCollapsibleSections(); }, 2500);
+    applyBotViewMode();
+    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); applyBotViewMode(); }, 250);
+    window.setTimeout(() => { insertHeaders(); wireCollapsibleSections(); applyBotViewMode(); }, 1000);
+    window.setInterval(() => { renderLlmCostSummary(); wireCollapsibleSections(); applyBotViewMode(); }, 2500);
     document.body.dataset.botViewLayoutPatch = PATCH_VERSION;
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   else install();
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest('[data-bot-view-mode]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setBotViewMode(button.dataset.botViewMode);
+  }, true);
 })();
