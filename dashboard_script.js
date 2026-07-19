@@ -4466,8 +4466,10 @@ Rueckmeldung: ${message}</div>
       document.getElementById('cfgSystemLoop').value = 1;
       document.getElementById('cfgKlineLimit').value = data.kline_limit ?? 500;
       const riskUnit = data.risk_unit ?? 1;
-      document.getElementById('cfgRiskUnit').value = riskUnit;
-      document.getElementById('cfgRewardRisk').value = (data.reward_risk ?? 2) * riskUnit;
+      const riskUnitInput = document.getElementById('cfgRiskUnit');
+      const rewardRiskInput = document.getElementById('cfgRewardRisk');
+      if (riskUnitInput) riskUnitInput.value = riskUnit;
+      if (rewardRiskInput) rewardRiskInput.value = (data.reward_risk ?? 2) * riskUnit;
       document.getElementById('cfgEcoStopMode').value = data.stop_loss_mode === 'atr' ? 'atr' : 'structure';
       document.getElementById('cfgEcoStopBuffer').value = data.stop_loss_buffer_percent ?? 0;
       document.getElementById('cfgAtrPeriod').value = data.stop_loss_atr_period ?? 14;
@@ -4693,8 +4695,12 @@ Rueckmeldung: ${message}</div>
         phemex_poll_seconds: currentPhemexPollSeconds(),
         system_loop_seconds: 1,
         kline_limit: Number(document.getElementById('cfgKlineLimit').value),
-        reward_risk: Number(document.getElementById('cfgRewardRisk').value) / Number(document.getElementById('cfgRiskUnit').value || 1),
-        risk_unit: Number(document.getElementById('cfgRiskUnit').value || 1),
+        reward_risk: document.getElementById('cfgRewardRisk')
+          ? Number(document.getElementById('cfgRewardRisk').value) / Number(document.getElementById('cfgRiskUnit')?.value || 1)
+          : Number(latestConfig.reward_risk ?? 1.5),
+        risk_unit: document.getElementById('cfgRiskUnit')
+          ? Number(document.getElementById('cfgRiskUnit').value || 1)
+          : Number(latestConfig.risk_unit ?? 1),
         stop_loss_mode: document.getElementById('cfgEcoStopMode').value,
         stop_loss_buffer_percent: Number(document.getElementById('cfgEcoStopBuffer').value),
         stop_loss_atr_period: Number(document.getElementById('cfgAtrPeriod').value),
@@ -4768,12 +4774,16 @@ Rueckmeldung: ${message}</div>
       }
     }
     function updateRewardRiskHint() {
-      const tp = Number(document.getElementById('cfgRewardRisk').value || 0);
-      const sl = Number(document.getElementById('cfgRiskUnit').value || 1);
+      const tpInput = document.getElementById('cfgRewardRisk');
+      const slInput = document.getElementById('cfgRiskUnit');
+      const hint = document.getElementById('cfgRewardRiskHint');
+      if (!tpInput || !slInput || !hint) return;
+      const tp = Number(tpInput.value || 0);
+      const sl = Number(slInput.value || 1);
       const ratio = sl ? tp / sl : 0;
       const shownTp = Number.isInteger(tp) ? String(tp) : tp.toFixed(2);
       const shownSl = Number.isInteger(sl) ? String(sl) : sl.toFixed(2);
-      document.getElementById('cfgRewardRiskHint').textContent = `TP ${shownTp} : SL ${shownSl}  |  Bot rechnet ${ratio.toFixed(2)}R`;
+      hint.textContent = `TP ${shownTp} : SL ${shownSl}  |  Bot rechnet ${ratio.toFixed(2)}R`;
     }
     function updateEntrySearchHelp() {
       const signalTf = timeframeLabel(document.getElementById('cfgSignalTf').value || 300);
@@ -4875,8 +4885,8 @@ Rueckmeldung: ${message}</div>
     syncLlmProviderVisibility();
     document.getElementById('cfgTrendMode').addEventListener('change', updateEmaConfigVisibility);
     document.getElementById('cfgTrendEmaSource').addEventListener('change', updateEmaConfigVisibility);
-    document.getElementById('cfgRewardRisk').addEventListener('input', updateRewardRiskHint);
-    document.getElementById('cfgRiskUnit').addEventListener('input', updateRewardRiskHint);
+    document.getElementById('cfgRewardRisk')?.addEventListener('input', updateRewardRiskHint);
+    document.getElementById('cfgRiskUnit')?.addEventListener('input', updateRewardRiskHint);
     document.getElementById('cfgStopMode').addEventListener('change', updateStopLossVisibility);
     document.getElementById('cfgEcoStopMode').addEventListener('change', updateStopLossVisibility);
     document.getElementById('cfgSignalTf').addEventListener('change', () => {
