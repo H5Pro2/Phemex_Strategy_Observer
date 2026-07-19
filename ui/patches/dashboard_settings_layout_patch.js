@@ -27,7 +27,7 @@
         width:min(1320px, calc(100vw - 36px)) !important;
       }
       #tradingModal.open .tradingOrderModal {
-        width:min(420px, calc(100vw - 18px)) !important;
+        width:min(560px, calc(100vw - 18px)) !important;
         max-height:calc(100vh - 24px) !important;
       }
       .modalBackdrop.open .modalHeader {

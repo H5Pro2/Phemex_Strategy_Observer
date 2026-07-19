@@ -126,7 +126,7 @@
     .modalBackdrop { display:none; position:fixed; inset:0; z-index:2000; background:rgba(15,23,42,.42); align-items:center; justify-content:center; padding:24px; }
     .modalBackdrop.open { display:flex; }
     .modal { width:min(680px, 100%); max-height:90vh; overflow:auto; background:#fff; border-radius:8px; border:1px solid var(--line); box-shadow:0 24px 60px rgba(23,32,51,.28); }
-    .tradingOrderModal { width:min(420px, 100%); background:#0f1724; border-color:#243449; color:#e5e7eb; border-radius:5px; }
+    .tradingOrderModal { width:min(560px, 100%); background:#0f1724; border-color:#243449; color:#e5e7eb; border-radius:5px; }
     .tradingOrderModal .modalHeader { border-bottom:1px solid #223047; padding:14px 16px; }
     .tradingOrderModal .modalHeader h2 { margin:0; font-size:15px; letter-spacing:.03em; }
     .tradingOrderModal .closeButton { min-height:34px; padding:7px 11px; background:#243044; color:#cbd5e1; border-color:#334155; }
@@ -135,7 +135,7 @@
     .tradingOrderBody input,
     .tradingOrderBody select { min-height:38px; background:#0b111d; color:#e5e7eb; border-color:#26364c; border-radius:4px; font-weight:700; }
     .tradingOrderBody input::placeholder { color:#58687d; }
-    .tradingTopBar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    .tradingTopBar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 14px; }
     .segmentedControl { display:inline-flex; overflow:hidden; border:1px solid #26364c; border-radius:5px; background:#111c2b; }
     .segmentedControl button { min-height:30px; padding:6px 13px; border:0; border-radius:0; background:transparent; color:#7f8ea3; font-size:12px; font-weight:800; }
     .segmentedControl button.active { background:#164563; color:#e0f2fe; box-shadow:inset 0 0 0 1px rgba(56,189,248,.16); }
@@ -143,8 +143,11 @@
     .leverageControl { display:flex; align-items:center; gap:8px; color:#7f8ea3; font-size:13px; }
     .leverageControl strong { min-width:72px; min-height:32px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #24415b; border-radius:5px; background:#0b111d; color:#f8fafc; }
     .leverageControl small { color:#38bdf8; font-weight:800; }
-    .tradingPaperToggle { margin-bottom:14px; border-color:#24415b; background:#111c2b; }
-    .tradingPaperToggle label { margin:0; color:#e5e7eb; font-size:16px; font-weight:900; }
+    .tradingPaperToggle { margin:0 0 12px; padding:10px 12px; min-height:54px; border-color:#24415b; background:#111c2b; border-radius:6px; gap:10px; }
+    .tradingPaperToggle label { margin:0; color:#e5e7eb; font-size:14px; font-weight:900; line-height:1.1; }
+    .tradingPaperToggle .switchState { min-width:52px; padding:4px 7px; font-size:11px; }
+    .tradingPaperToggle .switchInput + label::before,
+    .tradingPaperToggle .switchInput + label::after { transform:scale(.85); transform-origin:left center; }
     .tradingField { margin-top:11px; }
     .orderTypeRow { display:flex; align-items:end; justify-content:space-between; gap:14px; margin:11px 0 8px; padding-bottom:7px; border-bottom:2px solid rgba(229,231,235,.84); }
     .orderTypeRow strong { font-size:14px; color:#fff; }
@@ -1029,6 +1032,7 @@
     <div class="modal tradingOrderModal">
       <div class="modalHeader"><h2>Trading-Einstellungen</h2><button class="closeButton" data-close-modal="tradingModal">Schließen</button></div>
       <div class="modalBody tradingOrderBody">
+        <div id="paperToggleBox" class="paperToggleLarge tradingPaperToggle"><input id="paperToggle" class="switchInput" type="checkbox"><label for="paperToggle">Paper-Trading</label><span id="paperToggleState" class="switchState">Aus</span></div>
         <div class="tradingTopBar">
           <div class="segmentedControl" aria-label="Margin Modus">
             <button class="ghostButton" type="button" disabled>Cross</button>
@@ -1040,7 +1044,6 @@
             <small>x</small>
           </div>
         </div>
-        <div id="paperToggleBox" class="paperToggleLarge tradingPaperToggle"><input id="paperToggle" class="switchInput" type="checkbox"><label for="paperToggle">Paper-Trading</label><span id="paperToggleState" class="switchState">Aus</span></div>
         <div id="tradeSizeAssetSelectorWrap" class="tradingField"><label for="tradeSizeAssetSelector">Asset</label><select id="tradeSizeAssetSelector"></select></div>
         <div class="orderTypeRow">
           <strong>Ordertyp</strong>
@@ -8531,7 +8534,7 @@ Rueckmeldung: ${message}</div>
         width:min(1320px, calc(100vw - 36px)) !important;
       }
       #tradingModal.open .tradingOrderModal {
-        width:min(420px, calc(100vw - 18px)) !important;
+        width:min(560px, calc(100vw - 18px)) !important;
         max-height:calc(100vh - 24px) !important;
       }
       .modalBackdrop.open .modalHeader {
