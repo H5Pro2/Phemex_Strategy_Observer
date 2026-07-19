@@ -720,6 +720,7 @@ def load_config(path: Path) -> dict[str, Any]:
     config.setdefault("trade_size_usd", 0.0)
     config.setdefault("trade_size_asset", 0.0)
     config.setdefault("trade_sizes_by_symbol", {})
+    config.setdefault("margin_mode", "isolated")
     if (
         not config.get("trade_sizes_by_symbol")
         and config.get("trade_size_mode") == "usd"
@@ -965,6 +966,7 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
         "trade_size_usd",
         "trade_size_asset",
         "trade_sizes_by_symbol",
+        "margin_mode",
         "account_balance_currency",
         "profit_unlock_threshold_fraction",
         "structure_lookback_candles",
@@ -1213,6 +1215,7 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
         "trade_size_mode": str,
         "trade_size_usd": float,
         "trade_size_asset": float,
+        "margin_mode": str,
         "profit_unlock_threshold_fraction": float,
     }
     extra_allowed = {
@@ -1536,6 +1539,10 @@ def update_config_file(config: dict[str, Any], updates: dict[str, Any]) -> dict[
             value = str(value).lower()
             if value not in ("usd", "asset"):
                 raise ValueError("trade_size_mode must be usd or asset")
+        elif key == "margin_mode":
+            value = str(value).lower()
+            if value not in ("cross", "isolated"):
+                raise ValueError("margin_mode must be cross or isolated")
         elif key in ("paper_trading_enabled", "observer_enabled"):
             value = bool(value)
         else:

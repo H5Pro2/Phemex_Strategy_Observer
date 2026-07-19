@@ -34,6 +34,7 @@
   "trade_size_usd": 0.0,
   "trade_size_asset": 0.0,
   "trade_sizes_by_symbol": {},
+  "margin_mode": "isolated",
   "account_balance_currency": "USDT",
   "live_trading_enabled": false,
   "profit_unlock_threshold_fraction": 0.4,

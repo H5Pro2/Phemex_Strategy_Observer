@@ -380,6 +380,7 @@ const fmt = (value, fallback='-') => value === null || value === undefined ? fal
     let dashboardReloadRequestRunning = false;
     let resetConfirmRequest = null;
     let tradingOrderType = 'limit';
+    let tradingMarginMode = 'isolated';
     function loadDetailsOpenState(key, fallback=false) {
       if (!key) return !!fallback;
       try {
@@ -4104,6 +4105,7 @@ Rueckmeldung: ${message}</div>
       persistCurrentTradeSizeDraft();
       const payload = {
         paper_trading_enabled: document.getElementById('paperToggle').checked,
+        margin_mode: tradingMarginMode,
         trade_size_mode: document.getElementById('sizeMode').value,
         trade_size_usd: Number(document.getElementById('sizeUsd').value || 0),
         trade_size_asset: Number(document.getElementById('sizeAsset').value || 0),
@@ -4227,6 +4229,12 @@ Rueckmeldung: ${message}</div>
       if (price) price.disabled = tradingOrderType === 'market';
       renderTradingPreview();
     }
+    function setTradingMarginMode(mode) {
+      tradingMarginMode = mode === 'cross' ? 'cross' : 'isolated';
+      document.querySelectorAll('[data-trading-margin-mode]').forEach(button => {
+        button.classList.toggle('active', button.dataset.tradingMarginMode === tradingMarginMode);
+      });
+    }
     function renderTradingPreview() {
       const selector = document.getElementById('tradeSizeAssetSelector');
       const symbol = selector?.value || activeTradeSizeSymbol || (latestConfig?.symbols || ['BTCUSDT'])[0] || 'BTCUSDT';
@@ -4338,6 +4346,7 @@ Rueckmeldung: ${message}</div>
       mergeConfigState(data.config || {});
       document.getElementById('paperToggle').checked = !!latestConfig.paper_trading_enabled;
       syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox');
+      setTradingMarginMode(latestConfig.margin_mode || 'isolated');
       localTradeSizes = JSON.parse(JSON.stringify(latestConfig.trade_sizes_by_symbol || {}));
       renderTradeSizeAssetSelector(latestConfig);
       loadTradeSizeForSelectedAsset();
@@ -4856,6 +4865,9 @@ Rueckmeldung: ${message}</div>
     document.getElementById('tradingRiskPercentValue')?.addEventListener('input', () => syncTradingRiskInput('input'));
     document.querySelectorAll('[data-trading-order-type]').forEach(button => {
       button.addEventListener('click', () => setTradingOrderType(button.dataset.tradingOrderType));
+    });
+    document.querySelectorAll('[data-trading-margin-mode]').forEach(button => {
+      button.addEventListener('click', () => setTradingMarginMode(button.dataset.tradingMarginMode));
     });
     document.getElementById('paperToggle').addEventListener('change', () => syncSwitchState('paperToggle', 'paperToggleState', 'Aktiv', 'Aus', 'paperToggleBox'));
     document.getElementById('cfgCorrelationBlock').addEventListener('change', () => syncSwitchState('cfgCorrelationBlock', 'cfgCorrelationState'));
